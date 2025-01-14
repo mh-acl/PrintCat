@@ -55,12 +55,21 @@ parts = {
       padding: 1em;
       border-radius: 1em;
       border: 1px solid var(--border-line);
-      background-color: var(--tab-inactive-bg);
+      background-color: var(--panel-bg);
       display: inline-block;
       text-align: center;
+      vertical-align: top;
     }
     label{
       border-radius: 1em 1em 0em 0em;
+      border-left-width: 0px;
+    }
+    label:first-of-type{
+      border-left-width: 1px;
+    }
+    label:not(.active){
+      background-color: var(--panel-bg);
+      background-image: linear-gradient(to top, rgba(0,0,0,0.1) 0em, transparent 0.25em);
     }
     span.subitem>ul{
       display: block;
@@ -72,7 +81,6 @@ parts = {
     }
     span.reveal>*{
       font-size: initial;
-      vertical-align: top;
     }
     input{
       display: none;
@@ -98,6 +106,7 @@ parts = {
     ul.notes{
       list-style: none;
       padding: 0;
+    }
     }
   </style>
   <script>
