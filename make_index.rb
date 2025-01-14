@@ -72,6 +72,7 @@ parts = {
     }
     span.reveal>*{
       font-size: initial;
+      vertical-align: top;
     }
     input{
       display: none;
