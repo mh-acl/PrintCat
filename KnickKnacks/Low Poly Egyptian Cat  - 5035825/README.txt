@@ -1,0 +1,1 @@
+Low poly Gayer-Anderson Egyptian cat  by Namurei on Thingiverse: https://www.thingiverse.com/thing:5035825

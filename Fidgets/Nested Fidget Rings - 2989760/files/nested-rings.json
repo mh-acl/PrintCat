@@ -1,0 +1,18 @@
+{
+    "fileFormatVersion": "1",
+    "parameterSets": {
+        "ACL settings": {
+            "bicone_gap": "1.6999999999999997",
+            "bicone_opening_reduction": "3.5",
+            "outer_radius": "20",
+            "preview_cut": "false",
+            "ring_count": "4",
+            "ring_thickness": "1",
+            "ring_width": "8",
+            "spherical_gap": "0.59999999999999998",
+            "spherical_thin_band_thickness": "0.59999999999999998",
+            "spherical_thin_band_width": "0",
+            "type": "biconical"
+        }
+    }
+}

@@ -1,0 +1,1 @@
+Nested rings fidget toy by switchborg on Thingiverse: https://www.thingiverse.com/thing:2989760
