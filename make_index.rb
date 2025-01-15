@@ -191,7 +191,7 @@ parts = {
 }
 
 # placeholder image
-noimg = "nothumb.svg"
+noimg = "nothumb.png"
 
 
 gcode_name_parser = /
