@@ -281,12 +281,13 @@ categories.each do |category_dir|
       data = subitem_file.match(gcode_name_parser)
       subitem_img = Dir.glob(File.join(item_path, data[:name]+".{png,jpg,jpeg,gif}")).first || noimg
       notes = [
-        data[:name],
-        "Printer: " + data[:printer],
+        data[:name].gsub(/\s+\(turbo\)/,""),
+        "Printer: " +
+          ((data[:printer]=="MK3S"&&data[:nozzle]=="0.6") ? 
+          "Prusa MK3S (Turbo)" : "Prusa MK3S"),
         "Print Time: " + data[:time],
-        data[:nozzle] ? ("Nozzle: " + data[:nozzle]) : nil,
-        "Layers: " + data[:layer_height],
-        "Filament: " + data[:material]
+        "Layers: " + data[:layer_height]#,
+       #"Filament: " + data[:material]
       ]
       # output subitem
       out.print parts[:subitems].
