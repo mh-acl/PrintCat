@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Print Catalog</title>
+	<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+	<script>
+function load_top_listing(){
+	$("#content").load("list.html");
+}
+function load_new_listing(path){
+	$("#main").append('<div id="loader"></div>')
+	$("#loader").load(path, function( response, status, xhr ) {
+    if ( status == "error" ) {
+      console.log([response, status, xhr]);
+    } else {
+      $("#content").animate({width:"0px"}, ()=>{
+        $("#content").remove();
+        $("#loader").attr("id", "content");
+      })
+    }
+  });
+}
+
+
+
+
+	</script>
+  <style>
+    :root{
+      --c-line: blue;
+    }
+    #main{
+      width: 90%;
+      margins: auto;
+      overflow-x: hidden;
+      whitespace: no-wrap;
+    }
+    #content{
+      display: inline-block;
+      width: 100%;
+    }
+    a.category,a.subcategory,a.item,a.subitem{
+      display: inline-block;
+      border: 1px solid var(--c-line);
+      border-radius: 1em;
+    }
+  </style>
+</head>
+<body>
+<h1>Member Print Catalog</h1>
+<div id=main>
+	<div id=content>
+  	<!-- Category Listing -->
+  	<div class=catlist id="topcat-listing">
+  		<a class="category" id="catid" href="catpath" title="catname">
+  			<img src="catimagepath">
+  			<span>catname</span>
+  		</a>
+  	</div>
+
+  	<!-- Subcategory and Item Listing -->
+  	<div id="catid-listing">
+  		<div class=subcatlist>
+  			<a class="subcategory" id="catid" href="catpath" title="catname">
+  				<img src="catimagepath">
+  				<span>catname</span>
+  			</a>
+  		</div>
+  		<div class=itemlist>
+  			<a class="item" id="itemid" href="itempath" title="itemname">
+  				<img src="itemimagepath">
+  				<span>itemname</span>
+  			</a>
+  		</div>
+  	</div>
+
+
+  	<!-- Subitem Listing -->
+  	<div class=subitemlist id="itemid-listing">
+  		<a class="subitem" id="subitemid" href="subitempath" title="subitemname">
+  			<img src="subitemimagepath">
+  			<span>subiteminfo</span>
+  		</a>
+  	</div>
+	</div>
+</div>
+</body>
+</html>
