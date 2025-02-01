@@ -1,706 +1,140 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Print Catalog</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Print Catalog</title>
+	<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+	<script>
+function load_top_listing(){
+	$("#content").load("list.html", ()=>{
+    $("a.category,a.subcategory,a.item").click((e)=>{
+      e.preventDefault();
+      load_new_listing(e.currentTarget.href)
+    })
+    $("a.breadcrumb").click((e)=>{
+      e.preventDefault();
+      load_new_listing(e.currentTarget.href,"reverse")
+    })
+  })
+}
+function load_new_listing(path,dir=""){
+	$("#main").append('<div id="loader"></div>')
+  if(dir=="reverse"){
+    $("#loader").css({left:"-100vw"})
+  }
+	$("#loader").load(path, function( response, status, xhr ) {
+    if ( status == "error" ) {
+      console.log([response, status, xhr]);
+    } else {
+      $("a.category,a.subcategory,a.item").click((e)=>{
+        e.preventDefault();
+        load_new_listing(e.currentTarget.href)
+      })
+      $("a.breadcrumb").click((e)=>{
+        e.preventDefault();
+        load_new_listing(e.currentTarget.href,"reverse")
+      })
+      $("a.subitem").click((e)=>{
+        if(!confirm('Get print file for "'+e.currentTarget.title+'"?')){
+          e.preventDefault();
+        }
+      })
+      $("#loader").animate({left:"10vw"},"slow", ()=>{
+        $("#content").remove();
+        $("#loader").attr("id", "content");
+      })
+    }
+  });
+}
+
+
+$(document).ready(function(){
+  console.log("loading top listing")
+  load_top_listing();
+})
+
+	</script>
   <style>
     :root{
-      --page-bg: #eef;
-      --panel-bg: #ccf;
-      --border-line: #99f;
+      --c-line: #99f;
+      --c-panelbg: #ccf;
     }
     body{
-      background: var(--page-bg);
+      font-family: sans-serif;
     }
-    #categories,#items,#subitems{
-      white-space: nowrap;
-      overflow-x: hidden;
-      background: linear-gradient(
-        to top,
-        var(--border-line) 1px,
-        var(--panel-bg) 1px)
-      ;
-      font-size: 0;
-      border-left: 1px solid var(--border-line);
-      border-right: 1px solid var(--border-line);
-    }
-    #categories{
-      background: linear-gradient(
-        to top,
-        var(--border-line) 1px,
-        var(--page-bg) 1px)
-      ;
-      border: none;
-    }
-    #categories>*,#items>*>*,#subitems>*>*{
-      font-size: initial;
-    }
-    label,span.subitem{
-      margin: 1em 0 0 0;
-      padding: 1em;
-      border-radius: 1em;
-      border: 1px solid var(--border-line);
-      background-color: var(--panel-bg);
-      display: inline-block;
+    h1{
       text-align: center;
+      font-family: sans-serif;
+    }
+    #main{
+      width: 80vw;
+      margin: auto;
+      overflow-x: hidden;
+    }
+    #content,#loader{
+      position: absolute;
+      top:auto;
+      left: 10vw;
+      width: calc(80vw - 4em - 2px);
       vertical-align: top;
+      text-align: center;
+      padding: 2em;
+      background: var(--c-panelbg);
+      border: 1px solid blue;
+      border-radius: 1em;
     }
-    label{
-      border-radius: 1em 1em 0em 0em;
-      border-left-width: 0px;
+    div#loader{
+      left:100vw;
     }
-    label:first-of-type{
-      border-left-width: 1px;
+    a.category,a.subcategory,a.item,a.subitem{
+      display: inline-block;
+      border: 1px solid var(--c-line);
+      border-radius: 1em;
+      text-align: center;
+      overflow: hidden;
+      margin: 1em 1em 1em 1em;
+      text-decoration: none;
+      color: black;
+      font-family: sans-serif;
     }
-    label:not(.active){
-      background-color: var(--panel-bg);
-      background-image: linear-gradient(to top, rgba(0,0,0,0.1) 0em, transparent 0.25em);
-    }
-    span.subitem>ul{
+
+
+    div[class$=list] img{
+      width: 10em;
+      height: 10em;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
       display: block;
-      text-align: initial;
+      margin: auto;
+      vertical-align: top;
+
     }
-    span.reveal{
-      display:none;
-      font-size: 0px;
+    .subitemlist img{
+      width: 20em;
+      height: 20em;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
     }
-    span.reveal>*{
-      font-size: initial;
+    .subitemlist a span{
+      text-align: left;
+      line-height: 130%;
     }
-    input{
-      display: none;
-    }
-    input:checked + span.reveal{
-      display: initial;
-    }
-    img.thumb{
-      max-height: 5em;
-    }
-    img.bigthumb{
-      max-height: 12em;
-    }
-    span.caption::before{
-      content: "";
+    div[class$=list] a span{
       display: block;
+      padding: 0.5em 1em 0.5em 1em;
+      width: calc(100% - 2em);
     }
-    label.active{
-      background-color: var(--panel-bg);
-      border-radius: 1em 1em 0em 0em;
-      border-bottom: 1px solid var(--panel-bg);
-    }
-    ul.notes{
-      list-style: none;
-      padding: 0;
-    }
+    div[class$=list] a span::first-line{
+      font-weight: bold;
     }
   </style>
-  <script>
-  document.addEventListener("DOMContentLoaded", ()=>{
-    document.querySelectorAll("label").forEach( (lbl)=>{
-      lbl.addEventListener("click", (e)=>{
-        lbl.parentElement.querySelectorAll("label").forEach((_lbl)=>{
-          if(_lbl==lbl){
-            _lbl.classList.add("active");
-          }else{
-            _lbl.classList.remove("active");
-          }
-        })
-        if(lbl.parentElement.id == "categories"){
-          document.getElementById("it").reset();
-          document.getElementById("si").reset();
-          document.querySelector("#items label.active").classList.remove("active");
-        } else if(lbl.parentElement.id == "items"){
-          document.getElementById("si").reset();
-        }
-        lbl.click()
-      })
-    })
-    document.getElementById("ct").reset();
-    document.getElementById("it").reset();
-    document.getElementById("si").reset();
-  })
-  </script>
 </head>
 <body>
 <h1>Member Print Catalog</h1>
-<form id="ct">
-<div id=categories>
-  <label for="KnickKnacks">
-    <img src="KnickKnacks/thumb.jpg" class=thumb>
-    <span class=caption>KnickKnacks</span>
-  </label>
-  <label for="Accessibility">
-    <img src="nothumb.png" class=thumb>
-    <span class=caption>Accessibility</span>
-  </label>
-  <label for="Containers">
-    <img src="Containers/thumb.jpg" class=thumb>
-    <span class=caption>Containers</span>
-  </label>
-  <label for="BookSwag">
-    <img src="BookSwag/thumb.jpg" class=thumb>
-    <span class=caption>BookSwag</span>
-  </label>
-  <label for="Fidgets">
-    <img src="Fidgets/thumb.jpg" class=thumb>
-    <span class=caption>Fidgets</span>
-  </label>
-  <label for="Music">
-    <img src="Music/thumb.jpg" class=thumb>
-    <span class=caption>Music</span>
-  </label>
+<div id=main>
+	<div id=content>
+	</div>
 </div>
-</form>
-
-<form id="it">
-<div id=items>
-  <input id="KnickKnacks" type=radio name=items>
-  <span class=reveal>
-    <label for=KnickKnacks_Articulated_Book_Worm___5266893>
-      <img src="KnickKnacks/Articulated Book Worm - 5266893/thumb.jpg" class=thumb>
-      <span class=caption>Articulated Book Worm</span>
-    </label>
-    <label for=KnickKnacks_Articulated_Lizard___3505006>
-      <img src="KnickKnacks/Articulated Lizard - 3505006/thumb.jpg" class=thumb>
-      <span class=caption>Articulated Lizard</span>
-    </label>
-    <label for=KnickKnacks_Articulated_Slug___2818955>
-      <img src="KnickKnacks/Articulated Slug - 2818955/thumb.jpg" class=thumb>
-      <span class=caption>Articulated Slug</span>
-    </label>
-    <label for=KnickKnacks_Elephant___257911_1_>
-      <img src="KnickKnacks/Elephant - 257911(1)/thumb.jpg" class=thumb>
-      <span class=caption>Elephant</span>
-    </label>
-    <label for=KnickKnacks_Low_Poly_Akita_Dog___2295835>
-      <img src="KnickKnacks/Low Poly Akita Dog - 2295835/thumb.jpg" class=thumb>
-      <span class=caption>Low Poly Akita Dog</span>
-    </label>
-    <label for=KnickKnacks_Low_Poly_Egyptian_Cat____5035825>
-      <img src="KnickKnacks/Low Poly Egyptian Cat  - 5035825/thumb.jpg" class=thumb>
-      <span class=caption>Low Poly Egyptian Cat</span>
-    </label>
-    <label for=KnickKnacks_Loop_Flower___240158>
-      <img src="KnickKnacks/Loop Flower - 240158/thumb.jpg" class=thumb>
-      <span class=caption>Loop Flower</span>
-    </label>
-    <label for=KnickKnacks_Piggy_Keychain_Phone_Stand___3532359>
-      <img src="KnickKnacks/Piggy Keychain Phone Stand - 3532359/thumb.jpg" class=thumb>
-      <span class=caption>Piggy Keychain Phone Stand</span>
-    </label>
-  </span>
-  <input id="Accessibility" type=radio name=items>
-  <span class=reveal>
-  </span>
-  <input id="Containers" type=radio name=items>
-  <span class=reveal>
-    <label for=Containers_Low_Poly_Ring_Bowl___596487>
-      <img src="Containers/Low Poly Ring Bowl - 596487/thumb.jpg" class=thumb>
-      <span class=caption>Low Poly Ring Bowl</span>
-    </label>
-    <label for=Containers_Spiral_Pencil_Holder___1325680>
-      <img src="Containers/Spiral Pencil Holder - 1325680/thumb.jpg" class=thumb>
-      <span class=caption>Spiral Pencil Holder</span>
-    </label>
-    <label for=Containers_Faceted_Bowl_and_Vase___2230232>
-      <img src="Containers/Faceted Bowl and Vase - 2230232/thumb.jpg" class=thumb>
-      <span class=caption>Faceted Bowl and Vase</span>
-    </label>
-  </span>
-  <input id="BookSwag" type=radio name=items>
-  <span class=reveal>
-    <label for=BookSwag_Bookshark_Bookmark___6261415>
-      <img src="BookSwag/Bookshark Bookmark - 6261415/thumb.jpg" class=thumb>
-      <span class=caption>Bookshark Bookmark</span>
-    </label>
-    <label for=BookSwag_READ_Bookmark___6196835>
-      <img src="BookSwag/READ Bookmark - 6196835/thumb.jpg" class=thumb>
-      <span class=caption>READ Bookmark</span>
-    </label>
-    <label for=BookSwag_ACLibrary_Bookmark___6196838>
-      <img src="BookSwag/ACLibrary Bookmark - 6196838/thumb.jpg" class=thumb>
-      <span class=caption>ACLibrary Bookmark</span>
-    </label>
-  </span>
-  <input id="Fidgets" type=radio name=items>
-  <span class=reveal>
-    <label for=Fidgets_Nested_Fidget_Rings___2989760>
-      <img src="Fidgets/Nested Fidget Rings - 2989760/thumb.jpg" class=thumb>
-      <span class=caption>Nested Fidget Rings</span>
-    </label>
-    <label for=Fidgets_Elliptical_Gear_Fidget___1082508>
-      <img src="Fidgets/Elliptical Gear Fidget - 1082508/thumb.jpg" class=thumb>
-      <span class=caption>Elliptical Gear Fidget</span>
-    </label>
-    <label for=Fidgets_Infinity_Fidget_Cube___4997903_1_>
-      <img src="Fidgets/Infinity Fidget Cube - 4997903(1)/thumb.jpg" class=thumb>
-      <span class=caption>Infinity Fidget Cube</span>
-    </label>
-  </span>
-  <input id="Music" type=radio name=items>
-  <span class=reveal>
-    <label for=Music_ShakerEgg>
-      <img src="Music/ShakerEgg/thumb.jpg" class=thumb>
-      <span class=caption>ShakerEgg</span>
-    </label>
-  </span>
-</div>
-</form>
-
-<form id="si">
-<div id=subitems>
-  <input id="KnickKnacks_Articulated_Book_Worm___5266893" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="KnickKnacks/Articulated Book Worm - 5266893/Articulated Book Worm_0.2mm_PLA_MK3S_48m.gcode" download="Articulated Book Worm_0.2mm_PLA_MK3S_48m.gcode">
-        <img src="KnickKnacks/Articulated Book Worm - 5266893/Articulated Book Worm.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Articulated Book Worm</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 48m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="KnickKnacks_Articulated_Lizard___3505006" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="KnickKnacks/Articulated Lizard - 3505006/Articulated Lizard - Big_0.4n_0.2mm_PLA_MK3S_1h56m.gcode" download="Articulated Lizard - Big_0.4n_0.2mm_PLA_MK3S_1h56m.gcode">
-        <img src="KnickKnacks/Articulated Lizard - 3505006/Articulated Lizard - Big.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Articulated Lizard - Big</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 1h56m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="KnickKnacks/Articulated Lizard - 3505006/Articulated Lizard_0.4n_0.2mm_PLA_MK3S_45m.gcode" download="Articulated Lizard_0.4n_0.2mm_PLA_MK3S_45m.gcode">
-        <img src="KnickKnacks/Articulated Lizard - 3505006/Articulated Lizard.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Articulated Lizard</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 45m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="KnickKnacks/Articulated Lizard - 3505006/Articulated Lizard - Big (turbo)_0.6n_0.35mm_PLA_MK3S_50m.gcode" download="Articulated Lizard - Big (turbo)_0.6n_0.35mm_PLA_MK3S_50m.gcode">
-        <img src="KnickKnacks/Articulated Lizard - 3505006/Articulated Lizard - Big (turbo).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Articulated Lizard - Big</li>
-        <li>Printer: Prusa MK3S (Turbo)</li>
-        <li>Print Time: 50m</li>
-        <li>Layers: 0.35mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="KnickKnacks_Articulated_Slug___2818955" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="KnickKnacks/Articulated Slug - 2818955/Articulated Slug_0.2mm_PLA_MK3S_9m.gcode" download="Articulated Slug_0.2mm_PLA_MK3S_9m.gcode">
-        <img src="KnickKnacks/Articulated Slug - 2818955/Articulated Slug.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Articulated Slug</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 9m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="KnickKnacks_Elephant___257911_1_" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="KnickKnacks/Elephant - 257911(1)/Articulated Elephant_0.25mm_PLA_MK3S_1h39m.gcode" download="Articulated Elephant_0.25mm_PLA_MK3S_1h39m.gcode">
-        <img src="KnickKnacks/Elephant - 257911(1)/Articulated Elephant.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Articulated Elephant</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 1h39m</li>
-        <li>Layers: 0.25mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="KnickKnacks_Low_Poly_Akita_Dog___2295835" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="KnickKnacks/Low Poly Akita Dog - 2295835/Low Poly Akita Dog_0.2mm_PLA_MK3S_48m.gcode" download="Low Poly Akita Dog_0.2mm_PLA_MK3S_48m.gcode">
-        <img src="KnickKnacks/Low Poly Akita Dog - 2295835/Low Poly Akita Dog.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Low Poly Akita Dog</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 48m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="KnickKnacks/Low Poly Akita Dog - 2295835/Low Poly Akita Dog big (turbo)_0.6n_0.35mm_PLA_MK3S_55m.gcode" download="Low Poly Akita Dog big (turbo)_0.6n_0.35mm_PLA_MK3S_55m.gcode">
-        <img src="KnickKnacks/Low Poly Akita Dog - 2295835/Low Poly Akita Dog big (turbo).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Low Poly Akita Dog big</li>
-        <li>Printer: Prusa MK3S (Turbo)</li>
-        <li>Print Time: 55m</li>
-        <li>Layers: 0.35mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="KnickKnacks_Low_Poly_Egyptian_Cat____5035825" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="KnickKnacks/Low Poly Egyptian Cat  - 5035825/Low Poly Egyptian Cat big (turbo)_0.6n_0.45mm_PLA_MK3S_57m.gcode" download="Low Poly Egyptian Cat big (turbo)_0.6n_0.45mm_PLA_MK3S_57m.gcode">
-        <img src="KnickKnacks/Low Poly Egyptian Cat  - 5035825/Low Poly Egyptian Cat big (turbo).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Low Poly Egyptian Cat big</li>
-        <li>Printer: Prusa MK3S (Turbo)</li>
-        <li>Print Time: 57m</li>
-        <li>Layers: 0.45mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="KnickKnacks/Low Poly Egyptian Cat  - 5035825/Low Poly Egyptian Cat_0.2mm_PLA_MK3S_48m.gcode" download="Low Poly Egyptian Cat_0.2mm_PLA_MK3S_48m.gcode">
-        <img src="KnickKnacks/Low Poly Egyptian Cat  - 5035825/Low Poly Egyptian Cat.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Low Poly Egyptian Cat</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 48m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="KnickKnacks_Loop_Flower___240158" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="KnickKnacks/Loop Flower - 240158/Loop Flower Large_0.2mm_PLA_MK3S_15m.gcode" download="Loop Flower Large_0.2mm_PLA_MK3S_15m.gcode">
-        <img src="KnickKnacks/Loop Flower - 240158/Loop Flower Large.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Loop Flower Large</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 15m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="KnickKnacks/Loop Flower - 240158/Loop Flower Medium_0.2mm_PLA_MK3S_10m.gcode" download="Loop Flower Medium_0.2mm_PLA_MK3S_10m.gcode">
-        <img src="KnickKnacks/Loop Flower - 240158/Loop Flower Medium.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Loop Flower Medium</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 10m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="KnickKnacks/Loop Flower - 240158/Loop Flower Small_0.2mm_PLA_MK3S_6m.gcode" download="Loop Flower Small_0.2mm_PLA_MK3S_6m.gcode">
-        <img src="KnickKnacks/Loop Flower - 240158/Loop Flower Small.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Loop Flower Small</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 6m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="KnickKnacks_Piggy_Keychain_Phone_Stand___3532359" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="KnickKnacks/Piggy Keychain Phone Stand - 3532359/Piggy Keychain Phone Stand_0.25mm_PLA_MK3S_49m.gcode" download="Piggy Keychain Phone Stand_0.25mm_PLA_MK3S_49m.gcode">
-        <img src="KnickKnacks/Piggy Keychain Phone Stand - 3532359/Piggy Keychain Phone Stand.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Piggy Keychain Phone Stand</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 49m</li>
-        <li>Layers: 0.25mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="Containers_Low_Poly_Ring_Bowl___596487" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="Containers/Low Poly Ring Bowl - 596487/Low Poly Ring Bowl_0.4n_0.25mm_PLA_MK3S_1h37m.gcode" download="Low Poly Ring Bowl_0.4n_0.25mm_PLA_MK3S_1h37m.gcode">
-        <img src="Containers/Low Poly Ring Bowl - 596487/Low Poly Ring Bowl.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Low Poly Ring Bowl</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 1h37m</li>
-        <li>Layers: 0.25mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="Containers_Spiral_Pencil_Holder___1325680" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="Containers/Spiral Pencil Holder - 1325680/Spiral Pencil Holder (turbo)_0.6n_0.48mm_PLA_MK3S_50m.gcode" download="Spiral Pencil Holder (turbo)_0.6n_0.48mm_PLA_MK3S_50m.gcode">
-        <img src="Containers/Spiral Pencil Holder - 1325680/Spiral Pencil Holder (turbo).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Spiral Pencil Holder</li>
-        <li>Printer: Prusa MK3S (Turbo)</li>
-        <li>Print Time: 50m</li>
-        <li>Layers: 0.48mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="Containers/Spiral Pencil Holder - 1325680/Spiral Pencil Holder_0.32mm_PLA_MK3S_1h13m.gcode" download="Spiral Pencil Holder_0.32mm_PLA_MK3S_1h13m.gcode">
-        <img src="Containers/Spiral Pencil Holder - 1325680/Spiral Pencil Holder.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Spiral Pencil Holder</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 1h13m</li>
-        <li>Layers: 0.32mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="Containers_Faceted_Bowl_and_Vase___2230232" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="Containers/Faceted Bowl and Vase - 2230232/Faceted Bowl big (turbo)_0.6n_0.48mm_PLA_MK3S_1h59m.gcode" download="Faceted Bowl big (turbo)_0.6n_0.48mm_PLA_MK3S_1h59m.gcode">
-        <img src="Containers/Faceted Bowl and Vase - 2230232/Faceted Bowl big (turbo).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Faceted Bowl big</li>
-        <li>Printer: Prusa MK3S (Turbo)</li>
-        <li>Print Time: 1h59m</li>
-        <li>Layers: 0.48mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="Containers/Faceted Bowl and Vase - 2230232/Faceted Bowl (turbo)_0.6n_0.48mm_PLA_MK3S_59m.gcode" download="Faceted Bowl (turbo)_0.6n_0.48mm_PLA_MK3S_59m.gcode">
-        <img src="Containers/Faceted Bowl and Vase - 2230232/Faceted Bowl (turbo).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Faceted Bowl</li>
-        <li>Printer: Prusa MK3S (Turbo)</li>
-        <li>Print Time: 59m</li>
-        <li>Layers: 0.48mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="Containers/Faceted Bowl and Vase - 2230232/Faceted Vase big (turbo)_0.6n_0.48mm_PLA_MK3S_1h26m.gcode" download="Faceted Vase big (turbo)_0.6n_0.48mm_PLA_MK3S_1h26m.gcode">
-        <img src="Containers/Faceted Bowl and Vase - 2230232/Faceted Vase big (turbo).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Faceted Vase big</li>
-        <li>Printer: Prusa MK3S (Turbo)</li>
-        <li>Print Time: 1h26m</li>
-        <li>Layers: 0.48mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="Containers/Faceted Bowl and Vase - 2230232/Faceted Vase (turbo)_0.6n_0.48mm_PLA_MK3S_55m.gcode" download="Faceted Vase (turbo)_0.6n_0.48mm_PLA_MK3S_55m.gcode">
-        <img src="Containers/Faceted Bowl and Vase - 2230232/Faceted Vase (turbo).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Faceted Vase</li>
-        <li>Printer: Prusa MK3S (Turbo)</li>
-        <li>Print Time: 55m</li>
-        <li>Layers: 0.48mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="BookSwag_Bookshark_Bookmark___6261415" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="BookSwag/Bookshark Bookmark - 6261415/BookShark Bookmark_0.2mm_PLA_MK3S_7m.gcode" download="BookShark Bookmark_0.2mm_PLA_MK3S_7m.gcode">
-        <img src="BookSwag/Bookshark Bookmark - 6261415/BookShark Bookmark.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>BookShark Bookmark</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 7m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="BookSwag/Bookshark Bookmark - 6261415/BookShark Bookmark (2 color)_0.2mm_PLA_MK3S_7m.gcode" download="BookShark Bookmark (2 color)_0.2mm_PLA_MK3S_7m.gcode">
-        <img src="nothumb.png" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>BookShark Bookmark (2 color)</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 7m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="BookSwag_READ_Bookmark___6196835" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="BookSwag/READ Bookmark - 6196835/READ Bookmark (2 color)_0.15mm_PLA_MK3S_9m.gcode" download="READ Bookmark (2 color)_0.15mm_PLA_MK3S_9m.gcode">
-        <img src="BookSwag/READ Bookmark - 6196835/READ Bookmark (2 color).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>READ Bookmark (2 color)</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 9m</li>
-        <li>Layers: 0.15mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="BookSwag/READ Bookmark - 6196835/READ Bookmark_0.15mm_PLA_MK3S_9m.gcode" download="READ Bookmark_0.15mm_PLA_MK3S_9m.gcode">
-        <img src="BookSwag/READ Bookmark - 6196835/READ Bookmark.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>READ Bookmark</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 9m</li>
-        <li>Layers: 0.15mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="BookSwag/READ Bookmark - 6196835/READ Bookmark (9x 2 color)_0.15mm_PLA_MK3S_1h18m.gcode" download="READ Bookmark (9x 2 color)_0.15mm_PLA_MK3S_1h18m.gcode">
-        <img src="nothumb.png" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>READ Bookmark (9x 2 color)</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 1h18m</li>
-        <li>Layers: 0.15mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="BookSwag_ACLibrary_Bookmark___6196838" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="BookSwag/ACLibrary Bookmark - 6196838/ACLibrary Bookmark (2 color)_0.15mm_PLA_MK3S_8m.gcode" download="ACLibrary Bookmark (2 color)_0.15mm_PLA_MK3S_8m.gcode">
-        <img src="BookSwag/ACLibrary Bookmark - 6196838/ACLibrary Bookmark (2 color).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>ACLibrary Bookmark (2 color)</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 8m</li>
-        <li>Layers: 0.15mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="BookSwag/ACLibrary Bookmark - 6196838/ACLibrary Bookmark_0.15mm_PLA_MK3S_8m.gcode" download="ACLibrary Bookmark_0.15mm_PLA_MK3S_8m.gcode">
-        <img src="BookSwag/ACLibrary Bookmark - 6196838/ACLibrary Bookmark.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>ACLibrary Bookmark</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 8m</li>
-        <li>Layers: 0.15mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="BookSwag/ACLibrary Bookmark - 6196838/ACLibrary Bookmark (2 color)_0.15mm_PLA_MK3S_9m.gcode" download="ACLibrary Bookmark (2 color)_0.15mm_PLA_MK3S_9m.gcode">
-        <img src="BookSwag/ACLibrary Bookmark - 6196838/ACLibrary Bookmark (2 color).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>ACLibrary Bookmark (2 color)</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 9m</li>
-        <li>Layers: 0.15mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="BookSwag/ACLibrary Bookmark - 6196838/ACLibrary Bookmark (9x 2 color)_0.15mm_PLA_MK3S_1h15m.gcode" download="ACLibrary Bookmark (9x 2 color)_0.15mm_PLA_MK3S_1h15m.gcode">
-        <img src="nothumb.png" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>ACLibrary Bookmark (9x 2 color)</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 1h15m</li>
-        <li>Layers: 0.15mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="Fidgets_Nested_Fidget_Rings___2989760" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="Fidgets/Nested Fidget Rings - 2989760/Nested Fidget Rings x9 (2 color)_0.3mm_PLA_MK3S_1h7m.gcode" download="Nested Fidget Rings x9 (2 color)_0.3mm_PLA_MK3S_1h7m.gcode">
-        <img src="nothumb.png" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Nested Fidget Rings x9 (2 color)</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 1h7m</li>
-        <li>Layers: 0.3mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="Fidgets/Nested Fidget Rings - 2989760/Nested Fidget Rings (2 color)_0.3mm_PLA_MK3S_8m.gcode" download="Nested Fidget Rings (2 color)_0.3mm_PLA_MK3S_8m.gcode">
-        <img src="Fidgets/Nested Fidget Rings - 2989760/Nested Fidget Rings (2 color).jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Nested Fidget Rings (2 color)</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 8m</li>
-        <li>Layers: 0.3mm</li>
-      </ul>
-    </span>
-    <span class="subitem">
-      <a href="Fidgets/Nested Fidget Rings - 2989760/Nested Fidget Rings_0.3mm_PLA_MK3S_8m.gcode" download="Nested Fidget Rings_0.3mm_PLA_MK3S_8m.gcode">
-        <img src="Fidgets/Nested Fidget Rings - 2989760/Nested Fidget Rings.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Nested Fidget Rings</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 8m</li>
-        <li>Layers: 0.3mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="Fidgets_Elliptical_Gear_Fidget___1082508" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="Fidgets/Elliptical Gear Fidget - 1082508/Elliptical Gear Fidget_0.32mm_PLA_MK3S_59m.gcode" download="Elliptical Gear Fidget_0.32mm_PLA_MK3S_59m.gcode">
-        <img src="Fidgets/Elliptical Gear Fidget - 1082508/Elliptical Gear Fidget.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Elliptical Gear Fidget</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 59m</li>
-        <li>Layers: 0.32mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="Fidgets_Infinity_Fidget_Cube___4997903_1_" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="Fidgets/Infinity Fidget Cube - 4997903(1)/Infinity Fidget Cube_0.2mm_PLA_MK3S_2h47m.gcode" download="Infinity Fidget Cube_0.2mm_PLA_MK3S_2h47m.gcode">
-        <img src="Fidgets/Infinity Fidget Cube - 4997903(1)/Infinity Fidget Cube.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>Infinity Fidget Cube</li>
-        <li>Printer: Prusa MK3S</li>
-        <li>Print Time: 2h47m</li>
-        <li>Layers: 0.2mm</li>
-      </ul>
-    </span>
-  </span>
-  <input id="Music_ShakerEgg" type=radio name=subitems>
-  <span class=reveal>
-    <span class="subitem">
-      <a href="Music/ShakerEgg/ShakerEgg_0.6n_0.3mm_PLA_MK3S_46m.gcode" download="ShakerEgg_0.6n_0.3mm_PLA_MK3S_46m.gcode">
-        <img src="Music/ShakerEgg/ShakerEgg.jpg" class=bigthumb>
-      </a>
-      <ul class=notes>
-        <li>ShakerEgg</li>
-        <li>Printer: Prusa MK3S (Turbo)</li>
-        <li>Print Time: 46m</li>
-        <li>Layers: 0.3mm</li>
-      </ul>
-    </span>
-  </span>
-</div>
-</form>
 </body>
 </html>
