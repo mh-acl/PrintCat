@@ -108,6 +108,13 @@ File.open("list.html","w") do |o|
       catimagepath: catimagepath
     )
   end
+  # add "view all items" category
+  o.write html.catlist_mid.tmpl(
+    catid: "",
+    catpath: "biglist.html",
+    catname: "View All Items",
+    catimagepath: nothumb
+  )
   o.write html.catlist_end
 end
 
@@ -163,6 +170,7 @@ itempathlist = itempathlist.uniq.sort
       )
     end
     o.write html.subcatlist_post unless scps.empty?
+
     # items for this category if they exist
     ips = itempathlist.select{|ip| ip.start_with? cp+"/"}
     o.write html.itemlist_pre unless ips.empty?
@@ -182,6 +190,31 @@ itempathlist = itempathlist.uniq.sort
     o.write html.subcatlistwrap_post
   end
 end
+
+### output "all items" listing
+File.open("biglist.html",'w') do |o|
+  o.write html.itemlist_pre
+  # breadcrumbs: just the top level
+  o.write html.breadcrumbs_pre
+  o.write html.breadcrumbs_post
+
+  #warn itempathlist.inspect
+
+  itempathlist.each do |ip|
+    itemid = ip.gsub(/[^[:alnum:]]/,"_")
+    itempath = ip
+    itemname = ip.split("/").last[/^(.+?)(?:\s\-\s[\d\()]+)?$/,1]
+    itemimagepath = Dir.glob(File.join(ip,"thumb.{png,jpg,jpeg}")).first || nothumb
+    o.write html.itemlist_mid.tmpl(
+      itemid:itemid,
+      itempath:itempath+"/list.html",
+      itemname:itemname,
+      itemimagepath:itemimagepath
+    )
+  end
+  o.write html.itemlist_post
+end
+
 
 ### output subitem listing
 itempathlist.each do |ip|
