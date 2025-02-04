@@ -2,6 +2,7 @@
 # create a page for each category and item. 
 
 require 'ostruct'
+require './lib/template'
 class String
   def sqz() lines.map(&:strip).join; end
   def tmpl(**kw)
@@ -13,50 +14,48 @@ end
 html = OpenStruct.new
 
 # category listing
-html.catlist_pre = <<-HTML.sqz
+html.catlist = Template.new(<<-HTML, squeeze: true)
     <div class=catlist id="topcat-listing">
-HTML
-html.catlist_mid = <<-HTML.sqz
+      <br><!-- breadcrumb space-->
+      {cats{
       <a class="category" id="{catid}" href="{catpath}" title="{catname}">
         <img src="{catimagepath}">
         <span>{catname}</span>
       </a>
-HTML
-html.catlist_post = <<-HTML.sqz
+      }}
     </div>
 HTML
 
-# subcategory and item listings
-html.subcatlist_wrap_pre = <<-HTML.sqz
-    <div id="{catid}-listing">
-HTML
-html.subcatlist_pre = <<-HTML.sqz
+# crumbs:
+# ⬅︎ <a class=breadcrumb href="list.html" name="Top">Top</a>
+# {crumbs{
+# &nbsp;/ <a class=breadcrumb href="{link}" title="{name}">{name}</a>
+# }}
+
+# NEW subcategory and item listings
+html.catlist = Template.new(<<-HTML,squeeze:true)
+    <div id="{id}-listing">
+      {crumbs{<a class=breadcrumb href="{link}" title="{name}">{name}</a> }}
+      <br><!-- end breadcrumbs -->
       <div class=subcatlist>
-HTML
-html.subcatlist_mid = <<-HTML.sqz
-        <a class="subcategory" id="{subcatid}" href="{subcatpath}" title="{subcatname}">
-          <img src="{subcatimagepath}">
-          <span>{subcatname}</span>
+        {subcats{
+        <a class="subcategory" id="{id}" href="{path}" title="{name}">
+          <img src="{imagepath}">
+          <span>{name}</span>
         </a>
-HTML
-html.subcatlist_post = <<-HTML.sqz
+        }}
       </div>
-HTML
-html.itemlist_pre = <<-HTML.sqz
       <div class=itemlist>
-HTML
-html.itemlist_mid = <<-HTML.sqz
-        <a class="item" id="{itemid}" href="{itempath}" title="{itemname}">
-          <img src="{itemimagepath}">
-          <span>{itemname}</span>
+        {items{
+        <a class="item" id="{id}" href="{path}" title="{name}">
+          <img src="{imagepath}">
+          <span>{name}</span>
         </a>
-HTML
-html.itemlist_post = <<-HTML.sqz
+        }}
       </div>
-HTML
-html.subcatlist_wrap_post = <<-HTML.sqz
     </div>
 HTML
+
 
 # subitem listing
 html.subitemlist_pre = <<-HTML.sqz
@@ -81,47 +80,99 @@ html.breadcrumbs_post = <<-HTML.sqz
   <br>
 HTML
 
+# NEW subitem listing
+html.subitemlist = Template.new(<<-HTML,squeeze:true)
+    <div class=subitemlist id="{itemid}-listing">
+      {crumbs{<a class=breadcrumb href="{link}" title="{name}">{name}</a> }}
+      <br><!-- end breadcrumbs -->
+      {subitems{
+      <a class="subitem" href="{path}" title="{name}" download="{filename}">
+        <img src="{imagepath}">
+        <span>{notes}</span>
+      </a>
+    }}
+    </div>
+HTML
+
+
+# NEW subitem listing
 
 
 # the missing image
 nothumb = "nothumb.png"
 
+# convert to id
+id=->(str){str ? str.gsub(/[^[:alnum:]]/,"_"):"all"}
+apath=->(path){path.split("/")}
+spath=->(path){path.join("/")}
+idx_for=->(dir){dir ? spath[[*apath[dir],"list.html"]]:"listall.html"}
+
 # find all the print files and sort them
 printfiles = Dir.glob('**/*.{b,}gcode').sort
 
-#### top category listing
-catpathlist = printfiles.map{|s|s.split("/").first}.uniq
-File.open("list.html","w") do |o|
-  o.write html.catlist_pre
-  # breadcrumbs spacer
-  warn html.breadcrumbs_post
-  o.write html.breadcrumbs_post
-
-  catpathlist.each do |d|
-    catid = d.gsub(/[^[:alnum:]]/,"_")
-    catpath = catname = d
-    catimagepath = Dir.glob(File.join(d,"thumb.{png,jpg,jpeg}")).first || nothumb
-    o.write html.catlist_mid.tmpl(
-      catid: catid,
-      catpath: catpath+"/list.html",
-      catname: catname,
-      catimagepath: catimagepath
-    )
-  end
-  # add "view all items" category
-  o.write html.catlist_mid.tmpl(
-    catid: "",
-    catpath: "biglist.html",
-    catname: "View All Items",
-    catimagepath: nothumb
-  )
-  o.write html.catlist_end
+# get all the listings
+topcatpaths = []
+subcatpaths = []
+catpaths    = [] # in case it makes no sense to differentiate between top categories and subcats
+itempaths   = []
+printfiles.each do |path|
+  # split filename into parts
+  *cats,item,file = path.split("/")
+  # top categories:
+  topcatpaths<<cats.first
+  # subcategories: add each parent category 
+  cats.inject{ |parent,child| (subcatpaths<<(parent+"/"+child)).last }
+  # catpaths (experimental):
+  cats.inject(nil){ |parent,child| (catpaths<<[parent,child].compact.join("/")).last }
+  # itempaths:
+  itempaths<<[*cats,item].join("/")
 end
+catpaths.uniq!
+itempaths.uniq!
+warn subcatpaths.inspect
 
+
+def pp(val) p(val); val; end
 
 
 #### other listings
 
+### new category and item listing
+# "" => top level
+# nil => list all
+["",nil,*catpaths].each do |cp|
+  File.open(idx_for[cp],'w') do |idx|
+    idx.write html.catlist.fill(
+      id: id[cp],
+      crumbs: (apath[cp||" "].size).times.map do |n|
+        { link: idx_for[spath[apath[cp||" "].first(n)]],
+          name: n>0 ? apath[cp||" "][n-1] : "Top"
+        }
+      end,
+      subcats: catpaths.select{|x|cp ? apath[x][0...-1]==apath[cp]:false}.map do |x|
+        { id: x.gsub(/[^[:alnum:]]/,"_"),
+          path: idx_for[x],
+          name: x.split("/").last,
+          imagepath: Dir.glob(File.join(x,"thumb.{png,jpg,jpeg}")).first || nothumb
+        }
+      end + (cp&.empty? ?
+        [{id: "all",
+          path: "listall.html",
+          name: "All Items",
+          imagepath: nothumb
+        }]
+        : []
+      ),
+      items: itempaths.select{|x|cp ? apath[x][0...-1]==apath[cp]:true}.map do |x|
+        { id: x.gsub(/[^[:alnum:]]/,"_"),
+          path: idx_for[x],
+          name: x.split("/").last[/^(.+?)(?:\s\-\s[\d\()]+)?$/,1],
+          imagepath: Dir.glob(File.join(x,"thumb.{png,jpg,jpeg}")).first || nothumb
+        }
+      end
+    ) # template
+  end
+end
 
 # get subcategories, items, subitems
 subcatpathlist = []
@@ -142,131 +193,113 @@ itempathlist = itempathlist.uniq.sort
 
 ### output subcategory/item listings
 
-(catpathlist+subcatpathlist).each do |cp|
-  File.open(File.join(cp,"list.html"), "w") do |o|
-    # breadcrumbs
-    o.write html.breadcrumbs_pre
-    crumbs = cp.split("/").inject([]){|a,b|
-      [*a,[a.last,b].compact.join("/")]
-    }[0...-1].map{|c| [c+"/list.html",c.split("/").last]}
-    o.write crumbs.map{|c| html.breadcrumbs.tmpl(link:c[0],name:c[1])}.join(" / ")
-    o.write html.breadcrumbs_post
+# (catpathlist+subcatpathlist).map do |cp|
+#   File.open(File.join(cp,"olist.html"), "w") do |o|
+#     # breadcrumbs
+#     o.write html.breadcrumbs_pre
+#     crumbs = cp.split("/").inject([]){|a,b|
+#       [*a,[a.last,b].compact.join("/")]
+#     }[0...-1].map{|c| [c+"/list.html",c.split("/").last]}
+#     o.write crumbs.map{|c| html.breadcrumbs.tmpl(link:c[0],name:c[1])}.join(" / ")
+#     o.write html.breadcrumbs_post
 
-    catid = cp.gsub(/[^[:alnum:]]/,"_")
-    o.write html.subcatlist_wrap_pre.tmpl(catid:catid)
-    # subcategories for this category if they exist
-    scps = subcatpathlist.select{|scp|scp.start_with? cp+"/"}
-    o.write html.subcatlist_pre unless scps.empty?
-    scps.each do |scp|
-      subcatid = scp.gsub(/[^[:alnum:]]/,"_")
-      subcatpath = scp
-      subcatname = scp.split("/").last
-      subcatimagepath = Dir.glob(File.join(scp,"thumb.{png,jpg,jpeg}")).first || nothumb
-      o.write html.subcatlist_mid.tmpl(
-        subcatid:subcatid,
-        subcatpath:subcatpath+"/list.html",
-        subcatname:subcatname,
-        subcatimagepath:subcatimagepath
-      )
-    end
-    o.write html.subcatlist_post unless scps.empty?
+#     catid = cp.gsub(/[^[:alnum:]]/,"_")
+#     o.write html.subcatlist_wrap_pre.tmpl(catid:catid)
+#     # subcategories for this category if they exist
+#     scps = subcatpathlist.select{|scp|scp.start_with? cp+"/"}
+#     o.write html.subcatlist_pre unless scps.empty?
+#     scps.each do |scp|
+#       subcatid = scp.gsub(/[^[:alnum:]]/,"_")
+#       subcatpath = scp
+#       subcatname = scp.split("/").last
+#       subcatimagepath = Dir.glob(File.join(scp,"thumb.{png,jpg,jpeg}")).first || nothumb
+#       o.write html.subcatlist_mid.tmpl(
+#         subcatid:subcatid,
+#         subcatpath:subcatpath+"/list.html",
+#         subcatname:subcatname,
+#         subcatimagepath:subcatimagepath
+#       )
+#     end
+#     o.write html.subcatlist_post unless scps.empty?
 
-    # items for this category if they exist
-    ips = itempathlist.select{|ip| ip.start_with? cp+"/"}
-    o.write html.itemlist_pre unless ips.empty?
-    ips.each do |ip|
-      itemid = ip.gsub(/[^[:alnum:]]/,"_")
-      itempath = ip
-      itemname = ip.split("/").last[/^(.+?)(?:\s\-\s[\d\()]+)?$/,1]
-      itemimagepath = Dir.glob(File.join(ip,"thumb.{png,jpg,jpeg}")).first || nothumb
-      o.write html.itemlist_mid.tmpl(
-        itemid:itemid,
-        itempath:itempath+"/list.html",
-        itemname:itemname,
-        itemimagepath:itemimagepath
-      )
-    end
-    o.write html.itemlist_post unless ips.empty?
-    o.write html.subcatlistwrap_post
-  end
-end
+#     # items for this category if they exist
+#     ips = itempathlist.select{|ip| ip.start_with? cp+"/"}
+#     o.write html.itemlist_pre unless ips.empty?
+#     ips.each do |ip|
+#       itemid = ip.gsub(/[^[:alnum:]]/,"_")
+#       itempath = ip
+#       itemname = ip.split("/").last[/^(.+?)(?:\s\-\s[\d\()]+)?$/,1]
+#       itemimagepath = Dir.glob(File.join(ip,"thumb.{png,jpg,jpeg}")).first || nothumb
+#       o.write html.itemlist_mid.tmpl(
+#         itemid:itemid,
+#         itempath:itempath+"/list.html",
+#         itemname:itemname,
+#         itemimagepath:itemimagepath
+#       )
+#     end
+#     o.write html.itemlist_post unless ips.empty?
+#     o.write html.subcatlistwrap_post
+#   end
+# end
 
 ### output "all items" listing
-File.open("biglist.html",'w') do |o|
-  o.write html.itemlist_pre
-  # breadcrumbs: just the top level
-  o.write html.breadcrumbs_pre
-  o.write html.breadcrumbs_post
+# File.open("biglist.html",'w') do |o|
+#   o.write html.itemlist_pre
+#   # breadcrumbs: just the top level
+#   o.write html.breadcrumbs_pre
+#   o.write html.breadcrumbs_post
 
-  #warn itempathlist.inspect
+#   #warn itempathlist.inspect
 
-  itempathlist.each do |ip|
-    itemid = ip.gsub(/[^[:alnum:]]/,"_")
-    itempath = ip
-    itemname = ip.split("/").last[/^(.+?)(?:\s\-\s[\d\()]+)?$/,1]
-    itemimagepath = Dir.glob(File.join(ip,"thumb.{png,jpg,jpeg}")).first || nothumb
-    o.write html.itemlist_mid.tmpl(
-      itemid:itemid,
-      itempath:itempath+"/list.html",
-      itemname:itemname,
-      itemimagepath:itemimagepath
-    )
-  end
-  o.write html.itemlist_post
-end
+#   itempathlist.each do |ip|
+#     itemid = ip.gsub(/[^[:alnum:]]/,"_")
+#     itempath = ip
+#     itemname = ip.split("/").last[/^(.+?)(?:\s\-\s[\d\()]+)?$/,1]
+#     itemimagepath = Dir.glob(File.join(ip,"thumb.{png,jpg,jpeg}")).first || nothumb
+#     o.write html.itemlist_mid.tmpl(
+#       itemid:itemid,
+#       itempath:itempath+"/list.html",
+#       itemname:itemname,
+#       itemimagepath:itemimagepath
+#     )
+#   end
+#   o.write html.itemlist_post
+# end
 
-
-### output subitem listing
-itempathlist.each do |ip|
-  File.open(File.join(ip,"list.html"), "w") do |o|
-    sips = printfiles.select{|pf| pf.start_with? ip+"/"}
-    o.write html.subitemlist_pre
-    # breadcrumbs
-    o.write html.breadcrumbs_pre
-    crumbs = ip.split("/").inject([]){|a,b|
-      [*a,[a.last,b].compact.join("/")]
-    }[0...-1].map{|c| [c+"/list.html",c.split("/").last]}
-    o.write crumbs.map{|c| html.breadcrumbs.tmpl(link:c[0],name:c[1])}.join(" / ")
-    o.write html.breadcrumbs_post
-    sips.each do |sip|
-      subitempath = sip
-      subitemfilename = sip.split("/").last
-      # get the print info
-      gcode_name_parser = /
-        ^(?<name>.+?)_
-        ((?<nozzle>[\d\.]+)n_)? # optional nozzle size
-        (?<layer_height>[\d\.]+mm)_
-        (?<material>[^_]+)_
-        (?<printer>[^_]+)_
-        (?<time>[\dhm]+)\.gcode$
-      /x
-      matches = subitemfilename.match(gcode_name_parser)
-
-      subitemimagepath = Dir.glob(ip+"/"+matches[:name]+".{png,jpg,jpeg}").first || nothumb
-
-      # try to extract png from gcode
-      if subitemimagepath == nothumb
-        require 'base64'
-        filedata = File.read(sip)[/thumbnail begin.+?\n(.+)thumbnail end/m,1]
-        pngdata = Base64.decode64(filedata.gsub(/;\s/,""))
-        File.write(ip+"/"+matches[:name]+".png", pngdata)
-        subitemimagepath = ip+"/"+matches[:name]+".png"
+### new subitem listing
+itempaths.each do |ip|
+  File.open(idx_for[ip],'w') do |idx|
+    idx.write html.subitemlist.fill(
+      id: id[ip],
+      crumbs: (apath[ip].size).times.map do |n|
+        { link: idx_for[spath[apath[ip].first(n)]],
+          name: n>0 ? apath[ip][n-1] : "Top"
+        }
+      end,
+      subitems: printfiles.select{|x|apath[x][0...-1]==apath[ip]}.map do |x|
+        matches = apath[x].last.match(/
+          ^(?<name>.+?)_
+          ((?<nozzle>[\d\.]+)n_)? # optional nozzle size
+          (?<layer_height>[\d\.]+mm)_
+          (?<material>[^_]+)_
+          (?<printer>[^_]+)_
+          (?<time>[\dhm]+)\.gcode$
+        /x)
+        if Dir.glob(ip+"/"+matches[:name]+".{jpg,jpeg,png}").empty?
+          require './lib/gcode'
+          File.write(ip+"/"+matches[:name]+".png",Gcode.new(x)[:thumbnail])
+        end
+        { path: x,
+          name: matches[:name],
+          filename: apath[x].last,
+          imagepath: Dir.glob(ip+"/"+matches[:name]+".{jpg,jpeg,png}").first || nothumb,
+          notes:[
+            matches[:name],
+            "<i>Printer:</i> "+matches[:printer]+(matches[:nozzle] ? " #{matches[:nozzle]} nozzle":""),
+            "<i>Print time:</i> "+matches[:time]
+          ].join("<br>")
+        }
       end
-
-
-      notes = [
-        matches[:name],
-        "<i>Printer:</i> "+matches[:printer]+(matches[:nozzle] ? " #{matches[:nozzle]} nozzle":""),
-        "<i>Print time:</i> "+matches[:time]
-      ].join("<br>")
-      o.write html.subitemlist_mid.tmpl(
-        subitempath:subitempath,
-        subitemfilename:subitemfilename,
-        subitemname:matches[:name],
-        subitemimagepath:subitemimagepath,
-        notes:notes
-      )
-    end
-    o.write html.subitemlist_post
+    )
   end
 end
