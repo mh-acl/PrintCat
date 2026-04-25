@@ -23,13 +23,23 @@
         },
         "quickprint": {
             "angle": "55",
-            "bearing_gap": "0.4",
-            "cut": "0.7",
-            "gap": "1.1",
+            "bearing_gap": "0.75",
+            "cut": "0.70000000000000007",
+            "gap": "1.2",
             "outer_diameter": "35",
             "rings": "3",
             "thickness": "2",
             "width": "6"
+        },
+        "New set 3": {
+            "angle": "55",
+            "bearing_gap": "0.80000000000000004",
+            "cut": "0.90000000000000002",
+            "gap": "1.5",
+            "outer_diameter": "40",
+            "rings": "3",
+            "thickness": "3",
+            "width": "4"
         }
     }
 }

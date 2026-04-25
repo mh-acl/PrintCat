@@ -19,7 +19,7 @@ gap = 1.5; // [0.2:0.1:10]
 cut = 0.5; // [0:0.1:1]
 
 // Gap between bearing surfaces. Too tight may fuse when printing, too loose may fall apart.
-bearing_gap = 0.5; // [0.1:0.1:5]
+bearing_gap = 0.5; // [0.1:0.05:5]
 
 // Angle to print the cone part of the bearing at. Adjust if your printer is better or worse at printing overhangs. 0 would be vertical, 90 horizontal.
 angle = 55; //[15:1:75]
