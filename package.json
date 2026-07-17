@@ -1,0 +1,22 @@
+{
+  "name": "printcat",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": { "start": "electron ." },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mh-acl/PrintCat.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/mh-acl/PrintCat/issues"
+  },
+  "homepage": "https://github.com/mh-acl/PrintCat#readme"
+}
