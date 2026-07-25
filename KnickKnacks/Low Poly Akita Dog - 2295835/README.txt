@@ -1,1 +1,0 @@
-Low Poly Akita by FrisbeePuppy on Thingiverse: https://www.thingiverse.com/thing:2295835

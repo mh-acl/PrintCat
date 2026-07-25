@@ -1,1 +1,0 @@
-The Bookshark Bookmark by blecheimer on Thingiverse: https://www.thingiverse.com/thing:6261415

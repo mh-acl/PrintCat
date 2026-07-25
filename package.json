@@ -1,12 +1,13 @@
 {
   "name": "printcat",
+  "productName": "Print Catalog",
   "version": "1.0.0",
-  "description": "",
-  "main": "main.js",
-  "directories": {
-    "lib": "lib"
+  "description": "Print job catalog and management app for the makerspace's Prusa MK4S printers.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
   },
-  "scripts": { "start": "electron ." },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mh-acl/PrintCat.git"
@@ -18,5 +19,33 @@
   "bugs": {
     "url": "https://github.com/mh-acl/PrintCat/issues"
   },
-  "homepage": "https://github.com/mh-acl/PrintCat#readme"
+  "homepage": "https://github.com/mh-acl/PrintCat#readme",
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "sudo-prompt": "^9.2.1"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.mh-acl.printcatalog",
+    "productName": "Print Catalog",
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!src/main/bin/**"
+    ],
+    "extraResources": [
+      {
+        "from": "src/main/bin",
+        "to": "bin",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.utilities"
+    }
+  }
 }

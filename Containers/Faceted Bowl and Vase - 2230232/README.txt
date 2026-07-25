@@ -1,1 +1,0 @@
-Faceted Bowl and Vase by billbo1958 on Thingiverse: https://www.thingiverse.com/thing:2230232

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Set up GitHub sync</title>
+<style>
+  body {
+    margin: 0;
+    padding: 20px;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px;
+    color: #1a1a1a;
+  }
+  h1 {
+    font-size: 14px;
+    margin: 0 0 8px;
+  }
+  p {
+    color: #555;
+    line-height: 1.4;
+    margin: 0 0 14px;
+  }
+  input[type="password"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    font-size: 13px;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    margin-bottom: 6px;
+  }
+  .error {
+    color: #b00020;
+    min-height: 16px;
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
+  .buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  button {
+    padding: 6px 14px;
+    font-size: 13px;
+    border-radius: 5px;
+    border: 1px solid #bbb;
+    background: #f2f2f2;
+  }
+  button.primary {
+    background: #0a66d6;
+    border-color: #0a66d6;
+    color: white;
+  }
+</style>
+</head>
+<body>
+  <h1>Set up GitHub sync on this laptop</h1>
+  <p>
+    This laptop hasn't been set up to push to the catalog's GitHub
+    repository yet. Paste a push token below, then confirm the admin
+    authorization prompt that follows.
+  </p>
+  <input id="token" type="password" placeholder="Paste GitHub token" autofocus />
+  <div class="error" id="error"></div>
+  <div class="buttons">
+    <button id="cancel">Cancel</button>
+    <button id="submit" class="primary">Set Up &amp; Continue</button>
+  </div>
+
+  <script src="provisionTokenRenderer.js"></script>
+</body>
+</html>

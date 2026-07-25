@@ -1,1 +1,0 @@
-Articulated Slug by 8ran on Thingiverse: https://www.thingiverse.com/thing:2818955

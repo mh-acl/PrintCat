@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Print Catalog</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-header">
+    <h1>Member Print Catalog</h1>
+  </div>
+  <div id="top-filters">
+    <div class="keyword-filter-wrap">
+      <input
+        type="search"
+        id="keyword-filter"
+        class="keyword-filter"
+        placeholder="Search items, files, or tags&hellip;"
+        autocomplete="off"
+      />
+    </div>
+    <div id="printer-filter"></div>
+    <div id="category-filter"></div>
+  </div>
+  <div id="listing"></div>
+  <div id="sync-status" class="sync-status"></div>
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,1 +1,0 @@
-Elliptical Gear with no center pivot by cohlwiler on Thingiverse: https://www.thingiverse.com/thing:1082508

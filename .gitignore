@@ -2,3 +2,5 @@
 **/Desktop.ini
 **/._*
 **/Thumbs.db
+dist/*
+node_modules/electron/dist/Electron.app

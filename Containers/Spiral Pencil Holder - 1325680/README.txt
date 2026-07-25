@@ -1,1 +1,0 @@
-Pencil holder by SIMON68 on Thingiverse: https://www.thingiverse.com/thing:1325680

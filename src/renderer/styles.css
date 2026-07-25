@@ -1,0 +1,299 @@
+body {
+  font-family: sans-serif;
+  max-width: 900px;
+  margin: 2em auto;
+}
+
+h1 {
+  text-align: center;
+}
+
+.settings-box {
+  min-width: 20em;
+  text-align: left;
+}
+
+.settings-intro {
+  color: #666;
+  margin: 0 0 0.75em;
+  text-align: left;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.3em 0;
+  cursor: pointer;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+  margin: 0.6em 0;
+}
+
+.settings-field-label {
+  font-size: 0.9em;
+  color: #444;
+}
+
+.settings-text-input {
+  padding: 0.5em 0.7em;
+  border-radius: 0.5em;
+  border: 1px solid #99f;
+  font-size: 1em;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.settings-text-input:focus {
+  outline: none;
+  border-color: #66f;
+  box-shadow: 0 0 0 2px rgba(102, 102, 255, 0.2);
+}
+
+.settings-buttons {
+  display: flex;
+  gap: 0.5em;
+  margin-top: 1em;
+}
+
+.settings-buttons button {
+  flex: 1;
+}
+
+.keyword-filter-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1em;
+}
+
+.keyword-filter {
+  width: 100%;
+  max-width: 28em;
+  padding: 0.6em 1.1em;
+  border-radius: 1.5em;
+  border: 1px solid #99f;
+  font-size: 1em;
+  box-sizing: border-box;
+}
+
+.keyword-filter:focus {
+  outline: none;
+  border-color: #66f;
+  box-shadow: 0 0 0 2px rgba(102, 102, 255, 0.2);
+}
+
+#printer-filter,
+#category-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  justify-content: center;
+  margin-bottom: 1em;
+}
+
+#category-filter {
+  margin-bottom: 1.5em;
+}
+
+.filter-pill {
+  padding: 0.5em 1em;
+  border-radius: 1.5em;
+  border: 1px solid #99f;
+  background: #eee;
+  color: #555;
+  cursor: pointer;
+}
+
+.filter-pill.active {
+  background: #ccf;
+  color: black;
+  font-weight: bold;
+}
+
+.empty-state {
+  width: 100%;
+  text-align: center;
+  padding: 2em 1em;
+  color: #555;
+}
+
+.empty-state-icon {
+  font-size: 2.5em;
+}
+
+.empty-state-title {
+  font-size: 1.3em;
+  font-weight: bold;
+  margin: 0.3em 0;
+}
+
+.empty-state-sub {
+  margin: 0;
+  color: #777;
+}
+
+.back-link {
+  display: inline-block;
+  margin-bottom: 1em;
+  color: #55c;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}
+
+#listing {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5em;
+}
+
+.item-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1em;
+  justify-content: center;
+}
+
+a.listing {
+  display: inline-block;
+  width: 12em;
+  border: 1px solid #99f;
+  border-radius: 1em;
+  text-align: center;
+  overflow: hidden;
+  text-decoration: none;
+  color: black;
+}
+
+a.listing .thumb-slot {
+  width: 100%;
+  height: 12em;
+}
+
+a.listing .thumb-slot img,
+a.listing .thumb-slot svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+a.listing span {
+  display: block;
+  padding: 0.5em;
+}
+
+.item-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1em;
+  justify-content: center;
+  width: 100%;
+}
+
+.file-row {
+  border: 1px solid #ccc;
+  border-radius: 1em;
+  padding: 1em;
+  width: 14em;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.file-row img {
+  width: 100%;
+  height: 10em;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 0.5em;
+}
+
+.file-row a {
+  display: inline-block;
+  margin-top: 0.5em;
+}
+
+.file-meta div {
+  margin: 0.15em 0;
+}
+
+.print-button {
+  margin-top: 0.75em;
+  padding: 0.6em 1.2em;
+  border-radius: 2em;
+  border: 1px solid #99f;
+  background: #ccf;
+  font-size: 1em;
+  cursor: pointer;
+}
+
+.print-button:hover {
+  background: #bbf;
+}
+
+.drive-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.drive-picker-box {
+  background: white;
+  padding: 1.5em;
+  border-radius: 1em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  min-width: 18em;
+}
+
+.drive-picker-box h3 {
+  margin: 0 0 0.5em;
+  text-align: center;
+}
+
+.drive-picker-box p {
+  margin: 0 0 0.5em;
+  text-align: center;
+}
+
+.drive-picker-box button {
+  padding: 0.75em;
+  border-radius: 0.5em;
+  border: 1px solid #99f;
+  background: #eef;
+  font-size: 1em;
+  cursor: pointer;
+}
+
+.drive-picker-box button.cancel {
+  background: #eee;
+  border-color: #ccc;
+}
+
+.drive-picker-box button.eject {
+  background: #fde3b0;
+  border-color: #e0a94a;
+}
+.sync-status {
+  text-align: center;
+  padding-block-start: 2em;
+  font-size: small;
+  color: lightgrey;
+}
+.pause-tooltip-icon {
+  cursor: help;
+  color: #666;
+  font-style: normal;
+  margin-left: 0.25em;
+}
