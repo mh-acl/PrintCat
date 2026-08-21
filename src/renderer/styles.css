@@ -197,6 +197,10 @@ a.listing span {
   width: 100%;
 }
 
+.item-detail-header {
+  flex: 1 0 100%;
+}
+
 .file-row {
   border: 1px solid #ccc;
   border-radius: 1em;
