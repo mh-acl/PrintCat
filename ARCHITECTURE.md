@@ -19,7 +19,8 @@ out which files it needs without re-reading everything.
   `bgcodeParser.js`, `bgcodeCli.js`, `gcodeCommandScan.js`, `folderName.js`,
   `thumbnailCache.js`, `thumbnailResolver.js`, `settings.js`, `drives.js`,
   `gitSync.js`, `gitPush.js`, `tokenStore.js`, `provisionTokenWindow.js`,
-  `syncState.js`, `tools.js`, `usbWiperWindow.js`
+  `editSession.js`, `itemMetadata.js`, `originLocation.js`, `syncState.js`,
+  `tools.js`, `usbWiperWindow.js`
 - **Preload (bridge)**: `preload.js`, `usbWiperPreload.js`,
   `provisionTokenPreload.js`
 - **Renderer (UI, no framework)**: `renderer.js`, `index.html`,
@@ -94,40 +95,168 @@ reported distinctly from total failure.
 
 The Tools menu also has two items that do **not** go through this
 registry: **USB Wiper**, wired directly in `main.js`'s `buildMenu()` to
-`usbWiperWindow.js`'s `openUsbWiperWindow()`. It doesn't fit the
+`usbWiperWindow.js`'s `openUsbWiperWindow(settingsStore)`. It doesn't fit the
 confirm-dialog → `run()` → result-dialog shape because it opens a
 persistent window with its own session state rather than running once and
 reporting a result — see `usbWiperWindow.js` below.
 
-**Add items to Print Catalog…**, also wired directly in `buildMenu()`,
-to `runAddItemsToCatalog()` (also in `main.js`). This is the first,
-bones-only slice of the co-admin import feature described in prior
-design discussion (not yet reflected elsewhere in this file) — none of
-the planned niceties (image/print-file reconciliation, `metadata.json`,
-a multi-item staging queue) exist yet. It doesn't fit the `TOOLS`
-registry shape either, since it needs a folder-picker result to feed
-into the rest of the flow before any confirm/run step makes sense.
-Current flow: native folder-picker dialog (`dialog.showOpenDialog`,
-`openDirectory`) → the picked folder is copied as-is via `fsp.cp(...,
-{ recursive: true })` into `DATA_DIR/<FALLBACK_CATEGORY>/<folderName>`,
-where `FALLBACK_CATEGORY` is a hard-coded `"New Items"` placeholder
-category (there's no category-assignment UI yet — everything lands in
-one bucket for now) → a confirm dialog ("Push to GitHub?") → on
-confirm, `tokenStore.js`'s `tokenExists()` check — if the laptop
-hasn't been provisioned yet, `provisionTokenWindow.js`'s
-`promptForToken()` collects a token inline and `writeSyncToken()` writes
-it (one admin-auth prompt); otherwise `readSyncToken()` (a separate
-admin-auth prompt, every time) — → on success, `gitPush.js`'s
-`pushNewItem()` commits and pushes → a result dialog. If the co-admin
-cancels the confirm dialog or the provisioning dialog, or the push
-fails for any reason, the copied folder is removed from `DATA_DIR`
-again (best effort) rather than left as an uncommitted stray — though a
-failed *push* (as opposed to a cancel) would have self-healed on the
-next launch's `syncCatalogRepo()` reset regardless, per `gitSync.js`'s
-one-way-mirror behavior below. All metadata (name, category placement
-aside) is still expected to come from `folderName.js`/filename parsing,
-same as the existing hand-edited workflow — there's no `metadata.json`
-support yet.
+**Edit Print Catalog…**, also wired directly in `buildMenu()`, to
+`enterEditSession()` (also in `main.js`). This supersedes the earlier
+bones-only "Add items to Print Catalog…" — rather than one folder in,
+one push out, the *main catalog screen itself* doubles as an editing
+UI (see `renderer.js`'s `editModeActive` below): a co-admin can add,
+edit, and delete any number of items, reviewed together, before a
+single push covers everything. `enterEditSession()` just checks
+`gitRepoUrl` is configured, creates an `EditSession` (`editSession.js`)
+if one doesn't already exist, and tells the renderer to flip into
+edit mode (`'editSession:entered'`) — the actual folder-picking,
+staging, and confirm/cancel push all happen through the
+`editSession:*` IPC handlers below, driven from that UI.
+
+**`editSession.js`** — `EditSession` tracks one co-admin's in-progress
+changes, keyed by item folder path: `{ type: 'add'|'edit'|'delete', name }`,
+used purely for the UI's badges/borders/bottom-bar counts. `addItem()`
+copies a folder in directly under `DATA_DIR` and writes its
+`metadata.json` (`itemMetadata.js`) with the entered name/tags/image
+assignments; `editItem()` only rewrites `metadata.json` — categories
+are gone (see "Category elimination" below), so an edit never moves
+the item's folder anymore, `itemPath` in equals `itemPath` out.
+`deleteItem()` only *marks* an
+item for deletion — the real removal is deferred to `confirm()`, so a
+trashed item stays visible (greyed out) and undoable via
+`undoDelete()` right up until the session is pushed. An item added
+earlier in the same session that's then edited or deleted stays tagged
+`'add'`/gets removed outright rather than ever showing as `'edit'`/a
+separate delete entry, since it doesn't exist in the last pushed
+commit either way.
+
+`scanSourceFolder(sourceDir)` supports the 'add' editor before
+anything's copied into `DATA_DIR` yet: lists the picked folder's print
+files (with `colorChangeCount`, reusing `gcodeParser.js`'s
+`parseFilename()`/`parseGcodeMetadata()` directly rather than going
+through `indexer.js`'s cache, since these files aren't part of the
+catalog tree yet) and images, so the editor has real data to show
+instead of nothing.
+
+`addItem()`/`editItem()` both accept an optional `printFileImages`
+(`{ [printFileBasename]: ImageRef[] }`) and pass it to
+`_resolveImages()`, which is where images actually get assigned: each
+`ImageRef` is either `{ kind: 'existing', name }` (already a file in
+the item's folder) or `{ kind: 'external', path }` (picked via the
+editor's "Browse for images" button, sitting anywhere on disk).
+External refs get copied into the destination folder here — exactly
+once per distinct source path even if the same image is shared across
+several print files (the many-to-many case from prior design
+discussion), with `uniqueDestName()` resolving any filename collision
+— and the result becomes `metadata.json`'s `printFiles` block via
+`writeItemMetadata()`. Nothing is copied or written until `Save` in
+the editor is clicked; browsing for images only stages picked paths in
+the renderer's local state (see `renderer.js`'s `openItemEditor()`
+below), so canceling the editor still means nothing touched disk.
+
+`cancel()` doesn't need to manually reverse each operation: nothing
+gets committed to git during a session, so every add/edit so far is
+just uncommitted working-tree state in `DATA_DIR` — `git checkout --
+.` + `git clean -fd` (reusing `gitSync.js`'s `run()`) restores
+everything to the last push in one step, regardless of how many
+operations led up to it. `confirm()` performs the real deletes for
+anything marked, then builds a commit message listing every
+added/edited/deleted item by name; `main.js`'s
+`editSession:confirmSession` handler takes that message, gets a token
+(`getOrProvisionToken()`, the same inline-provisioning path the old
+flow used), and calls `gitPush.js`'s `pushNewItem()` — unchanged from
+before, since its resilience (postBuffer, spurious-disconnect
+verification, HTTP/1.1 retry) applies just as well to a multi-item
+commit as a single-item one. On push failure the session is left
+active (nothing's cleared) so a retry after fixing the underlying
+issue just works, the same way retrying `pushNewItem()` always has.
+
+**`itemMetadata.js`** — `readItemMetadata()`/`writeItemMetadata()` for
+an item's sibling `metadata.json` (schema per prior design
+discussion). `indexer.js`'s `_buildItem()` calls `readItemMetadata()`
+and uses its `displayName`/`tags` when present, falling back to
+`folderName.js`'s filename-derived name (and empty tags) exactly as
+before when a folder has no `metadata.json` yet — and now also merges
+each print file's `printFiles[name].images` onto that file's entry as
+`metadataImages` (a shallow copy, not mutating the gcode-parse cache —
+that cache is keyed off the gcode file's own mtime/size and has no
+idea `metadata.json` even exists, so baking this in directly would
+freeze a stale snapshot into the persisted cache instead of reflecting
+`metadata.json`'s actual current content on every scan).
+`writeItemMetadata()` now accepts an optional `printFiles` map and
+merges each entry onto whatever that print file's block already held,
+rather than replacing it outright — so a future per-file
+`displayName`/`tags` override (still not produced by this app) won't
+get clobbered by an images-only write. `item.tags` is now the sole
+pill-based grouping/filtering concept in `renderer.js` — see "Category
+elimination" below.
+
+**`renderer.js`'s `openItemEditor()`** (image reconciliation) — per
+print file: a checkbox (bulk-assign target), a `printFileLabel()` note
+(color-change count and batch size — see below — help tell similar
+prints, especially batch variants, apart at a glance), and chips for
+its currently assigned images (each removable).
+Below that, an "Available images" pool — every image usable by this
+item, existing-in-folder or freshly browsed-in/dropped-in, deliberately
+*not* filtered down as things get assigned, since one image assigned to
+several print files (the many-to-many case) is the point.
+
+Assigning works two ways: click a pool image to select it, check one
+or more print files, "Assign selected image to checked files" — or
+drag a pool thumbnail (`draggable`, `dragstart` sets its index as
+`text/plain`) directly onto a print file row, which reads that index
+back on `drop` and assigns it (scenario 3 from prior design
+discussion). Dropping an image file from the OS directly onto a print
+file row instead (no `dataTransfer.files` vs. the in-app case is how
+`ondrop` tells these two apart) both adds it to the pool *and* assigns
+it to that row in one gesture (the "perhaps" from that same
+discussion, now real); dropping onto the pool area itself just adds it
+without assigning anywhere. `assignRefToFile()`/`addExternalToPool()`
+are the shared helpers behind all of these paths (button, drag, and
+drop) so they behave identically regardless of which gesture triggered
+them. "Browse for images…" (`editSessionBrowseImages()`, a native
+multi-select file dialog) is the fourth, non-drag path to the same
+`addExternalToPool()`. None of these copy anything yet — pool entries
+for anything not already in the folder are `{ kind: 'external', path }`
+refs, and only become real files in the item's folder if `Save` is
+clicked (see `editSession.js`'s `_resolveImages()` above).
+
+`printFileLabel()` builds that per-row note: `"0 color changes"` (the
+common case) and `"1 in batch"` (not actually a batch) are both
+suppressed as noise, so a count only shows up when it's actually
+informative — which is exactly the same signal `suggestBatchShare()`
+below uses to spot variants.
+
+Assigning an image (any of the four ways above) also runs
+`suggestBatchShare()`: if another print file in the same item has the
+same `colorChangeCount` and its name matches after `strippedBatchName()`
+strips the `.printer.gcode`/`.bgcode` segment and a trailing batch/
+quantity suffix (`-batch6`, `x6`, etc.) — the exact heuristic from
+prior design discussion — a plain `confirm()` offers to share the same
+image with it too, rather than auto-assigning silently. 'add' mode
+shows all of this only once the source folder is known — either
+`editSessionPickAddFolder()` (the "Add item" button) or
+`editSessionPrepareAddFolder()` (a folder dropped on the main window,
+see below) — via `EditSession.scanSourceFolder()`, same as the rest of
+the form.
+
+A folder dropped directly onto the main window while `editModeActive`
+is a fourth drag-and-drop scenario, separate from the three above and
+handled at the document level rather than inside the editor:
+`renderer.js` registers one `dragover`/`drop` pair on `document` itself
+(prevents Chromium's default "navigate to the dropped file" behavior
+unconditionally, everywhere, then — only in edit mode, and only when
+no editor/dialog overlay is already open — treats the drop as
+`openItemEditor('add', null, sourceDir)`, using
+`webUtils.getPathForFile()` via `preload.js`'s `getPathForFile()` to
+get a real path from the dropped `File`). `main.js`'s
+`prepareAddFolder()` (used by both `editSession:pickAddFolder` and the
+new `editSession:prepareAddFolder`) checks the dropped path is actually
+a directory before scanning it, surfacing a plain error otherwise
+rather than trying to treat a stray dropped file as an item folder.
+The editor's own row/pool drop handlers `stopPropagation()` so a drop
+that lands on one of them never also reaches this document-level
+handler.
 
 **`gitPush.js`** — `pushNewItem({ targetDir, repoUrl, branch, token,
 commitMessage })`: commits whatever's currently uncommitted in
@@ -139,7 +268,9 @@ the same spawn-with-process-group-timeout invocation style, rather than
 introducing a second way of shelling out to git. Checks `git status
 --porcelain` first and returns `{ pushed: false, reason:
 'nothing-to-commit' }` as a normal non-error outcome if there's nothing
-staged — e.g. a re-run after an item was already synced.
+staged — e.g. a re-run after an item was already synced. Used
+identically by `editSession.js`'s multi-change commits as it was by
+the old single-item flow — nothing about this function changed.
 
 Pushes set `http.postBuffer` to 500 MiB for that one invocation (`git
 -c http.postBuffer=... push ...`) rather than git's 1 MiB default,
@@ -162,7 +293,10 @@ conflict-resolution UI, a push rejected because origin moved since the
 last launch-time sync is a genuine failure surfaced as a plain error
 (distinct from the spurious-disconnect case above, which this function
 resolves on its own) — the expected recovery is restart (which
-re-syncs from origin) and retry.
+re-syncs from origin) and retry. (Multi-laptop conflicts from two
+co-admins editing at once are handled socially, not technically — only
+four people have edit access and they coordinate directly, so no
+merge/rebase UI is planned here.)
 
 **`tokenStore.js`** — patches `util.isObject`/`isFunction`/`isString`
 back onto Node's `util` module before requiring `sudo-prompt`, since
@@ -187,25 +321,27 @@ to writing a new one) other than completing the admin-auth prompt each
 of these pops. The token itself should be a fine-grained GitHub
 Personal Access Token scoped to just this one repo (Contents: Read and
 write) rather than a classic token with broader access — so a
-lost/wiped laptop can only compromise this one repo.
+lost/wiped laptop can only compromise this one repo. `main.js`'s
+`getOrProvisionToken()` wraps `tokenExists()`/`readSyncToken()`/
+`writeSyncToken()` into the single "get me a usable token, provisioning
+inline if needed" call both the old and new push flows use.
 
 **`provisionTokenWindow.js`** — `promptForToken(parentWindow)`: a small
 modal `BrowserWindow` (`provisionTokenWindow.html` /
 `provisionTokenRenderer.js` / `provisionTokenPreload.js`) with a single
-password-style text field, used the first time
-`runAddItemsToCatalog()` attempts a push on a laptop where
-`tokenStore.js`'s `tokenExists()` is false — folds first-time-per-laptop
-setup into the push attempt itself rather than requiring a separate
-command to be run first. Resolves with the entered token (trimmed,
-non-empty) or `null` if cancelled/closed without submitting. This
-window deliberately has no gating of its own beyond the text field —
-the real gate is the OS admin-auth prompt `writeSyncToken()` pops
-immediately after this resolves, so there's nothing this dialog itself
-needs to protect against; anyone can open it and paste something in,
-but only someone who can satisfy that OS prompt gets it actually
-written to disk. `scripts/provision-sync-token.sh` still exists
-alongside this — useful for scripting setup across many laptops at
-once without opening the app on each one.
+password-style text field, used the first time a push is attempted on
+a laptop where `tokenStore.js`'s `tokenExists()` is false — folds
+first-time-per-laptop setup into the push attempt itself rather than
+requiring a separate command to be run first. Resolves with the entered
+token (trimmed, non-empty) or `null` if cancelled/closed without
+submitting. This window deliberately has no gating of its own beyond
+the text field — the real gate is the OS admin-auth prompt
+`writeSyncToken()` pops immediately after this resolves, so there's
+nothing this dialog itself needs to protect against; anyone can open
+it and paste something in, but only someone who can satisfy that OS
+prompt gets it actually written to disk. `scripts/provision-sync-token.sh`
+still exists alongside this — useful for scripting setup across many
+laptops at once without opening the app on each one.
 
 **`usbWiperWindow.js`** — Owns the singleton `BrowserWindow` for the USB
 Wiper tool (`usbWiperWindow.html` / `usbWiperRenderer.js` /
@@ -235,6 +371,17 @@ user-initiated stop, distinct from an auto-stop) also closes the
 window via `window.close()` in the renderer. Session state (interval
 timer, "seen" disk-identifier set) is module-level in
 `usbWiperWindow.js`, torn down on both explicit stop and window close.
+`openUsbWiperWindow(settingsStore)` takes the same `SettingsStore`
+instance `main.js` owns (passed from its `buildMenu()` click handler)
+and keeps a module-level reference to it, backing this window's own
+`usb-wiper:get-rename-settings` / `usb-wiper:save-rename-settings`
+IPC handlers as well as the wipe cycle itself: if `renameDrives` is
+on, each volume is renamed via `drives.renameVolume(mountPoint,
+driveRenameName)` right after wiping and before eject (while
+`mountPoint` is still valid); a rename failure is logged and
+swallowed rather than surfaced as a cycle error, since renaming is a
+bonus on top of the wipe, not part of what makes the drive safe to
+hand off.
 
 **`syncState.js`** — `SyncStateStore`: persists just the
 `{ lastSuccessAt }` timestamp of the last successful `gitSync` sync to
@@ -251,7 +398,12 @@ renderer: `getTree`, `getItemThumbnail`, `getFileThumbnail`,
 `onCatalogUpdated`, `listDrives`, `saveFileToDrive`, `ejectDrive`,
 `isDrivePresent`, `getSettings`, `saveSettings`, `onOpenSettings`,
 `getSyncStatus`, `onSyncStatusChanged`, `relaunch` (used after a git
-repo/branch settings change — see `main.js` above).
+repo/branch settings change — see `main.js` above), plus the
+`editSession*` methods described with `editSession.js` below.
+`getPathForFile(file)` wraps Electron's `webUtils.getPathForFile` —
+the only supported way to get a real filesystem path back from a
+dropped `File` object with `contextIsolation: true`, so it has to be
+called from here rather than directly in `renderer.js`.
 
 **`gitSync.js`** — `syncCatalogRepo({ repoUrl, branch, targetDir,
 timeoutMs })`: one-way mirror of a public HTTPS git repo into
@@ -278,14 +430,16 @@ error }` rather than thrown — the promise always resolves, never
 rejects. No authentication is implemented (public repos only).
 
 **`indexer.js`** — Walks `DATA_DIR` recursively. A folder containing
-gcode/bgcode files directly *is* an item; the first-level subfolder
-name under `DATA_DIR` becomes that item's `category` (flat tag, no
-subcategory nesting — any deeper folder structure inside a category
-just keeps flattening into it). Parses each print file via
-`gcodeParser`, caching results to disk (`catalog-cache.json`) keyed by
-path + mtime + size. `CACHE_VERSION` must be bumped whenever a parsing
-logic change should invalidate already-cached entries.
-Item shape: `{ type, name, displayName, path, explicitThumb, imageFiles, projectFiles, category, files[] }`.
+gcode/bgcode files directly *is* an item — no category concept exists
+anymore (see "Category elimination" below); the recursion is only
+there to tolerate not-yet-flattened leftover folders, not to derive
+anything from them. Parses each print file via `gcodeParser`, caching
+results to disk (`catalog-cache.json`) keyed by path + mtime + size.
+`CACHE_VERSION` must be bumped whenever a parsing logic change should
+invalidate already-cached entries, or whenever file paths are about to
+shift wholesale (e.g. the category-elimination flatten), since cache
+entries are keyed by absolute path.
+Item shape: `{ type, name, displayName, path, explicitThumb, imageFiles, projectFiles, tags, files[] }`.
 File-entry shape: `{ path, mtimeMs, size, shortname, longname, tags, printerModel, printerVariant, printTime, hasEmbeddedThumbnail, colorChangeCount, copies, pauseCount, pauseMessages }`.
 `colorChangeCount`/`copies`/`pauseCount` are auto-detected (M600 count / M486
 batch-object count / M601 count, `copies` defaulting to 1 when no batch is
@@ -296,7 +450,7 @@ there wasn't one). For `.bgcode` files, `colorChangeCount`/`copies`/
 `pauseCount` can each come back `null` (undetectable) rather than a number
 (and `pauseMessages` `null` too, in that case); that's distinct from
 0/1/none and should be treated as "unknown" in the UI, not "none". Bumping
-`CACHE_VERSION` (currently 6) is required whenever a change like this alters
+`CACHE_VERSION` (currently 7) is required whenever a change like this alters
 what gets cached per file, so already-cached entries get reparsed instead of
 silently missing the new field.
 
@@ -306,11 +460,16 @@ the legacy `Name (tags)[printer]_uniqueid.ext` convention and the newer
 either way; (2) `parseGcodeMetadata(filePath)`, which dispatches by
 extension to either the streaming text-gcode `"; key = value"` comment
 parser or to `bgcodeParser.js` for `.bgcode`. Both paths return the
-same `{ values, thumbnailBase64, colorChangeCount, copies,
-pauseCount, pauseMessages }` shape (the last four via
+same `{ values, thumbnailBase64, thumbnailMimeType, colorChangeCount,
+copies, pauseCount, pauseMessages }` shape (the last four via
 `gcodeCommandScan.js`, fed every non-comment line as it streams).
-Printer identity always comes from embedded gcode metadata, never
-from the filename.
+`thumbnailMimeType` is `'image/png'` whenever `thumbnailBase64` is set
+for text-gcode (the `thumbnail begin/end` convention is PNG-only) and
+either `'image/png'`/`'image/jpeg'` for `.bgcode` (see below); `null`
+when there's no thumbnail. `thumbnailResolver.js` uses it to pick a
+matching cache-file extension rather than assuming PNG. Printer
+identity always comes from embedded gcode metadata, never from the
+filename.
 
 **`bgcodeParser.js`** — Parses Prusa binary gcode (`.bgcode`) per the
 [libbgcode spec](https://github.com/prusa3d/libbgcode/blob/main/doc/specifications.md):
@@ -367,20 +526,45 @@ thumbnails extracted from embedded gcode, keyed by
 its old cached thumbnail.
 
 **`thumbnailResolver.js`** — Fallback chain per print file: an
-override image in the item folder matching the file's longname, then
-shortname, then its own embedded gcode thumbnail (extracted + cached
-on demand), then nothing. Item-level thumbnail: an explicit `thumb.*`
-file, else the first print file that resolves to a real thumbnail.
+explicit `metadata.json` image assignment (`fileEntry.metadataImages[0]`,
+set via the item editor — see `editSession.js`/`itemMetadata.js`) wins
+first, since it's what the co-admin actually chose and should behave
+predictably regardless of filenames; only when that's empty does it
+fall through to the old filename-convention chain (an override image
+in the item folder matching the file's longname, then shortname), then
+its own embedded gcode thumbnail (extracted + cached on demand), then
+nothing. An item with no `metadata.json` image assignments yet behaves
+exactly as before this existed. Item-level thumbnail: an explicit
+`thumb.*` file, else the first print file that resolves to a real
+thumbnail.
+When extracting an embedded gcode thumbnail, the cache file's
+extension (`.png`/`.jpg`) is picked from `parseGcodeMetadata()`'s
+`thumbnailMimeType`, via an `EXT_BY_MIME` map, rather than assumed to
+always be `.png` — a `.bgcode` file's largest embedded thumbnail can
+be either PNG or JPG (see `bgcodeParser.js`'s
+`THUMBNAIL_MIME_BY_FORMAT`). Since the cache key alone (path+mtime)
+doesn't record which extension a prior write used, a cache lookup
+checks both possible extensions before falling back to re-parsing the
+source file.
 
 **`settings.js`** — `SettingsStore`: persisted admin config
 (`{ availablePrinters: [], hideUnavailable: bool, gitRepoUrl: '',
-gitBranch: '' }`) in `userData/settings.json`. `gitRepoUrl`/`gitBranch`
+gitBranch: '', renameDrives: bool, driveRenameName: '' }`) in
+`userData/settings.json`. `gitRepoUrl`/`gitBranch`
 replace the old `PRINTCAT_GIT_REPO_URL`/`PRINTCAT_GIT_BRANCH` env vars
 and are set via the Settings dialog's "Git Repository:"/"Branch:"
 fields; an empty `gitBranch` defaults to `'main'` wherever it's
 consumed (`gitSync.js`, `main.js`), not stored as `'main'` here.
-Distinct from the user's own per-session printer filter selection in
-the renderer.
+`renameDrives`/`driveRenameName` back the USB Wiper's "Rename drive
+to:" checkbox + text field (see `usbWiperWindow.js`) — set/read via
+that window's own `usb-wiper:get-rename-settings` /
+`usb-wiper:save-rename-settings` IPC handlers rather than the general
+`settings:get`/`settings:save` ones, since those live in a separate
+preload/renderer context (`usbWiperPreload.js`/`usbWiperRenderer.js`)
+from the main window's Settings dialog; both handlers merge onto
+`settingsStore.get()` before saving, since `SettingsStore.save()`
+itself replaces wholesale rather than patching. Distinct from the
+user's own per-session printer filter selection in the renderer.
 
 **`drives.js`** — macOS-only. Shells out to `diskutil`/`plutil` to
 list, eject, and check presence of external physical USB drives,
@@ -391,13 +575,30 @@ tool — see `usbWiperWindow.js`): deletes everything inside a mounted
 volume, including dotfiles, leaving the volume itself mounted so it can
 still be ejected afterward; returns `{ failures: [{ path, error }] }` for
 anything that couldn't be removed instead of throwing, same
-partial-failure shape as `tools.js`'s Cleanup profile.
+partial-failure shape as `tools.js`'s Cleanup profile. As its last step
+(after the delete loop, so it survives it), it also writes an empty
+regular file named `.Trashes` at the volume root — this blocks macOS
+from creating its own `.Trashes/<uid>` folder there, so Finder can't
+silently move later deletions into a hidden trash on the drive and
+instead prompts to delete immediately. Also exports
+`renameVolume(mountPoint, name)` (also for the USB Wiper tool, its
+"Rename drive to:" option): a thin wrapper over `diskutil rename`,
+which accepts a mount point in place of a volume's current name, so
+`usbWiperWindow.js` doesn't need to separately track each volume's
+(possibly-just-wiped) display name. First checks the volume's
+filesystem via `diskutil info` (`FilesystemType`); for FAT12/16/32
+(`"msdos"` — `FilesystemType` doesn't distinguish the three, only
+`FilesystemName` does) the requested name is adapted to that
+filesystem's 11-character, uppercase-only, letters/digits/spaces-only
+label space (`sanitizeFatLabel`) before being applied — exFAT and macOS's
+own filesystems aren't touched.
 
 **`renderer.js`** — All UI logic, no framework. Global state:
-`allItems`, `selectedItem`, `selectedPrinters`, `selectedCategories`,
+`allItems`, `selectedItem`, `selectedPrinters`, `selectedTags`,
 `keywordQuery`, `settings`. Flat browsing model — no navigation or
-breadcrumbs. Three filters combine on a single flat item grid: Printer
-pills (multi-select), Category pills (multi-select, from `item.category`),
+breadcrumbs, no categories. Three filters combine on a single flat item grid: Printer
+pills (multi-select), Tag pills (multi-select, from `item.tags`; an
+item can match on any one of several selected tags — OR, not AND),
 and a live keyword search box (AND-match across item name + each file's
 shortname/longname/tags — see `itemMatchesKeyword` /
 `fileMatchesKeywordInItem`). Clicking an item shows its (filtered)
@@ -435,13 +636,17 @@ inject markup; multiple messages are joined with `\n` in the tooltip.
 `#top-filters` wrapper containing a static keyword search `<input>`
 (intentionally *not* regenerated by `render()`, so it keeps
 focus/cursor while live-typing) and the `#printer-filter` /
-`#category-filter` containers (fully regenerated on each relevant
+`#tag-filter` containers (fully regenerated on each relevant
 state change), `#listing`, and a `#sync-status` footer note (see
-`renderer.js` above; unstyled so far — `styles.css` doesn't have rules
-for it yet). `.pause-tooltip-icon` (also from `renderer.js`, see
-above) likewise still needs a `styles.css` rule to make it visually
-read as "hover for more" (e.g. a rounded/underlined cursor-help
-treatment) — not yet added.
+`renderer.js` above; styled via a `.sync-status` rule). `.pause-tooltip-icon`
+(also from `renderer.js`, see above) is likewise styled (cursor-help
+treatment).
+**Known leftover:** `styles.css` still has a `#printer-filter,
+#category-filter { ... }` rule (plus a standalone `#category-filter`
+margin override) from before the category-elimination rename —
+`index.html`/`renderer.js` both use `#tag-filter` now, so the tag pill
+row currently gets none of that layout (no flex-wrap/gap/centering).
+Needs `#category-filter` renamed to `#tag-filter` in `styles.css`.
 
 ## Data directory resolution
 
@@ -459,10 +664,15 @@ treatment) — not yet added.
   `PRINTCAT_GIT_SYNC_TIMEOUT_MS` (still an env var — a dev-time knob,
   not exposed in the UI) optionally overrides the per-git-call timeout
   (default 5 minutes — see `gitSync.js`).
-- If `settings.gitRepoUrl` is not set, `DATA_DIR` falls back to the
-  existing `PRINTCAT_DATA_DIR` env var (or the dev-time default under
-  the repo itself), unchanged from before — this keeps the
-  manually-synced local-copy workflow available for development.
+- If `settings.gitRepoUrl` is not set, `resolveDataDir()` is never
+  reached at all: `main.js`'s `whenReady()` skips `setupIndexer()`
+  entirely and instead opens the Settings dialog in "required" mode
+  (see "First-launch required setup" below) — there is currently no
+  supported no-git / local-copy dev workflow. (`resolveDataDir()`
+  itself still has an unreachable fallback to the old
+  `PRINTCAT_DATA_DIR` env var / dev-time default path, left over from
+  before required-setup gating existed — flagged as dead code, not yet
+  removed.)
 - Because `DATA_DIR` is only resolved once at startup, changing
   `gitRepoUrl`/`gitBranch` in the Settings dialog doesn't retarget the
   already-running indexer, thumbnail cache, or chokidar watcher.
@@ -480,14 +690,43 @@ treatment) — not yet added.
   changed, in exchange for never delaying the first paint on the
   common case.
 
+## First-launch required setup
+
+- When `settings.gitRepoUrl` is empty (a laptop that's never been
+  pointed at a catalog repo), `main.js`'s `whenReady()` skips
+  `setupIndexer()` entirely — no indexer, tree, or sync status to
+  fetch — and instead sends `menu:openSettings` with `{ required: true }`.
+- `renderer.js`'s `openSettingsDialog(opts)` has a parallel `required`
+  branch for this: different title/intro copy ("Set Up Print
+  Catalog…"), the printer checkboxes and Hide-unavailable row are
+  skipped (`allItems` is always `[]` at this point, so there's nothing
+  to derive a printer list from), and there's no Cancel button — the
+  dialog can only be dismissed by entering a repo URL and saving.
+  Saving without one is rejected with an alert rather than silently
+  closing, since that would just land back on the same dialog next
+  launch.
+- On a successful save in required mode, the renderer calls
+  `relaunch()` directly (no "restart now?" confirm — there's nothing
+  else to show until the app comes back up with an indexer against the
+  new repo).
+- `init()` in `renderer.js` registers the `onOpenSettings` listener
+  before doing anything else (see its own comment on load-order), and
+  short-circuits its own startup (`getTree()`/`getSyncStatus()` etc.)
+  when `settings.gitRepoUrl` is empty, relying on that listener to
+  eventually show the required-setup dialog once `main.js`'s push
+  arrives.
+
 ## Key conventions / gotchas
 
-- Category is a flat tag (first-level folder name), not a tree.
+- Categories are gone entirely (see "Category elimination" below) —
+  `item.tags` (from `metadata.json`) is the only pill-based
+  grouping/filtering concept left, and it's multi-valued per item.
 - Two supported filename conventions; printer identity is never parsed
   from the filename.
 - `CACHE_VERSION` (in `indexer.js`) must be bumped when parsing logic
   changes in a way that would produce different output for files
-  already cached.
+  already cached, or when file paths are about to shift wholesale
+  (e.g. a data-repo restructure) since cache entries are keyed by path.
 - `.bgcode` support is transparent at the `parseGcodeMetadata()`
   boundary — no caller needs to know or care which format it got.
 - The keyword search `<input>` must stay static HTML, never rebuilt by
@@ -500,9 +739,9 @@ treatment) — not yet added.
 - Practically macOS-only: `drives.js` shells out to `diskutil`, and the
   Settings-in-the-app-menu placement follows the macOS convention.
 - An open item's file list is only ever narrowed by the printer filter
-  and the keyword query (`fileMatchesKeywordInItem`) — category is a
+  and the keyword query (`fileMatchesKeywordInItem`) — tags are a
   property of the item as a whole, already decided by the time you
-  clicked into it, so it's never re-checked per file. Because of that,
+  clicked into it, so they're never re-checked per file. Because of that,
   `#top-filters` (search + both pill rows) is hidden entirely whenever
   `selectedItem` is set, rather than left clickable with no visible
   effect on the current view.
@@ -545,23 +784,183 @@ treatment) — not yet added.
   (`/Users/user`) and refuses to run if `os.homedir()` doesn't match,
   since these laptops have no other signal distinguishing a guest
   session from a real one.
-- "Add items to Print Catalog…" needs `scripts/provision-sync-token.sh`
+- "Edit Print Catalog…" needs `scripts/provision-sync-token.sh`
   run once per laptop (by an actual admin, via `sudo`) before it can
   push anything — without that root-owned token file in place,
   `tokenStore.js`'s `readSyncToken()` will always fail (surfaced as an
   ordinary error dialog, same as any other push failure, not a crash).
 
+## Category elimination
+
+Categories (folder-placement-derived, one per item) have been removed
+from the app in favor of `item.tags` (multi-valued, from
+`metadata.json`) as the sole pill-based grouping/filtering concept —
+`indexer.js` no longer derives or returns a `category` field,
+`editSession.js` no longer moves an item's folder on edit, and
+`renderer.js`'s filter row and item editor are tag-only now.
+
+This is a two-part migration, done deliberately out of order:
+
+1. **App code** (this pass) — category logic removed entirely.
+   `indexer.js`'s directory walk stays recursive rather than requiring
+   a strict single level, so it tolerates a data folder that hasn't
+   been physically flattened yet (any leftover grouping folder is just
+   walked through, contributing no category/grouping information).
+2. **Data repo** (separate, manual step, on its own branch of the
+   catalog data repo so other installs still on category-based data
+   aren't affected until cutover) — physically move every item folder
+   up to the data root and delete the now-empty former category
+   folders. Because category was never stored in `metadata.json`
+   itself, this is a pure filesystem restructure — no metadata schema
+   change, no data transformation.
+
+Still open, deliberately deferred past this pass:
+
+- **Folder-name uniqueness.** Item folder names are still preserved
+  verbatim from the Thingiverse/Printables download (no uniqueness
+  suffix added by `addItem()` yet). Fine at the current catalog size;
+  flagged as a future need once categories stop namespacing folder
+  names from each other. Each item's README.txt (from the original
+  download) carries the source ID in an easily-parsed format, so
+  there's no need to keep parsing it out of the folder name itself —
+  a future "view original" link and any folder-renaming-for-uniqueness
+  work are both unblocked by that.
+- **App/data-branch pairing during rollout.** Still in beta, installed
+  on only a couple of machines, with one person (not yet co-admins)
+  making edits — so this is being handled by upgrading and starting
+  fresh on those few machines rather than needing an automated
+  version/format check.
+
+## Original item location
+
+Item folders are preserved as-is from their original Thingiverse/
+Printables download specifically so files like these could be parsed
+later for a "view original" link (see "Category elimination" above) --
+this is that pass.
+
+**`originLocation.js`** — `detectOriginUrl(folderPath, entries?)`:
+best-effort, fully offline (no network requests) detection of the
+source page URL, returning `null` when nothing can be determined.
+Two schemas: a top-level `README.txt` containing Thingiverse's
+`"... on Thingiverse: {URL}"` line (regex-extracted, ignoring the rest
+of the sentence), or a top-level PDF named like
+`{model-slug}-{digits}-{hex groups}.pdf` (a browser print-to-PDF of a
+Printables model page) — read via `pdf-lib` for the "View in browser"
+button's actual link annotation (cheap, and doesn't require OCR/text
+extraction or a network fetch to verify a guess). There can be more
+than one top-level PDF (e.g. a user-added instructions sheet); each
+candidate matching the naming pattern is tried until one yields a
+link matching `https://www.printables.com/model/...` specifically
+(`PRINTABLES_MODEL_URL_RE`) — confirmed against a real sample PDF that
+a bare "contains printables.com" check isn't enough: these PDFs' link
+annotations list the creator's profile link (from the byline) *before*
+the actual model link, and also carry `.../model?categoryId=N` links
+further down, both of which need excluding. If no candidate yields a
+`/model/` link, falls back to reconstructing
+`https://www.printables.com/model/{model-slug}` from the first
+candidate's filename — an unverified guess, never confirmed over the
+network (this exact reconstruction is also what the real sample's
+actual annotation contained, for what it's worth). New dependency:
+`pdf-lib` (`npm install pdf-lib`) — its exact call sequence
+(`PDFArray`/`PDFDict.lookup()`, `PDFName`, `.decodeText()`) still
+hasn't been run end-to-end in Node (no network access to install the
+package in this environment), though the annotation structure it reads
+has been confirmed correct by inspecting a real sample's link
+annotations directly.
+
+Detection is deliberately *not* run by `indexer.js` on every catalog
+scan (that would mean re-parsing a PDF on every background rescan for
+any item without a stored origin yet) — it only runs on-demand, from
+`editSession.js`:
+- `scanSourceFolder(sourceDir)` (used by the 'add' editor) now also
+  returns `originUrl`, reusing the same `readdir` it already does for
+  print files/images.
+- A new `detectOrigin(itemPath)` method (used by the 'edit' editor,
+  only when the item's `metadata.json` doesn't already have an
+  `origin.url`) wraps `detectOriginUrl()` directly.
+
+**Schema** — `metadata.json` gains an optional `origin` object:
+`{ url, creatorName, creatorUrl }`. Only `url` is populated/editable
+today; `creatorName`/`creatorUrl` are reserved for a planned future
+pass that scrapes the origin page itself (once its URL is known) for
+the creator's username and profile link — `itemMetadata.js`'s
+`writeItemMetadata()` already shallow-merges `origin` onto whatever's
+already stored (same reasoning as its `printFiles` merge) rather than
+replacing it outright, specifically so that future scrape can add
+`creatorName`/`creatorUrl` without a plain "edit the URL field, leave
+everything else alone" save wiping them back out. The whole `origin`
+key is omitted from the written file when none of its three fields
+hold a truthy value. `indexer.js`'s `_buildItem()` exposes it as
+`item.origin` (`null` if absent), read-only from `metadata.json`
+(never auto-detected at scan time — see above).
+
+**Editor UI** (`renderer.js`'s `openItemEditor()`) — a new "Original
+Location" text field, right after Tags: plain, editable, clearable,
+same as Name/Tags. 'add' mode prefills it from `scanSourceFolder()`'s
+`originUrl`; 'edit' mode prefills from the item's stored
+`origin.url` if present, else fires `detectItemOrigin(item.path)`
+(async, best-effort) and fills the field if that finds something. On
+Save, the field's current value is sent as `{ url }` in the payload to
+`editSessionCommitAdd`/`editSessionCommitEdit` regardless of whether
+it changed, matching Name/Tags' always-send-current-value behavior;
+the merge happens on the `itemMetadata.js` side, not here.
+
+**Detail view** (`renderer.js`'s `renderItemDetail()`) — item detail
+previously had no item-level heading at all (just the file rows); this
+adds one (`item-detail-header`, an `<h2>` of the item's display name)
+specifically to give the new "View original on {Thingiverse|
+Printables} ↗" link (`renderOriginInfo()`) somewhere to live, shown
+only when `item.origin.url` is set. The platform label is derived from
+the URL's hostname (`originPlatformLabel()`) rather than stored
+separately, so a manually-entered URL from some other site still gets
+a sensible label (falls back to the bare hostname). Also renders
+`creatorName`/`creatorUrl` when present, even though nothing populates
+them yet — written this way now so the future creator-scrape data
+shows up here with no further display-side changes needed.
+`styles.css` doesn't have rules for `.item-detail-header`/
+`.item-origin-info` yet.
+
+**`main.js`/`preload.js`** — `prepareAddFolder()` now also forwards
+`scanSourceFolder()`'s `originUrl` through to the 'add' editor (alongside
+`printFiles`/`imageFiles`, unchanged otherwise). A new
+`editSession:detectOrigin` handler wraps `editSession.detectOrigin(itemPath)`
+for 'edit' mode. `editSession:commitAdd`/`commitEdit` needed no change --
+they already forward their whole `fields` object straight through to
+`editSession.addItem()`/`editItem()`, so the new `origin` field riding
+along in that object just works. `preload.js` exposes the new handler as
+`detectItemOrigin(itemPath)`.
+
+**Planned next**: once `origin.url` is reliably populated, scrape that
+page (a network fetch, only after the URL is known — this pass stays
+offline-only) for the creator's username and profile URL, writing them
+into `origin.creatorName`/`origin.creatorUrl`. The schema and display
+above are already shaped to receive that without further changes;
+what's still undecided is where that scrape runs (on editor open,
+alongside/instead of the local detection above? on next catalog sync?)
+and how failures/rate-limiting against each site should be handled.
+
 ## Not yet implemented
 
-- Full GUI for adding new models: "Add items to Print Catalog…" exists
-  now (see `gitPush.js`/`tokenStore.js` above) but only as a bones-only
-  first slice — no category-assignment UI (everything lands under a
-  hard-coded "New Items" placeholder), no image/print-file
-  reconciliation, no `metadata.json`, no multi-item staging queue. Item
-  folders are still copied in as-is and rely on filename parsing for
-  everything.
-- Tag-based filtering beyond the current category + keyword combo
-  (category may eventually be replaced by tags entirely)
+- GUI for adding/editing/deleting catalog items: "Edit Print Catalog…"
+  and `editSession.js` (see above) now cover add, edit, delete, image
+  reconciliation (assigning images to print files, including the
+  many-to-many sharing case and the batch-variant suggestion), and drag-
+  and-drop for all three scenarios from prior design discussion (a
+  folder dropped on the main window in edit mode, images dropped onto
+  the item editor, an image dropped directly onto a print file to
+  pre-assign it) — see `renderer.js`'s document-level drop handler and
+  `openItemEditor()`'s row/pool drop handlers, both described above.
+  Still missing: per-print-file `displayName`/`tags` overrides (only
+  item-level ones, plus per-file `images`, are read/written so far —
+  see `itemMetadata.js`); a gallery view for a print file with more
+  than one assigned image (only the first, `images[0]`, is used as the
+  thumbnail today — see `thumbnailResolver.js`); tag-autocomplete
+  against existing tags (plain comma-separated text for now, by
+  design, for this pass); and any session-recovery story if the app
+  closes mid-session (accepted as a real gap for now, not a bug — an
+  abandoned session's uncommitted changes are simply discarded by the
+  next launch's `syncCatalogRepo()` reset, and that's considered fine
+  for four co-admins working in one space).
 - App packaging (electron-builder / Forge) — needed for a real Dock
   icon name, among other things. Also needs to bundle `bin/bgcode`
   (see `bgcodeCli.js`) via `extraResources` — `bgcodeCliPath()`
@@ -569,6 +968,6 @@ treatment) — not yet added.
   until packaging actually exists.
 - Auth for private git *repo reads* — `gitSync.js`'s clone/fetch is
   still public-HTTPS-only, unauthenticated. Push auth (a token, gated
-  behind admin privilege escalation) now exists for the "Add items"
-  flow specifically — see `tokenStore.js` above — but that's a
-  separate, one-directional credential path, not general repo auth.
+  behind admin privilege escalation) exists for the editing flow
+  specifically — see `tokenStore.js` above — but that's a separate,
+  one-directional credential path, not general repo auth.

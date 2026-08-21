@@ -13,6 +13,7 @@ let pollTimer = null;
 let pollBusy = false; // guards against a slow wipe still running when the
                        // next setInterval tick fires
 let sessionActive = false;
+let settingsStoreRef = null;
 
 // Bumped on every start/stop. A wipe cycle captures the generation it
 // started under and checks it before writing any shared state back --
@@ -39,7 +40,9 @@ let awaitingRemovalDiskId = null;
 // insertion by diffing against this.
 let previousMountedIds = new Set();
 
-function openUsbWiperWindow() {
+function openUsbWiperWindow(settingsStore) {
+  settingsStoreRef = settingsStore;
+
   if (win) {
     win.show();
     win.focus();
@@ -192,6 +195,24 @@ async function runWipeCycle(diskIdentifier, volumes, myGeneration) {
 
     if (myGeneration !== generation) return; // session stopped/restarted meanwhile
 
+    // Renaming is a nice-to-have on top of the wipe, not part of what
+    // makes the drive safe to hand off -- so unlike wipeDriveContents,
+    // a rename failure here is swallowed rather than surfaced as a
+    // cycle error. Must happen before eject, while mountPoint is still
+    // valid.
+    const { renameDrives, driveRenameName } = settingsStoreRef.get();
+    if (renameDrives) {
+      for (const volume of volumes) {
+        try {
+          await drives.renameVolume(volume.mountPoint, driveRenameName || 'UNTITLED');
+        } catch (error) {
+          console.warn(`[usbWiperWindow] failed to rename ${volume.mountPoint}:`, error.message);
+        }
+      }
+    }
+
+    if (myGeneration !== generation) return;
+
     sendStatus('unmounting', 'Unmounting drive\u2026');
     await drives.ejectDrive(diskIdentifier);
 
@@ -212,6 +233,24 @@ ipcMain.handle('usb-wiper:start-session', () => {
 
 ipcMain.handle('usb-wiper:stop-session', () => {
   stopSession();
+});
+
+// Backed directly by the shared settingsStore passed into
+// openUsbWiperWindow() -- these persist independent of any wipe
+// session so the checkbox/text field come back the same the next
+// time this window is opened. save() merges onto the current settings
+// (rather than replacing wholesale) since SettingsStore.save() itself
+// does not -- passing only { renameDrives, driveRenameName } straight
+// through would otherwise reset every other setting (gitRepoUrl etc.)
+// back to its default.
+ipcMain.handle('usb-wiper:get-rename-settings', () => {
+  const { renameDrives, driveRenameName } = settingsStoreRef.get();
+  return { renameDrives, driveRenameName };
+});
+
+ipcMain.handle('usb-wiper:save-rename-settings', async (event, { renameDrives, driveRenameName }) => {
+  const current = settingsStoreRef.get();
+  await settingsStoreRef.save({ ...current, renameDrives, driveRenameName });
 });
 
 module.exports = { openUsbWiperWindow };

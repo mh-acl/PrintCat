@@ -1,6 +1,7 @@
+.DS_Store
 **/.DS_Store
 **/Desktop.ini
 **/._*
 **/Thumbs.db
 dist/*
-node_modules/electron/dist/Electron.app
+node_modules/

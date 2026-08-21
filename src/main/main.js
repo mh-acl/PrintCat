@@ -17,12 +17,13 @@ const { openUsbWiperWindow } = require('./usbWiperWindow');
 const { pushNewItem } = require('./gitPush');
 const { readSyncToken, writeSyncToken, tokenExists } = require('./tokenStore');
 const { promptForToken } = require('./provisionTokenWindow');
+const { EditSession } = require('./editSession');
+const { stripTrailingId } = require('./folderName');
 
-// Placeholder category every new item lands under until the real
-// import wizard (folder validation, metadata.json, image
-// reconciliation) exists to assign a proper one -- see
-// runAddItemsToCatalog() below.
-const FALLBACK_CATEGORY = 'New Items';
+// The single in-progress editing session, or null when a co-admin
+// hasn't entered edit mode. Only one at a time -- see
+// enterEditSession() below.
+let editSession = null;
 
 // Sets the name shown in the macOS menu bar's application menu (the
 // bold item to the left of File/Edit/etc) and used by the `role:
@@ -118,133 +119,39 @@ async function runTool(task) {
   }
 }
 
-// "Add items to Print Catalog..." -- the first, bones-only slice of
-// the co-admin import feature (see ARCHITECTURE.md). Deliberately does
-// none of the niceties planned for later (image/print-file
-// reconciliation, metadata.json, a staging queue for multiple items):
-// picks one folder, drops it under a fixed placeholder category
-// as-is, and pushes it -- relying on the existing filename-based
-// parsing for everything else, same as the old hand-edited workflow.
-//
-// Doesn't go through tools.js's TOOLS registry like Cleanup profile
-// does, and isn't wired as its own persistent window like USB Wiper --
-// it needs a folder-picker result to feed into the rest of the flow,
-// which doesn't fit either existing shape, so it's a standalone
-// function wired directly into the Tools submenu below.
-async function runAddItemsToCatalog() {
+// Gets the push token, provisioning this laptop inline (see
+// tokenStore.js/provisionTokenWindow.js) if it hasn't been set up yet.
+// Returns null if the admin cancels either the provisioning dialog or
+// the OS auth prompt -- callers treat that as "back out quietly",
+// same as any other cancel in this flow.
+async function getOrProvisionToken() {
+  if (await tokenExists()) return readSyncToken();
+  const entered = await promptForToken(mainWindow);
+  if (!entered) return null;
+  await writeSyncToken(entered);
+  return entered;
+}
+
+// "Edit Print Catalog..." -- lets a co-admin enter a single editing
+// session covering any number of adds/edits/deletes (see
+// editSession.js), reviewed together and pushed as one commit, rather
+// than the old flow's one-folder-in-one-push-out. Just flips the
+// renderer into its editing-mode view (see renderer.js) -- everything
+// else (folder picking, staging, the confirm/cancel push) happens via
+// the editSession:* IPC handlers below, driven from that UI.
+function enterEditSession() {
   const settings = settingsStore.get();
   if (!settings.gitRepoUrl) {
-    await dialog.showMessageBox(mainWindow, {
+    dialog.showMessageBox(mainWindow, {
       type: 'error',
-      title: 'Add items to Print Catalog',
+      title: 'Edit Print Catalog',
       message: 'No Git repository is configured yet.',
-      detail: 'Set one up in Settings before adding items.',
+      detail: 'Set one up in Settings before editing the catalog.',
     });
     return;
   }
-
-  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select a print item folder',
-    properties: ['openDirectory'],
-  });
-  if (canceled || filePaths.length === 0) return;
-
-  const sourceDir = filePaths[0];
-  const folderName = path.basename(sourceDir);
-  const destDir = path.join(DATA_DIR, FALLBACK_CATEGORY, folderName);
-
-  let alreadyExists = true;
-  try {
-    await fsp.access(destDir);
-  } catch (err) {
-    alreadyExists = false;
-  }
-  if (alreadyExists) {
-    await dialog.showMessageBox(mainWindow, {
-      type: 'error',
-      title: 'Add items to Print Catalog',
-      message: `"${folderName}" already exists in the catalog (under "${FALLBACK_CATEGORY}").`,
-    });
-    return;
-  }
-
-  try {
-    await fsp.mkdir(path.dirname(destDir), { recursive: true });
-    await fsp.cp(sourceDir, destDir, { recursive: true });
-
-    // The chokidar watcher in setupIndexer() will pick this up and
-    // show it in the running catalog immediately, before it's
-    // committed or pushed anywhere -- that's fine as local-only
-    // feedback, but if the co-admin backs out below, cleanUp()
-    // removes it again rather than leaving an uncommitted item
-    // sitting in the catalog until the next launch's hard reset
-    // quietly discards it.
-    const cleanUp = () => fsp.rm(destDir, { recursive: true, force: true }).catch(() => {});
-
-    const { response } = await dialog.showMessageBox(mainWindow, {
-      type: 'warning',
-      buttons: ['Cancel', 'Push'],
-      defaultId: 0,
-      cancelId: 0,
-      title: 'Add items to Print Catalog',
-      message: `Push "${folderName}" to GitHub?`,
-      detail: 'This will require admin authorization on this laptop.',
-    });
-    if (response !== 1) {
-      await cleanUp();
-      return;
-    }
-
-    try {
-      const token = (await tokenExists())
-        ? await readSyncToken()
-        : await (async () => {
-            const entered = await promptForToken(mainWindow);
-            if (!entered) return null;
-            await writeSyncToken(entered);
-            return entered;
-          })();
-
-      if (!token) {
-        // Admin cancelled the provisioning dialog -- not an error,
-        // just back out the same way a "Cancel" on the push
-        // confirmation above does.
-        await cleanUp();
-        return;
-      }
-
-      const result = await pushNewItem({
-        targetDir: DATA_DIR,
-        repoUrl: settings.gitRepoUrl,
-        branch: settings.gitBranch || 'main',
-        token,
-        commitMessage: `Add item: ${folderName}`,
-      });
-
-      await dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Add items to Print Catalog',
-        message:
-          result.pushed === false
-            ? `"${folderName}" was already up to date -- nothing to push.`
-            : `"${folderName}" was added and pushed to GitHub.`,
-      });
-    } catch (err) {
-      // A failed push here (bad auth, rejected non-fast-forward,
-      // network) is left for the next launch's syncCatalogRepo() to
-      // self-heal, same as any other gitSync failure -- see
-      // ARCHITECTURE.md's "one-way mirror" note. We don't attempt our
-      // own retry or force-push.
-      await cleanUp();
-      throw err;
-    }
-  } catch (err) {
-    await dialog.showMessageBox(mainWindow, {
-      type: 'error',
-      title: 'Add items to Print Catalog failed',
-      message: err.message,
-    });
-  }
+  if (!editSession) editSession = new EditSession(DATA_DIR);
+  mainWindow.webContents.send('editSession:entered');
 }
 
 function buildMenu() {
@@ -290,8 +197,9 @@ function buildMenu() {
           label: task.label,
           click: () => runTool(task),
         })),
-        { label: 'USB Wiper\u2026', click: () => openUsbWiperWindow() },
-        { label: 'Add items to Print Catalog\u2026', click: () => runAddItemsToCatalog() },
+        { type: 'separator' },
+        { label: 'USB Wiper', click: () => openUsbWiperWindow(settingsStore) },
+        { label: 'Edit Print Catalog\u2026', click: () => enterEditSession() },
       ],
     },
   ];
@@ -455,6 +363,104 @@ ipcMain.handle('drives:eject', async (event, diskIdentifier) => {
 });
 
 ipcMain.handle('drives:isPresent', async (event, diskIdentifier) => isDiskPresent(diskIdentifier));
+
+// Every editSession:* handler below assumes enterEditSession() already
+// ran (editSession is non-null) -- the renderer only calls these once
+// it's received 'editSession:entered', so this holds in practice; it's
+// not re-checked per call.
+
+// Shared by the "Add item" button (after the folder dialog) and a
+// folder dropped directly onto the window (see
+// editSession:prepareAddFolder below, and renderer.js's document-level
+// drop handler) -- both just need "here's a folder path, tell me
+// what's in it" without a dialog in the drop case.
+async function prepareAddFolder(sourceDir) {
+  const stat = await fsp.stat(sourceDir).catch(() => null);
+  if (!stat || !stat.isDirectory()) {
+    throw new Error('That isn\'t a folder -- drop a project folder to add it as an item.');
+  }
+  const { printFiles, imageFiles, originUrl } = await editSession.scanSourceFolder(sourceDir);
+  return { sourceDir, suggestedName: stripTrailingId(path.basename(sourceDir)), printFiles, imageFiles, originUrl };
+}
+
+ipcMain.handle('editSession:pickAddFolder', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select a print item folder',
+    properties: ['openDirectory'],
+  });
+  if (canceled || filePaths.length === 0) return null;
+  return prepareAddFolder(filePaths[0]);
+});
+
+ipcMain.handle('editSession:prepareAddFolder', async (event, sourceDir) => prepareAddFolder(sourceDir));
+
+// Lets the co-admin add images from outside the item's folder (e.g. a
+// better photo saved elsewhere) without drag-and-drop. Deliberately
+// doesn't copy anything yet -- just returns the picked paths, so
+// Cancel on the item editor still means nothing touched disk; the
+// actual copy happens in editSession.js's _resolveImages(), as part of
+// commitAdd/commitEdit below.
+ipcMain.handle('editSession:browseImages', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select images to add',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'svg'] }],
+  });
+  if (canceled) return [];
+  return filePaths.map((p) => ({ path: p, name: path.basename(p) }));
+});
+
+// Used by the 'edit' item editor to autofill "Original Location" when
+// the item's metadata.json doesn't already have an origin.url stored
+// (see originLocation.js/editSession.js) -- 'add' mode gets this for
+// free from scanSourceFolder()'s originUrl above instead, since it's
+// already scanning the folder for print files/images at that point.
+ipcMain.handle('editSession:detectOrigin', async (event, itemPath) => editSession.detectOrigin(itemPath));
+
+ipcMain.handle('editSession:commitAdd', async (event, sourceDir, fields) => {
+  const changes = await editSession.addItem(sourceDir, fields);
+  return { changes, tree: await indexer.scan() };
+});
+
+ipcMain.handle('editSession:commitEdit', async (event, itemPath, fields) => {
+  const changes = await editSession.editItem(itemPath, fields);
+  return { changes, tree: await indexer.scan() };
+});
+
+ipcMain.handle('editSession:deleteItem', async (event, itemPath) => editSession.deleteItem(itemPath));
+
+ipcMain.handle('editSession:undoDelete', async (event, itemPath) => editSession.undoDelete(itemPath));
+
+ipcMain.handle('editSession:cancelSession', async () => {
+  await editSession.cancel();
+  editSession = null;
+  return indexer.scan();
+});
+
+// Pushes everything staged this session as one commit. On failure, the
+// session is left active (nothing is cleared) so the co-admin can
+// simply retry -- the underlying deletes/writes already happened
+// locally and are idempotent to repeat, same as retrying any other
+// gitSync failure. On success, the session ends and the renderer goes
+// back to normal browsing.
+ipcMain.handle('editSession:confirmSession', async () => {
+  const settings = settingsStore.get();
+  const { commitMessage } = await editSession.confirm();
+
+  const token = await getOrProvisionToken();
+  if (!token) return { ok: false, cancelled: true };
+
+  await pushNewItem({
+    targetDir: DATA_DIR,
+    repoUrl: settings.gitRepoUrl,
+    branch: settings.gitBranch || 'main',
+    token,
+    commitMessage,
+  });
+
+  editSession = null;
+  return { ok: true, tree: await indexer.scan() };
+});
 
 ipcMain.handle('settings:get', async () => settingsStore.get());
 

@@ -60,12 +60,40 @@
     #progress-bar.state-error::-webkit-progress-value {
       background-color: #c0392b;
     }
+    #rename-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 16px;
+      font-size: 14px;
+    }
+    #rename-row label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    #rename-name {
+      flex: 1;
+      font-size: 14px;
+      padding: 5px 8px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    #rename-name:disabled {
+      background: #e8e8e8;
+      color: #999;
+    }
   </style>
 </head>
 <body>
   <button id="toggle-button">Begin Wiping USBs</button>
   <div id="status">Click "Begin Wiping USBs" to start.</div>
   <progress id="progress-bar" value="0" max="1" class="state-disabled"></progress>
+  <div id="rename-row">
+    <label><input type="checkbox" id="rename-checkbox" />Rename drive to:</label>
+    <input type="text" id="rename-name" value="UNTITLED" />
+  </div>
   <script src="usbWiperRenderer.js"></script>
 </body>
 </html>

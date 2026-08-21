@@ -30,6 +30,12 @@ const DEFAULT_SETTINGS = {
   // and main.js), not here, so the settings dialog can show a blank
   // field rather than a filled-in 'main'.
   gitBranch: '',
+  // USB Wiper's "Rename drive to:" checkbox + text field (see
+  // usbWiperWindow.js) -- persisted so both the on/off state and the
+  // last-typed name are remembered the next time the tool window is
+  // opened, independent of any single wipe session.
+  renameDrives: false,
+  driveRenameName: 'UNTITLED',
 };
 
 class SettingsStore {

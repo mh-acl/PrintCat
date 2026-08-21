@@ -22,6 +22,7 @@
   "homepage": "https://github.com/mh-acl/PrintCat#readme",
   "dependencies": {
     "chokidar": "^5.0.0",
+    "pdf-lib": "^1.17.1",
     "sudo-prompt": "^9.2.1"
   },
   "devDependencies": {
@@ -40,12 +41,17 @@
       {
         "from": "src/main/bin",
         "to": "bin",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
       "target": "dmg",
       "category": "public.app-category.utilities"
     }
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true
   }
 }

@@ -214,6 +214,19 @@ async function wipeDriveContents(mountPoint) {
     }
   }
 
+  // Written last, after everything above is gone -- writing it any
+  // earlier would just have it deleted by this same pass. An empty
+  // regular file (not a folder) named .Trashes at the volume root
+  // blocks macOS from creating its own .Trashes/<uid> folder there,
+  // so Finder can't silently move deleted items into a hidden trash
+  // on this drive -- it instead prompts to delete immediately, which
+  // is what we want for shared, disposable-content drives.
+  try {
+    await fs.promises.writeFile(path.join(mountPoint, '.Trashes'), '');
+  } catch (error) {
+    failures.push({ path: path.join(mountPoint, '.Trashes'), error: error.message });
+  }
+
   return { failures };
 }
 
@@ -246,6 +259,68 @@ async function isDiskPresent(diskIdentifier) {
   return extractDiskIdentifiers(data).includes(diskIdentifier);
 }
 
+// FAT12/16/32 volume labels share the old 8.3 label space: 11
+// characters max, uppercase only, and a restricted charset (no
+// lowercase, no most punctuation or symbols). exFAT and macOS's own
+// filesystems (HFS+/APFS) don't have this restriction, so this is
+// only applied when the volume is actually FAT.
+const FAT_LABEL_MAX_LENGTH = 11;
+
+/**
+ * Adapts a requested volume name to what FAT12/16/32 can actually
+ * store: uppercased, and stripped down to letters/digits/spaces only
+ * rather than trying to enumerate FAT's full accepted symbol set,
+ * then truncated to 11 characters. Trimmed after truncating too, in
+ * case cutting it off at 11 chars lands mid-space. An input that's
+ * empty after stripping (e.g. it was entirely symbols) falls back to
+ * "UNTITLED" rather than handing diskutil an empty label.
+ */
+function sanitizeFatLabel(name) {
+  const stripped = name.toUpperCase().replace(/[^A-Z0-9 ]/g, '');
+  const truncated = stripped.slice(0, FAT_LABEL_MAX_LENGTH).trim();
+  return truncated || 'UNTITLED';
+}
+
+/**
+ * Looks up a mounted volume's filesystem type (e.g. "msdos" for
+ * FAT12/16/32, "exfat", "hfs", "apfs") via `diskutil info`. Returns
+ * '' if it can't be determined, which callers should treat as "don't
+ * assume FAT" rather than a hard error.
+ */
+async function getFilesystemType(mountPoint) {
+  try {
+    // Single-quoted and escaped the same way mountPoint itself might
+    // need to be (it can contain spaces, e.g. "/Volumes/MY DRIVE") --
+    // this shells out same as getDiskutilData() above, just with a
+    // dynamic argument that needs quoting.
+    const quoted = `'${mountPoint.replace(/'/g, `'\\''`)}'`;
+    const { stdout } = await execAsync(
+      `diskutil info -plist ${quoted} | plutil -convert json -o - -`
+    );
+    const data = JSON.parse(stdout);
+    return data.FilesystemType || '';
+  } catch (err) {
+    return '';
+  }
+}
+
+/**
+ * Renames a mounted volume via `diskutil rename`, which accepts a
+ * mount point in place of the volume's current name -- convenient
+ * here since the caller (usbWiperWindow.js) already has each volume's
+ * mountPoint on hand and would otherwise have to track its
+ * (possibly-just-wiped) display name separately. When the volume is
+ * FAT12/16/32 (`FilesystemType` "msdos" -- covers all three; diskutil
+ * distinguishes them via `FilesystemName` instead, e.g. "MS-DOS
+ * FAT32", not `FilesystemType`), the requested name is first adapted
+ * to what that filesystem can actually store -- see sanitizeFatLabel.
+ */
+async function renameVolume(mountPoint, name) {
+  const filesystemType = await getFilesystemType(mountPoint);
+  const finalName = filesystemType === 'msdos' ? sanitizeFatLabel(name) : name;
+  await execFileAsync('diskutil', ['rename', mountPoint, finalName]);
+}
+
 module.exports = {
   listUsbDrives,
   ejectDrive,
@@ -253,4 +328,5 @@ module.exports = {
   extractMountedVolumes,
   extractDiskIdentifiers,
   wipeDriveContents,
+  renameVolume,
 };

@@ -1,21 +1,36 @@
 'use strict';
 
-// Flat filtering UI: no navigation, no breadcrumbs. Two independent
-// multi-select filter rows (Printers, Categories) narrow down a single
-// flat grid of items; clicking an item shows its print files. Category
-// is just a tag derived from an item's top-level data folder -- there's
-// no subcategory nesting anymore (see indexer.js), which is what makes
-// multi-select category filtering simple instead of a tree problem.
-
-const UNCATEGORIZED = 'Uncategorized';
+// Flat filtering UI: no navigation, no breadcrumbs, no categories. Two
+// independent multi-select filter rows (Printers, Tags) narrow down a
+// single flat grid of items; clicking an item shows its print files.
+// Tags come from each item's metadata.json (see itemMetadata.js) --
+// an item can carry any number of them, so the tag filter is an OR
+// match (an item matching if it has *any* selected tag), same as the
+// printer filter's OR-across-a-file's-printer semantics.
 
 let allItems = [];
 let selectedItem = null; // the item currently shown in detail view, or null
 let selectedPrinters = new Set(); // empty = no restriction chosen ("All Printers")
-let selectedCategories = new Set(); // empty = no restriction chosen ("All Categories")
+let selectedTags = new Set(); // empty = no restriction chosen ("All Tags")
 let keywordQuery = ''; // raw text from the search box; '' = no restriction
 let settings = { availablePrinters: [], hideUnavailable: false, gitRepoUrl: '', gitBranch: '' };
 let syncStatus = { configured: false, lastSuccessAt: null, inProgress: false };
+
+// Edit mode: the main screen doubles as the editing UI (see
+// ARCHITECTURE.md) rather than being a separate mode/window. pendingChanges
+// mirrors editSession.js's changes map (itemPath -> {type, name}) purely
+// for display -- badges, borders, the bottom bar's counts, and the smart
+// tag pills below. selectedSmartTags holds which of 'add'/'edit'/'delete'
+// are currently filtered on, same shape as selectedTags.
+let editModeActive = false;
+let pendingChanges = {};
+let selectedSmartTags = new Set();
+
+const SMART_TAGS = [
+  { type: 'add', label: 'Pending', className: 'smart-tag-add' },
+  { type: 'edit', label: 'Edited', className: 'smart-tag-edit' },
+  { type: 'delete', label: 'Trashed', className: 'smart-tag-delete' },
+];
 
 async function init() {
   // Registered before any await so this is listening synchronously
@@ -25,6 +40,14 @@ async function init() {
   // leave a window where the message could arrive before we're
   // listening for it.
   window.catalogAPI.onOpenSettings((payload) => openSettingsDialog(payload || {}));
+  window.catalogAPI.onEditSessionEntered(() => {
+    editModeActive = true;
+    pendingChanges = {};
+    selectedSmartTags = new Set();
+    selectedItem = null; // editing works at the grid level, not inside item detail
+    renderTagFilter();
+    render();
+  });
 
   settings = await window.catalogAPI.getSettings();
 
@@ -54,7 +77,7 @@ async function init() {
   window.catalogAPI.onCatalogUpdated((newItems) => {
     allItems = newItems;
     renderPrinterFilter();
-    renderCategoryFilter();
+    renderTagFilter();
     render();
   });
 
@@ -65,17 +88,17 @@ async function init() {
   document.getElementById('keyword-filter').addEventListener('input', onKeywordInput);
 
   renderPrinterFilter();
-  renderCategoryFilter();
+  renderTagFilter();
   render();
 }
 
 function onKeywordInput(e) {
   keywordQuery = e.target.value;
-  // Category pill counts fold in the keyword filter too (see
-  // countFilesForCategory), so they need a re-render on every
+  // Tag pill counts fold in the keyword filter too (see
+  // countFilesForTag), so they need a re-render on every
   // keystroke same as the listing does. The printer pills don't show
   // counts, so they don't need to be touched here.
-  renderCategoryFilter();
+  renderTagFilter();
   render();
 }
 
@@ -102,10 +125,10 @@ function collectPrinters(items) {
   return set;
 }
 
-function collectCategories(items) {
+function collectTags(items) {
   const set = new Set();
   for (const item of items) {
-    set.add(item.category || UNCATEGORIZED);
+    for (const tag of item.tags || []) set.add(tag);
   }
   return set;
 }
@@ -115,9 +138,17 @@ function itemMatchesPrinter(item, printerSet) {
   return item.files.some((f) => printerSet.has(printerLabel(f)));
 }
 
-function itemMatchesCategory(item, categorySet) {
-  if (!categorySet || categorySet.size === 0) return true;
-  return categorySet.has(item.category || UNCATEGORIZED);
+function itemMatchesTags(item, tagSet) {
+  if (!tagSet || tagSet.size === 0) return true;
+  return (item.tags || []).some((t) => tagSet.has(t));
+}
+
+// Only applies in edit mode -- pendingChanges is always empty otherwise,
+// so this is a no-op filter outside a session.
+function itemMatchesSmartTags(item, smartSet) {
+  if (!smartSet || smartSet.size === 0) return true;
+  const change = pendingChanges[item.path];
+  return Boolean(change && smartSet.has(change.type));
 }
 
 // Keyword search: splits the query into words and requires all of
@@ -168,13 +199,15 @@ function fileMatchesKeywordInItem(item, file, query) {
   return textIncludesAllWords(fileSearchText(file), words);
 }
 
-// Total matching print files for one category pill's count -- same
-// "how many files you'd narrow down to" semantics as before, now also
-// narrowed by whatever's in the search box.
-function countFilesForCategory(items, printerSet, categoryValue, query) {
+// Total matching print files for one tag pill's count -- same "how
+// many files you'd narrow down to" semantics category pills used to
+// have, now also narrowed by whatever's in the search box. An item
+// can carry the tag alongside others, so this checks membership
+// rather than equality.
+function countFilesForTag(items, printerSet, tagValue, query) {
   let total = 0;
   for (const item of items) {
-    if ((item.category || UNCATEGORIZED) !== categoryValue) continue;
+    if (!(item.tags || []).includes(tagValue)) continue;
     for (const file of item.files) {
       if (printerSet && printerSet.size > 0 && !printerSet.has(printerLabel(file))) continue;
       if (!fileMatchesKeywordInItem(item, file, query)) continue;
@@ -256,44 +289,70 @@ function renderPrinterFilter() {
   }
 }
 
-function renderCategoryFilter() {
-  const el = document.getElementById('category-filter');
+function renderTagFilter() {
+  const el = document.getElementById('tag-filter');
   el.innerHTML = '';
 
-  const categories = Array.from(collectCategories(allItems)).sort();
-  if (categories.length === 0) return; // nothing to filter by yet
+  const tags = Array.from(collectTags(allItems)).sort();
+  // Bail out on the tag-pill portion alone when there are no tags yet
+  // -- the smart tag pills (edit mode) still need to render either way.
+  if (tags.length > 0) {
+    // Drop any selected tag that's no longer valid (e.g. its last item
+    // was removed or untagged).
+    selectedTags = new Set([...selectedTags].filter((t) => tags.includes(t)));
 
-  // Drop any selected category that's no longer valid (e.g. its last
-  // item was removed).
-  selectedCategories = new Set([...selectedCategories].filter((c) => categories.includes(c)));
+    const effective = effectivePrinterFilter();
 
-  const effective = effectivePrinterFilter();
-
-  const allBtn = document.createElement('button');
-  allBtn.textContent = 'All Categories';
-  allBtn.className = 'filter-pill' + (selectedCategories.size === 0 ? ' active' : '');
-  allBtn.onclick = () => {
-    selectedCategories = new Set();
-    renderCategoryFilter();
-    render();
-  };
-  el.appendChild(allBtn);
-
-  for (const category of categories) {
-    const count = countFilesForCategory(allItems, effective, category, keywordQuery);
-    const btn = document.createElement('button');
-    btn.textContent = `${category} (${count})`;
-    btn.className = 'filter-pill' + (selectedCategories.has(category) ? ' active' : '');
-    btn.onclick = () => {
-      if (selectedCategories.has(category)) {
-        selectedCategories.delete(category);
-      } else {
-        selectedCategories.add(category);
-      }
-      renderCategoryFilter();
+    const allBtn = document.createElement('button');
+    allBtn.textContent = 'All Tags';
+    allBtn.className = 'filter-pill' + (selectedTags.size === 0 ? ' active' : '');
+    allBtn.onclick = () => {
+      selectedTags = new Set();
+      renderTagFilter();
       render();
     };
-    el.appendChild(btn);
+    el.appendChild(allBtn);
+
+    for (const tag of tags) {
+      const count = countFilesForTag(allItems, effective, tag, keywordQuery);
+      const btn = document.createElement('button');
+      btn.textContent = `${tag} (${count})`;
+      btn.className = 'filter-pill' + (selectedTags.has(tag) ? ' active' : '');
+      btn.onclick = () => {
+        if (selectedTags.has(tag)) {
+          selectedTags.delete(tag);
+        } else {
+          selectedTags.add(tag);
+        }
+        renderTagFilter();
+        render();
+      };
+      el.appendChild(btn);
+    }
+  }
+
+  if (editModeActive) {
+    for (const tag of SMART_TAGS) {
+      const count = Object.values(pendingChanges).filter((c) => c.type === tag.type).length;
+      // A tag with nothing currently in that state would just filter
+      // the grid down to nothing if clicked -- skip showing it rather
+      // than offer a pill that's guaranteed to look "broken".
+      if (count === 0 && !selectedSmartTags.has(tag.type)) continue;
+
+      const btn = document.createElement('button');
+      btn.textContent = `${tag.label} (${count})`;
+      btn.className = `filter-pill smart-tag ${tag.className}` + (selectedSmartTags.has(tag.type) ? ' active' : '');
+      btn.onclick = () => {
+        if (selectedSmartTags.has(tag.type)) {
+          selectedSmartTags.delete(tag.type);
+        } else {
+          selectedSmartTags.add(tag.type);
+        }
+        renderTagFilter();
+        render();
+      };
+      el.appendChild(btn);
+    }
   }
 }
 
@@ -351,7 +410,7 @@ function render() {
   listing.innerHTML = '';
 
   // The search box and pill rows only affect the flat browsing grid,
-  // never the currently-open item's file list (category isn't even
+  // never the currently-open item's file list (tags aren't even
   // checked there -- see below), so leave them interactable and
   // they'll just silently narrow/broaden a view you can't see. Hiding
   // the whole block while an item is open avoids that: nothing to
@@ -397,7 +456,8 @@ function render() {
   const visibleItems = allItems.filter(
     (item) =>
       itemMatchesPrinter(item, effective) &&
-      itemMatchesCategory(item, selectedCategories) &&
+      itemMatchesTags(item, selectedTags) &&
+      itemMatchesSmartTags(item, selectedSmartTags) &&
       itemMatchesKeyword(item, keywordQuery)
   );
 
@@ -406,9 +466,10 @@ function render() {
       renderEmptyState(
         keywordQuery
           ? 'Nothing matches your search. Try a different keyword, or clear the search box.'
-          : 'Nothing matches the selected filters. Try different printers or categories, or choose "All" for each.'
+          : 'Nothing matches the selected filters. Try different printers or tags, or choose "All" for each.'
       )
     );
+    renderEditBar();
     return;
   }
 
@@ -418,6 +479,7 @@ function render() {
     itemGrid.appendChild(renderItemCard(item));
   }
   listing.appendChild(itemGrid);
+  renderEditBar();
 }
 
 // A friendly "nothing matches" screen -- kept generic so it can also
@@ -445,8 +507,10 @@ function renderEmptyState(message) {
 }
 
 function renderItemCard(item) {
+  const change = pendingChanges[item.path];
+
   const card = document.createElement('a');
-  card.className = 'listing';
+  card.className = 'listing' + (change ? ` pending-${change.type}` : '');
   card.href = '#';
   card.title = item.displayName || item.name;
   card.onclick = (e) => {
@@ -468,14 +532,113 @@ function renderItemCard(item) {
 
   const label = document.createElement('span');
   label.textContent = item.displayName || item.name;
+  if (change) {
+    const badge = document.createElement('span');
+    badge.className = `pending-badge pending-badge-${change.type}`;
+    badge.textContent = SMART_TAGS.find((t) => t.type === change.type).label;
+    label.appendChild(document.createTextNode(' '));
+    label.appendChild(badge);
+  }
   card.appendChild(label);
 
+  if (editModeActive) {
+    const controls = document.createElement('div');
+    controls.className = 'item-edit-controls';
+
+    const editBtn = document.createElement('button');
+    editBtn.textContent = 'Edit';
+    editBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openItemEditor('edit', item);
+    };
+    controls.appendChild(editBtn);
+
+    const deleteBtn = document.createElement('button');
+    const isTrashed = change && change.type === 'delete';
+    deleteBtn.textContent = isTrashed ? 'Undo' : 'Delete';
+    deleteBtn.onclick = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      pendingChanges = isTrashed
+        ? await window.catalogAPI.editSessionUndoDelete(item.path)
+        : await window.catalogAPI.editSessionDeleteItem(item.path);
+      renderTagFilter();
+      render();
+    };
+    controls.appendChild(deleteBtn);
+
+    card.appendChild(controls);
+  }
+
   return card;
+}
+
+// Derives a human platform label from an origin URL's hostname, so
+// the badge doesn't need a separately-stored "platform" field --
+// works for a manually-typed URL on some other site too (falls back
+// to the bare hostname rather than nothing).
+function originPlatformLabel(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./i, '');
+    if (/thingiverse/i.test(host)) return 'Thingiverse';
+    if (/printables/i.test(host)) return 'Printables';
+    return host;
+  } catch (err) {
+    return null;
+  }
+}
+
+// Item-level "where this came from" line, shown above the file list
+// only when an origin URL is known (metadata.json's origin.url --
+// see itemMetadata.js/originLocation.js). Also displays
+// creatorName/creatorUrl when present, even though nothing in this
+// app populates them yet (planned: a future pass scrapes the origin
+// page for the creator's username + profile URL) -- built this way
+// now so that once that data exists, it shows up here with no further
+// display-side changes needed.
+function renderOriginInfo(origin) {
+  const label = originPlatformLabel(origin.url);
+  const line = document.createElement('div');
+  line.className = 'item-origin-info';
+
+  const link = document.createElement('a');
+  link.href = origin.url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = label ? `View original on ${label} \u2197` : `View original \u2197`;
+  line.appendChild(link);
+
+  if (origin.creatorName) {
+    line.appendChild(document.createTextNode(' by '));
+    if (origin.creatorUrl) {
+      const creatorLink = document.createElement('a');
+      creatorLink.href = origin.creatorUrl;
+      creatorLink.target = '_blank';
+      creatorLink.rel = 'noopener noreferrer';
+      creatorLink.textContent = origin.creatorName;
+      line.appendChild(creatorLink);
+    } else {
+      line.appendChild(document.createTextNode(origin.creatorName));
+    }
+  }
+
+  return line;
 }
 
 function renderItemDetail(item) {
   const wrap = document.createElement('div');
   wrap.className = 'item-detail';
+
+  const header = document.createElement('div');
+  header.className = 'item-detail-header';
+  const heading = document.createElement('h2');
+  heading.textContent = item.displayName || item.name;
+  header.appendChild(heading);
+  if (item.origin && item.origin.url) {
+    header.appendChild(renderOriginInfo(item.origin));
+  }
+  wrap.appendChild(header);
 
   for (const file of item.files) {
     const row = document.createElement('div');
@@ -838,7 +1001,7 @@ function openSettingsDialog(opts = {}) {
     applyDefaultPrinterFilter();
     document.body.removeChild(overlay);
     renderPrinterFilter();
-    renderCategoryFilter();
+    renderTagFilter();
     render();
 
     // The git repo/branch feed into DATA_DIR, which is only resolved
@@ -870,5 +1033,485 @@ function openSettingsDialog(opts = {}) {
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
+
+// The "Add item" button plus the persistent bottom bar showing
+// pending-change counts and Confirm/Cancel actions. Rendered fresh
+// into #listing on every render() call (append-only, listing.innerHTML
+// was already cleared at the top of render()) -- cheap enough given
+// how small this is, and keeps it in sync with pendingChanges without
+// a separate update path to maintain.
+function renderEditBar() {
+  const listing = document.getElementById('listing');
+  if (!editModeActive) return;
+
+  const addBtn = document.createElement('button');
+  addBtn.textContent = 'Add item';
+  addBtn.className = 'add-item-button';
+  addBtn.onclick = () => openItemEditor('add', null);
+  listing.appendChild(addBtn);
+
+  const counts = { add: 0, edit: 0, delete: 0 };
+  for (const change of Object.values(pendingChanges)) counts[change.type]++;
+  const total = counts.add + counts.edit + counts.delete;
+
+  const bar = document.createElement('div');
+  bar.className = 'edit-session-bar';
+
+  const stats = document.createElement('span');
+  stats.textContent = `${counts.add} added \u00b7 ${counts.edit} edited \u00b7 ${counts.delete} deleted`;
+  bar.appendChild(stats);
+
+  const buttons = document.createElement('div');
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel changes';
+  cancelBtn.onclick = async () => {
+    if (total > 0 && !confirm('Discard all pending changes?')) return;
+    allItems = await window.catalogAPI.editSessionCancel();
+    editModeActive = false;
+    pendingChanges = {};
+    selectedSmartTags = new Set();
+    renderPrinterFilter();
+    renderTagFilter();
+    render();
+  };
+  buttons.appendChild(cancelBtn);
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.textContent = `Confirm ${total} change${total === 1 ? '' : 's'}`;
+  confirmBtn.disabled = total === 0;
+  confirmBtn.onclick = async () => {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Pushing\u2026';
+    try {
+      const result = await window.catalogAPI.editSessionConfirm();
+      if (result.cancelled) {
+        // Admin backed out of the token/provisioning prompt -- changes
+        // are untouched, just re-enable the button.
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = `Confirm ${total} change${total === 1 ? '' : 's'}`;
+        return;
+      }
+      allItems = result.tree;
+      editModeActive = false;
+      pendingChanges = {};
+      selectedSmartTags = new Set();
+      renderPrinterFilter();
+      renderTagFilter();
+      render();
+    } catch (err) {
+      // Session stays active on the main-process side (see
+      // editSession:confirmSession) so a retry after fixing whatever
+      // went wrong (network, auth) just works.
+      alert(`Push failed: ${err.message}\n\nYour changes are still staged -- fix the issue and try again.`);
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = `Confirm ${total} change${total === 1 ? '' : 's'}`;
+    }
+  };
+  buttons.appendChild(confirmBtn);
+
+  bar.appendChild(buttons);
+  listing.appendChild(bar);
+}
+
+// Shared editor for both adding a new item and editing an existing
+// one -- see prior design discussion for why these share one form.
+// mode is 'add' or 'edit'; item is null for 'add'.
+// Strips a print file's printer+extension segment (see the
+// name.printer.gcode/.bgcode convention) and then a trailing batch/
+// quantity suffix, so "widget.MK4S.bgcode" and
+// "widget-batch6.MK4S.bgcode" compare equal for the batch-sharing
+// suggestion below.
+function strippedBatchName(name) {
+  const withoutExt = name.replace(/\.[^.]+\.(gcode|bgcode)$/i, '');
+  return withoutExt.replace(/[-_]?(batch\d+|x\d+)$/i, '').toLowerCase();
+}
+
+function isImageFileName(name) {
+  return /\.(jpe?g|png|gif|svg)$/i.test(name);
+}
+
+// A "0 color changes" (the common case) or "1 in batch" (i.e. not
+// actually a batch) note adds noise rather than helping tell similar
+// prints apart -- only the informative cases show up here.
+function printFileLabel(pf) {
+  const parts = [];
+  if (pf.colorChangeCount !== null && pf.colorChangeCount > 0) {
+    parts.push(`${pf.colorChangeCount} color change${pf.colorChangeCount === 1 ? '' : 's'}`);
+  }
+  if (pf.copies !== null && pf.copies > 1) {
+    parts.push(`batch of ${pf.copies}`);
+  }
+  return parts.length > 0 ? `${pf.shortname} (${parts.join(', ')})` : pf.shortname;
+}
+
+function imageRefSrc(ref, folderUrl) {
+  return ref.kind === 'existing' ? `${folderUrl}/${ref.name}` : `file://${ref.path}`;
+}
+
+function imageRefEquals(a, b) {
+  return a.kind === b.kind && (a.kind === 'existing' ? a.name === b.name : a.path === b.path);
+}
+
+// Shared editor for both adding a new item and editing an existing
+// one -- see prior design discussion for why these share one form.
+// mode is 'add' or 'edit'; item is null for 'add'.
+function openItemEditor(mode, item, prefilledSourceDir) {
+  const overlay = document.createElement('div');
+  overlay.className = 'drive-picker-overlay';
+
+  const box = document.createElement('div');
+  box.className = 'drive-picker-box settings-box editor-box';
+
+  const title = document.createElement('h3');
+  title.textContent = mode === 'add' ? 'Add item' : 'Edit item';
+  box.appendChild(title);
+
+  const nameField = createSettingsTextField('Name', mode === 'edit' ? item.displayName || item.name : '', 'Widget holder');
+  box.appendChild(nameField.wrap);
+
+  const tagsField = createSettingsTextField(
+    'Tags (comma separated)',
+    mode === 'edit' ? (item.tags || []).join(', ') : '',
+    'organizers, desk'
+  );
+  box.appendChild(tagsField.wrap);
+
+  // Auto-detected from the item's folder when possible (see
+  // originLocation.js) -- Thingiverse's README.txt or a Printables
+  // page-printout PDF -- but always just a plain editable/clearable
+  // text field otherwise, same as name/tags. 'add' mode gets its
+  // prefill from scanSourceFolder()'s originUrl below; 'edit' mode
+  // prefills from the item's already-stored metadata.json origin, and
+  // only bothers re-detecting (async, below) when that's empty, so an
+  // item already tagged with an origin doesn't get its folder
+  // re-scanned/re-parsed every time it's opened for editing.
+  const originField = createSettingsTextField(
+    'Original Location',
+    mode === 'edit' ? (item.origin && item.origin.url) || '' : '',
+    'https://www.thingiverse.com/thing/...'
+  );
+  box.appendChild(originField.wrap);
+
+  if (mode === 'edit' && !(item.origin && item.origin.url)) {
+    window.catalogAPI
+      .detectItemOrigin(item.path)
+      .then((url) => {
+        if (url) originField.input.value = url;
+      })
+      .catch(() => {}); // best-effort -- leave the field empty on failure
+  }
+
+  // Image reconciliation state. printFiles/poolImages/folderUrl are
+  // filled in once we know what folder we're working with (immediately
+  // for 'edit', after the folder dialog resolves for 'add' -- see
+  // below). imageAssignments is keyed by print-file basename (the same
+  // key indexer.js's metadataImages lookup uses) -> ordered array of
+  // ImageRef ({kind:'existing', name} or {kind:'external', path,
+  // name}). Many-to-many is the point (see prior design discussion),
+  // so poolImages is just "every image available to this item" --
+  // assigning one to a print file doesn't remove it from the pool.
+  let printFiles = [];
+  let poolImages = [];
+  let imageAssignments = {};
+  let folderUrl = null; // `file://<item folder>` once known
+  let selectedPoolIndex = null;
+  const checkedFiles = new Set();
+
+  const imagesSection = document.createElement('div');
+  box.appendChild(imagesSection);
+
+  function assignRefToFile(key, ref) {
+    const current = imageAssignments[key] || (imageAssignments[key] = []);
+    if (current.some((r) => imageRefEquals(r, ref))) return;
+    current.push(ref);
+    suggestBatchShare(key, ref);
+  }
+
+  // Adds an OS file dropped or browsed in as a pool entry, deduping by
+  // path -- returns the ref (existing or newly added) so callers can
+  // also assign it to a specific print file in the same gesture (see
+  // the per-row drop handler in renderImagesSection below).
+  function addExternalToPool(path, name) {
+    const existing = poolImages.find((r) => r.kind === 'external' && r.path === path);
+    if (existing) return existing;
+    const ref = { kind: 'external', path, name };
+    poolImages.push(ref);
+    return ref;
+  }
+
+  function suggestBatchShare(justAssignedKey, ref) {
+    const source = printFiles.find((f) => f.key === justAssignedKey);
+    if (!source || source.colorChangeCount === null) return;
+    for (const target of printFiles) {
+      if (target.key === justAssignedKey) continue;
+      if (target.colorChangeCount !== source.colorChangeCount) continue;
+      if (strippedBatchName(target.key) !== strippedBatchName(source.key)) continue;
+      const already = (imageAssignments[target.key] || []).some((r) => imageRefEquals(r, ref));
+      if (already) continue;
+      const share = confirm(
+        `"${target.shortname}" looks like a variant of "${source.shortname}" (same color changes) -- share this image with it too?`
+      );
+      if (share) {
+        imageAssignments[target.key] = [...(imageAssignments[target.key] || []), ref];
+      }
+    }
+  }
+
+  function renderImagesSection() {
+    imagesSection.innerHTML = '';
+    if (!folderUrl) return; // 'add' mode before a folder's been picked
+
+    const heading = document.createElement('p');
+    heading.style.fontWeight = 'bold';
+    heading.textContent = 'Print files';
+    imagesSection.appendChild(heading);
+
+    for (const pf of printFiles) {
+      const row = document.createElement('div');
+      row.className = 'editor-file-row';
+      row.ondragover = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      row.ondragenter = () => row.classList.add('drop-target-active');
+      row.ondragleave = () => row.classList.remove('drop-target-active');
+      row.ondrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        row.classList.remove('drop-target-active');
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+          // OS image file(s) dropped directly onto this print file --
+          // per prior discussion, this both adds them to the pool
+          // (they weren't there before) and assigns them to this row
+          // in one gesture, rather than requiring a separate step.
+          for (const file of files) {
+            if (!isImageFileName(file.name)) continue;
+            const filePath = window.catalogAPI.getPathForFile(file);
+            assignRefToFile(pf.key, addExternalToPool(filePath, file.name));
+          }
+        } else {
+          // An in-app drag of an existing pool thumbnail (see its
+          // dragstart below) -- just assign it, nothing new to add.
+          const idx = Number(e.dataTransfer.getData('text/plain'));
+          if (!Number.isNaN(idx) && poolImages[idx]) assignRefToFile(pf.key, poolImages[idx]);
+        }
+        renderImagesSection();
+      };
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = checkedFiles.has(pf.key);
+      checkbox.onchange = () => {
+        if (checkbox.checked) checkedFiles.add(pf.key);
+        else checkedFiles.delete(pf.key);
+      };
+      row.appendChild(checkbox);
+
+      const label = document.createElement('span');
+      label.className = 'editor-file-label';
+      label.textContent = printFileLabel(pf);
+      row.appendChild(label);
+
+      const chips = document.createElement('div');
+      chips.className = 'editor-image-chips';
+      (imageAssignments[pf.key] || []).forEach((ref, idx) => {
+        const chip = document.createElement('span');
+        chip.className = 'editor-image-chip';
+        const img = document.createElement('img');
+        img.src = imageRefSrc(ref, folderUrl);
+        chip.appendChild(img);
+        const removeBtn = document.createElement('button');
+        removeBtn.textContent = '\u00d7';
+        removeBtn.title = 'Remove';
+        removeBtn.onclick = () => {
+          imageAssignments[pf.key].splice(idx, 1);
+          renderImagesSection();
+        };
+        chip.appendChild(removeBtn);
+        chips.appendChild(chip);
+      });
+      row.appendChild(chips);
+
+      imagesSection.appendChild(row);
+    }
+
+    const poolHeading = document.createElement('p');
+    poolHeading.style.fontWeight = 'bold';
+    poolHeading.textContent = 'Available images';
+    imagesSection.appendChild(poolHeading);
+
+    const pool = document.createElement('div');
+    pool.className = 'editor-image-pool';
+    pool.ondragover = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    pool.ondrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const files = e.dataTransfer.files;
+      if (!files || files.length === 0) return; // in-app drags only make sense onto a print file row, not back onto the pool
+      for (const file of files) {
+        if (!isImageFileName(file.name)) continue;
+        addExternalToPool(window.catalogAPI.getPathForFile(file), file.name);
+      }
+      renderImagesSection();
+    };
+    if (poolImages.length === 0) {
+      const none = document.createElement('p');
+      none.className = 'settings-intro';
+      none.textContent = 'No images yet -- use "Browse for images" below, or drag images in.';
+      pool.appendChild(none);
+    }
+    poolImages.forEach((ref, idx) => {
+      const thumb = document.createElement('img');
+      thumb.className = 'editor-pool-thumb' + (selectedPoolIndex === idx ? ' selected' : '');
+      thumb.src = imageRefSrc(ref, folderUrl);
+      thumb.title = ref.name;
+      thumb.draggable = true;
+      thumb.ondragstart = (e) => e.dataTransfer.setData('text/plain', String(idx));
+      thumb.onclick = () => {
+        selectedPoolIndex = selectedPoolIndex === idx ? null : idx;
+        renderImagesSection();
+      };
+      pool.appendChild(thumb);
+    });
+    imagesSection.appendChild(pool);
+
+    const poolButtons = document.createElement('div');
+    poolButtons.className = 'settings-buttons';
+
+    const browseBtn = document.createElement('button');
+    browseBtn.textContent = 'Browse for images\u2026';
+    browseBtn.onclick = async () => {
+      const picked = await window.catalogAPI.editSessionBrowseImages();
+      for (const p of picked) addExternalToPool(p.path, p.name);
+      renderImagesSection();
+    };
+    poolButtons.appendChild(browseBtn);
+
+    const assignBtn = document.createElement('button');
+    assignBtn.textContent = 'Assign selected image to checked files';
+    assignBtn.disabled = selectedPoolIndex === null || checkedFiles.size === 0;
+    assignBtn.onclick = () => {
+      const ref = poolImages[selectedPoolIndex];
+      for (const key of checkedFiles) assignRefToFile(key, ref);
+      renderImagesSection();
+    };
+    poolButtons.appendChild(assignBtn);
+
+    imagesSection.appendChild(poolButtons);
+  }
+
+  if (mode === 'edit') {
+    folderUrl = `file://${item.path}`;
+    printFiles = item.files.map((f) => {
+      const key = f.path.split(/[\\/]/).pop();
+      imageAssignments[key] = (f.metadataImages || []).map((name) => ({ kind: 'existing', name }));
+      return { key, shortname: f.shortname, colorChangeCount: f.colorChangeCount, copies: f.copies };
+    });
+    poolImages = (item.imageFiles || []).map((name) => ({ kind: 'existing', name }));
+    renderImagesSection();
+  }
+
+  // 'add' needs a source folder before there's anything to name/tag in
+  // the first place -- pick it right away, and back out of the whole
+  // editor if the co-admin cancels the folder dialog rather than
+  // showing an empty form with nothing to attach it to.
+  let sourceDir = null;
+
+  const buttonsRow = document.createElement('div');
+  buttonsRow.className = 'settings-buttons';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save to pending';
+  saveBtn.onclick = async () => {
+    const name = nameField.input.value.trim();
+    const tags = tagsField.input.value
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const printFileImages = {};
+    for (const [key, refs] of Object.entries(imageAssignments)) {
+      if (refs.length > 0) printFileImages[key] = refs;
+    }
+    // { url } only -- writeItemMetadata merges this onto whatever
+    // origin block already exists (see itemMetadata.js), so this
+    // can't clobber a creatorName/creatorUrl a future scrape pass adds,
+    // and an emptied field still overwrites url specifically (co-admin
+    // clearing a wrong auto-detected/guessed link).
+    const origin = { url: originField.input.value.trim() };
+
+    try {
+      const result =
+        mode === 'add'
+          ? await window.catalogAPI.editSessionCommitAdd(sourceDir, { name, tags, printFileImages, origin })
+          : await window.catalogAPI.editSessionCommitEdit(item.path, { name, tags, printFileImages, origin });
+      pendingChanges = result.changes;
+      allItems = result.tree;
+      document.body.removeChild(overlay);
+      renderPrinterFilter();
+      renderTagFilter();
+      render();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+  buttonsRow.appendChild(saveBtn);
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'cancel';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => document.body.removeChild(overlay);
+  buttonsRow.appendChild(cancelBtn);
+
+  box.appendChild(buttonsRow);
+  overlay.appendChild(box);
+
+  if (mode === 'add') {
+    const preparePromise = prefilledSourceDir
+      ? window.catalogAPI.editSessionPrepareAddFolder(prefilledSourceDir)
+      : window.catalogAPI.editSessionPickAddFolder();
+    preparePromise
+      .then((picked) => {
+        if (!picked) return; // cancelled the folder dialog -- never show the form
+        sourceDir = picked.sourceDir;
+        nameField.input.value = picked.suggestedName;
+        originField.input.value = picked.originUrl || '';
+        folderUrl = `file://${sourceDir}`;
+        printFiles = picked.printFiles.map((f) => ({
+          key: f.name,
+          shortname: f.shortname,
+          colorChangeCount: f.colorChangeCount,
+          copies: f.copies,
+        }));
+        poolImages = picked.imageFiles.map((name) => ({ kind: 'existing', name }));
+        renderImagesSection();
+        document.body.appendChild(overlay);
+      })
+      .catch((err) => alert(err.message)); // e.g. a dropped path that wasn't actually a folder
+  } else {
+    document.body.appendChild(overlay);
+  }
+}
+
+// Chromium's default behavior for an unhandled drop is to navigate the
+// window to the dropped file, which would break the app -- prevent
+// that unconditionally, everywhere, then separately opt in to the one
+// drop behavior the main window itself cares about (see below). The
+// item editor's own pool/row drop handlers stopPropagation() so this
+// never double-handles a drop that already landed on one of those.
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (!editModeActive) return;
+  if (document.querySelector('.drive-picker-overlay')) return; // editor/settings open -- its own handlers own this drop
+  const files = e.dataTransfer.files;
+  if (!files || files.length === 0) return;
+  const sourceDir = window.catalogAPI.getPathForFile(files[0]);
+  openItemEditor('add', null, sourceDir);
+});
 
 init();

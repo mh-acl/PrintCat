@@ -3,27 +3,32 @@
 // indexer.js
 //
 // Walks the data directory (models/gcode/photos, kept as its own git repo
-// separate from the app) and builds a tree of categories -> items -> print
-// files. Gcode metadata parsing is the expensive part, so each file's
-// parsed result is cached to disk keyed by path + mtime + size; a file is
-// only re-parsed when it actually changes.
+// separate from the app) and builds a flat array of items -> print files.
+// Gcode metadata parsing is the expensive part, so each file's parsed
+// result is cached to disk keyed by path + mtime + size; a file is only
+// re-parsed when it actually changes.
 
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const { parseFilename, parseGcodeMetadata } = require('./gcodeParser');
 const { stripTrailingId } = require('./folderName');
+const { readItemMetadata } = require('./itemMetadata');
 
 const GCODE_EXT = new Set(['.gcode', '.bgcode']);
 const PROJECT_EXT = new Set(['.3mf']);
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.svg', '.gif']);
 
 // Bump this whenever gcodeParser.js's parsing logic changes in a way
-// that would produce different results for already-cached files --
-// otherwise a logic fix (like a filename-parsing bug fix) would
+// that would produce different results for already-cached files, OR
+// when file paths are about to shift wholesale (e.g. the category
+// flatten) -- entries are keyed by absolute path, so a bump here is
+// the cheapest way to drop every now-stale entry at once rather than
+// leaving them as dead weight until each file's mtime happens to
+// change. Otherwise a logic fix (like a filename-parsing bug fix) would
 // silently keep serving the old, wrong cached output until a file's
 // mtime happens to change.
-const CACHE_VERSION = 6;
+const CACHE_VERSION = 7;
 
 class Indexer {
   /**
@@ -55,20 +60,20 @@ class Indexer {
 
   /**
    * Scans the whole data directory and returns a flat array of items.
-   * Categories are no longer a nested tree -- each item is tagged with
-   * `category`, the name of whichever top-level folder it sits under
-   * (however deeply nested inside that folder), or null if it's
-   * directly at the data root. This trades away arbitrary category
-   * nesting for a much simpler, tag-like filtering model.
+   * There's no category concept anymore -- item folders live directly
+   * under the data root (or, tolerated for now, nested a level or two
+   * deep in whatever's left over from the pre-flatten layout). Tags,
+   * from each item's metadata.json, are the only grouping/filtering
+   * concept left (see itemMetadata.js and renderer.js).
    */
   async scan() {
     const items = [];
-    await this._scanDir(this.dataDir, null, items);
+    await this._scanDir(this.dataDir, items);
     await this.saveCache();
     return items;
   }
 
-  async _scanDir(dir, category, items) {
+  async _scanDir(dir, items) {
     const entries = await fsp.readdir(dir, { withFileTypes: true });
     const gcodeFiles = entries.filter(
       (e) => e.isFile() && GCODE_EXT.has(path.extname(e.name).toLowerCase())
@@ -79,21 +84,19 @@ class Indexer {
       // the folder as unzipped from Thingiverse/Printables, preserved
       // as-is (its original name may hold a source ID we want later).
       const item = await this._buildItem(dir, entries, gcodeFiles);
-      item.category = category;
       items.push(item);
       return;
     }
 
-    // Otherwise this is a grouping folder. Skip hidden ones (.git,
-    // etc.). Only assign a NEW category name when we're still at the
-    // true root (category === null) -- once inside a category, any
-    // further nesting just keeps flattening into that same category
-    // rather than creating a subcategory.
+    // Otherwise this is a grouping folder -- not expected once the
+    // data repo is fully flattened, but recursing into it (rather than
+    // requiring a strict single level) means a folder someone hasn't
+    // gotten around to flattening yet still surfaces its items instead
+    // of silently vanishing from the catalog. Skip hidden dirs (.git,
+    // etc.).
     const subdirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.'));
     for (const sub of subdirs) {
-      const childPath = path.join(dir, sub.name);
-      const nextCategory = category === null ? sub.name : category;
-      await this._scanDir(childPath, nextCategory, items);
+      await this._scanDir(path.join(dir, sub.name), items);
     }
   }
 
@@ -106,19 +109,49 @@ class Indexer {
       .filter((e) => e.isFile() && IMAGE_EXT.has(path.extname(e.name).toLowerCase()))
       .map((e) => e.name);
 
-    const files = [];
+    const parsedFiles = [];
     for (const f of gcodeFiles) {
-      files.push(await this._parseGcodeFile(path.join(dir, f.name)));
+      parsedFiles.push(await this._parseGcodeFile(path.join(dir, f.name)));
     }
 
     const name = path.basename(dir);
+    // metadata.json (see itemMetadata.js) overrides the filename-derived
+    // display name and adds item-level tags -- a co-admin's edits via
+    // the editor take precedence over what's implied by the folder
+    // name, but a folder with no metadata.json yet (the old workflow,
+    // or one never edited since) still works exactly as before.
+    const metadata = await readItemMetadata(dir);
+    const metaPrintFiles = (metadata && metadata.printFiles) || {};
+
+    // Per-file image assignments are attached via a shallow copy rather
+    // than mutating the cached parse entry directly -- the gcode parse
+    // cache (_parseGcodeFile) is keyed off the gcode file's own
+    // mtime/size, which has no idea metadata.json even exists, so
+    // baking metadataImages into the cached object itself would freeze
+    // a stale snapshot into the persisted cache file instead of
+    // reflecting metadata.json's actual current content on every scan.
+    const files = parsedFiles.map((file) => ({
+      ...file,
+      metadataImages: (metaPrintFiles[path.basename(file.path)] || {}).images || [],
+    }));
+
     return {
       type: 'item',
       // The original download folder name -- kept verbatim. It's the
       // source of things like the Thingiverse/Printables numeric ID,
       // which we may want to parse out later for a "view original" link.
       name,
-      displayName: stripTrailingId(name), // cleaned name for the UI
+      displayName: (metadata && metadata.displayName) || stripTrailingId(name),
+      tags: (metadata && metadata.tags) || [],
+      // { url, creatorName, creatorUrl } if metadata.json has one,
+      // else null. Deliberately not auto-detected here (see
+      // originLocation.js) -- that scan (README/PDF parsing) only
+      // runs on-demand when the item editor opens, via
+      // editSession.js's detectOrigin()/scanSourceFolder(), not on
+      // every catalog rescan; baking it into _buildItem() would mean
+      // re-reading/re-parsing a PDF on every background rescan for
+      // every item that doesn't have metadata.json origin info yet.
+      origin: (metadata && metadata.origin) || null,
       path: dir,
       explicitThumb,
       imageFiles, // all images present in this folder, for per-file overrides

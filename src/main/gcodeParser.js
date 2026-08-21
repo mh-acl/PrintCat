@@ -115,8 +115,17 @@ function parseFilename(filename) {
  * need to be loaded fully into memory, reading "; key = value" header
  * comments) and Prusa binary gcode / .bgcode (parsed block-by-block
  * per the format's own spec). Both return the same
- * `{ values, thumbnailBase64, colorChangeCount, copies, pauseCount,
- * pauseMessages }` shape regardless of which format was on disk:
+ * `{ values, thumbnailBase64, thumbnailMimeType, colorChangeCount,
+ * copies, pauseCount, pauseMessages }` shape regardless of which
+ * format was on disk:
+ *   - thumbnailMimeType: mime type of thumbnailBase64's bytes ('image/png'
+ *     or 'image/jpeg'), or null when thumbnailBase64 is null. Text-based
+ *     gcode's "thumbnail begin/end" convention is PNG-only, so this is
+ *     always 'image/png' whenever a thumbnail is present; .bgcode can be
+ *     either, since it picks the largest of a PNG or JPG thumbnail block
+ *     (see bgcodeParser.js) -- callers that write the thumbnail bytes to
+ *     disk (thumbnailResolver.js) need this to pick a matching file
+ *     extension rather than assuming PNG.
  *   - colorChangeCount: number of M600 commands found.
  *   - copies: detected batch size from M486-declared object names
  *     (1 if no batch was detected).
@@ -176,7 +185,15 @@ async function parseGcodeMetadata(filePath) {
     scanner.feedLine(line);
   }
 
-  return { values, thumbnailBase64, ...scanner.result() };
+  return {
+    values,
+    thumbnailBase64,
+    // Text gcode's "thumbnail begin/end" convention is PNG-only --
+    // see the doc comment above -- so this is always 'image/png'
+    // whenever a thumbnail was actually found, null otherwise.
+    thumbnailMimeType: thumbnailBase64 ? 'image/png' : null,
+    ...scanner.result(),
+  };
 }
 
 module.exports = { parseFilename, parseGcodeMetadata };

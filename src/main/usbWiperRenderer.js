@@ -4,8 +4,31 @@ const STOP_LABEL = 'Stop Wiping USBs';
 const button = document.getElementById('toggle-button');
 const status = document.getElementById('status');
 const progressBar = document.getElementById('progress-bar');
+const renameCheckbox = document.getElementById('rename-checkbox');
+const renameName = document.getElementById('rename-name');
 
 let wiping = false;
+
+function setRenameRowEnabled(enabled) {
+  renameCheckbox.disabled = !enabled;
+  renameName.disabled = !enabled || !renameCheckbox.checked;
+}
+
+async function saveRenameSettings() {
+  await window.usbWiperAPI.saveRenameSettings({
+    renameDrives: renameCheckbox.checked,
+    driveRenameName: renameName.value || 'UNTITLED',
+  });
+}
+
+renameCheckbox.addEventListener('change', () => {
+  renameName.disabled = wiping || !renameCheckbox.checked;
+  saveRenameSettings();
+});
+
+// Saved on blur rather than every keystroke -- avoids a settings.json
+// write per character while someone's still typing a name.
+renameName.addEventListener('blur', saveRenameSettings);
 
 // value/max stay fixed at 0/1 and 1/1 -- the only thing that changes for
 // "active" is removing the value attribute entirely, which is what makes
@@ -29,6 +52,7 @@ function setNotStarted() {
   button.classList.remove('stopping');
   status.textContent = 'Click "Begin Wiping USBs" to start.';
   setProgressState('disabled');
+  setRenameRowEnabled(true);
 }
 
 button.addEventListener('click', async () => {
@@ -42,6 +66,7 @@ button.addEventListener('click', async () => {
     wiping = true;
     button.textContent = STOP_LABEL;
     button.classList.add('stopping');
+    setRenameRowEnabled(false);
     // Status text/progress state for "insert a drive" comes from the
     // 'usb-wiper:status' idle event the main process sends as part of
     // starting the session, handled below.
@@ -70,3 +95,9 @@ window.usbWiperAPI.onSessionEnded(() => {
 });
 
 setNotStarted();
+
+window.usbWiperAPI.getRenameSettings().then(({ renameDrives, driveRenameName }) => {
+  renameCheckbox.checked = renameDrives;
+  renameName.value = driveRenameName || 'UNTITLED';
+  renameName.disabled = !renameDrives; // row itself stays enabled -- not wiping yet
+});

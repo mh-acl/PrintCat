@@ -1,6 +1,6 @@
 'use strict';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('catalogAPI', {
   getTree: () => ipcRenderer.invoke('catalog:getTree'),
@@ -25,4 +25,21 @@ contextBridge.exposeInMainWorld('catalogAPI', {
     ipcRenderer.on('sync:statusChanged', (event, status) => callback(status));
   },
   relaunch: () => ipcRenderer.invoke('app:relaunch'),
+  onEditSessionEntered: (callback) => {
+    ipcRenderer.on('editSession:entered', () => callback());
+  },
+  editSessionPickAddFolder: () => ipcRenderer.invoke('editSession:pickAddFolder'),
+  editSessionPrepareAddFolder: (sourceDir) => ipcRenderer.invoke('editSession:prepareAddFolder', sourceDir),
+  editSessionBrowseImages: () => ipcRenderer.invoke('editSession:browseImages'),
+  detectItemOrigin: (itemPath) => ipcRenderer.invoke('editSession:detectOrigin', itemPath),
+  // webUtils.getPathForFile must be called from here (preload), not the
+  // renderer -- it's the only supported way to get a real filesystem
+  // path back from a dropped File object with contextIsolation on.
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+  editSessionCommitAdd: (sourceDir, fields) => ipcRenderer.invoke('editSession:commitAdd', sourceDir, fields),
+  editSessionCommitEdit: (itemPath, fields) => ipcRenderer.invoke('editSession:commitEdit', itemPath, fields),
+  editSessionDeleteItem: (itemPath) => ipcRenderer.invoke('editSession:deleteItem', itemPath),
+  editSessionUndoDelete: (itemPath) => ipcRenderer.invoke('editSession:undoDelete', itemPath),
+  editSessionCancel: () => ipcRenderer.invoke('editSession:cancelSession'),
+  editSessionConfirm: () => ipcRenderer.invoke('editSession:confirmSession'),
 });

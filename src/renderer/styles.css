@@ -297,3 +297,201 @@ a.listing span {
   font-style: normal;
   margin-left: 0.25em;
 }
+
+/* Edit mode -- see renderer.js's editModeActive/pendingChanges. Smart
+   tag pills reuse .filter-pill's shape but get their own colors so
+   they read as distinct from category/printer pills at a glance. */
+.filter-pill.smart-tag-add {
+  background: #d9f2df;
+  border-color: #7dc98f;
+  color: #1e6b34;
+}
+
+.filter-pill.smart-tag-edit {
+  background: #fdeecb;
+  border-color: #e0b04a;
+  color: #7a5a0a;
+}
+
+.filter-pill.smart-tag-delete {
+  background: #fbdcdc;
+  border-color: #e08a8a;
+  color: #8a2020;
+}
+
+.filter-pill.smart-tag.active {
+  font-weight: bold;
+}
+
+.pending-badge {
+  display: inline-block;
+  font-size: 0.75em;
+  padding: 0.1em 0.5em;
+  border-radius: 1em;
+  vertical-align: middle;
+}
+
+.pending-badge-add {
+  background: #d9f2df;
+  color: #1e6b34;
+}
+
+.pending-badge-edit {
+  background: #fdeecb;
+  color: #7a5a0a;
+}
+
+.pending-badge-delete {
+  background: #fbdcdc;
+  color: #8a2020;
+}
+
+a.listing.pending-add,
+a.listing.pending-edit {
+  border-width: 2px;
+}
+
+a.listing.pending-add {
+  border-color: #4fa868;
+}
+
+a.listing.pending-edit {
+  border-color: #d9a72e;
+}
+
+a.listing.pending-delete {
+  opacity: 0.55;
+}
+
+.item-edit-controls {
+  display: flex;
+  gap: 0.5em;
+  justify-content: center;
+  padding: 0 0.5em 0.5em;
+}
+
+.item-edit-controls button {
+  flex: 1;
+  padding: 0.3em;
+  font-size: 0.85em;
+  border-radius: 0.5em;
+  border: 1px solid #99f;
+  background: #eee;
+  cursor: pointer;
+}
+
+.add-item-button {
+  display: block;
+  margin: 0 auto 1em;
+  padding: 0.6em 1.2em;
+  border-radius: 2em;
+  border: 1px solid #99f;
+  background: #ccf;
+  font-size: 1em;
+  cursor: pointer;
+}
+
+.edit-session-bar {
+  position: sticky;
+  bottom: 0;
+  background: white;
+  border-top: 1px solid #ccc;
+  padding: 0.75em 1em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1em;
+}
+
+.edit-session-bar button {
+  padding: 0.5em 1em;
+  border-radius: 1.5em;
+  border: 1px solid #99f;
+  background: #eee;
+  font-size: 1em;
+  cursor: pointer;
+  margin-left: 0.5em;
+}
+
+.edit-session-bar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.editor-box {
+  max-width: 32em;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.editor-file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.4em 0;
+  border-bottom: 1px solid #eee;
+}
+
+.editor-file-label {
+  flex: 1;
+  font-size: 0.9em;
+}
+
+.editor-image-chips {
+  display: flex;
+  gap: 0.3em;
+}
+
+.editor-image-chip {
+  position: relative;
+  display: inline-block;
+}
+
+.editor-image-chip img {
+  width: 2.5em;
+  height: 2.5em;
+  object-fit: cover;
+  border-radius: 0.3em;
+  border: 1px solid #ccc;
+  display: block;
+}
+
+.editor-image-chip button {
+  position: absolute;
+  top: -0.4em;
+  right: -0.4em;
+  width: 1.2em;
+  height: 1.2em;
+  line-height: 1;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #99f;
+  background: white;
+  font-size: 0.75em;
+  cursor: pointer;
+}
+
+.editor-image-pool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-bottom: 0.75em;
+}
+
+.editor-pool-thumb {
+  width: 3.5em;
+  height: 3.5em;
+  object-fit: cover;
+  border-radius: 0.4em;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.editor-pool-thumb.selected {
+  border-color: #66f;
+}
+
+.editor-file-row.drop-target-active {
+  background: #eef;
+  border-color: #66f;
+}

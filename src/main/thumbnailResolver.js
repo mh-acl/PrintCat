@@ -11,6 +11,13 @@
 const path = require('path');
 const { parseGcodeMetadata } = require('./gcodeParser');
 
+// A cached thumbnail's file extension needs to match the actual image
+// bytes written into it (see resolveFileThumbnail below) -- a .bgcode
+// file's largest embedded thumbnail can be either PNG or JPG (see
+// bgcodeParser.js's THUMBNAIL_MIME_BY_FORMAT), so this can't just
+// assume '.png' the way it did before thumbnailMimeType existed.
+const EXT_BY_MIME = { 'image/png': '.png', 'image/jpeg': '.jpg' };
+
 class ThumbnailResolver {
   constructor({ thumbnailCache }) {
     this.thumbnailCache = thumbnailCache;
@@ -30,6 +37,18 @@ class ThumbnailResolver {
    */
   async resolveFileThumbnail(fileEntry, imageFiles) {
     const dir = path.dirname(fileEntry.path);
+
+    // An explicit metadata.json assignment (see itemMetadata.js /
+    // indexer.js's metadataImages) wins over filename-convention
+    // matching below -- it's what the co-admin editor actually sets,
+    // and should behave predictably regardless of whether filenames
+    // happen to also line up. images[0] is the designated
+    // primary/thumbnail image per the schema; a future gallery view
+    // would show the rest of metadataImages.
+    if (fileEntry.metadataImages && fileEntry.metadataImages.length > 0) {
+      return path.join(dir, fileEntry.metadataImages[0]);
+    }
+
     const byBaseName = new Map(
       imageFiles.map((f) => [path.basename(f, path.extname(f)).toLowerCase(), f])
     );
@@ -42,16 +61,23 @@ class ThumbnailResolver {
 
     if (!fileEntry.hasEmbeddedThumbnail) return null;
 
+    // The cache key alone (path+mtime) doesn't say which extension a
+    // prior write used -- the source file's actual format could be
+    // either PNG or JPG (see EXT_BY_MIME above) -- so check for a hit
+    // under both before falling back to re-parsing the source file.
     const key = this.thumbnailCache.keyForGcodeThumbnail(fileEntry);
-    if (await this.thumbnailCache.has(key, '.png')) {
-      return this.thumbnailCache.filePath(key, '.png');
+    for (const ext of Object.values(EXT_BY_MIME)) {
+      if (await this.thumbnailCache.has(key, ext)) {
+        return this.thumbnailCache.filePath(key, ext);
+      }
     }
 
-    const { thumbnailBase64 } = await parseGcodeMetadata(fileEntry.path);
+    const { thumbnailBase64, thumbnailMimeType } = await parseGcodeMetadata(fileEntry.path);
     if (!thumbnailBase64) return null;
 
+    const ext = EXT_BY_MIME[thumbnailMimeType] || '.png';
     const buffer = Buffer.from(thumbnailBase64, 'base64');
-    return this.thumbnailCache.writeBuffer(key, '.png', buffer);
+    return this.thumbnailCache.writeBuffer(key, ext, buffer);
   }
 
   async resolveItemThumbnail(itemNode) {
