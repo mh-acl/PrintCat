@@ -87,7 +87,7 @@ h1 {
 }
 
 #printer-filter,
-#category-filter {
+#tag-filter {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5em;
@@ -95,7 +95,7 @@ h1 {
   margin-bottom: 1em;
 }
 
-#category-filter {
+#tag-filter {
   margin-bottom: 1.5em;
 }
 

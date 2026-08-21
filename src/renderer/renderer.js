@@ -526,7 +526,7 @@ function renderItemCard(item) {
   window.catalogAPI.getItemThumbnail(item).then((thumb) => {
     const img = document.createElement('img');
     img.alt = item.displayName || item.name;
-    img.src = thumb ? `file://${thumb}` : 'nothumb.png';
+    img.src = thumb ? `file://${thumb}` : 'nothumb.svg';
     mediaSlot.appendChild(img);
   });
 
@@ -647,7 +647,7 @@ function renderItemDetail(item) {
     const img = document.createElement('img');
     img.alt = file.shortname;
     window.catalogAPI.getFileThumbnail(file, item.imageFiles).then((thumbPath) => {
-      img.src = thumbPath ? `file://${thumbPath}` : 'nothumb.png';
+      img.src = thumbPath ? `file://${thumbPath}` : 'nothumb.svg';
     });
     row.appendChild(img);
 

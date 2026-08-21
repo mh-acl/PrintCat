@@ -450,7 +450,9 @@ there wasn't one). For `.bgcode` files, `colorChangeCount`/`copies`/
 `pauseCount` can each come back `null` (undetectable) rather than a number
 (and `pauseMessages` `null` too, in that case); that's distinct from
 0/1/none and should be treated as "unknown" in the UI, not "none". Bumping
-`CACHE_VERSION` (currently 7) is required whenever a change like this alters
+`CACHE_VERSION` (currently 8, bumped from 7 when the dead, always-false
+`unsupportedFormat` field was removed from the cached entry shape) is
+required whenever a change like this alters
 what gets cached per file, so already-cached entries get reparsed instead of
 silently missing the new field.
 

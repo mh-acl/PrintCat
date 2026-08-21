@@ -28,7 +28,7 @@ const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.svg', '.gif']);
 // change. Otherwise a logic fix (like a filename-parsing bug fix) would
 // silently keep serving the old, wrong cached output until a file's
 // mtime happens to change.
-const CACHE_VERSION = 7;
+const CACHE_VERSION = 8;
 
 class Indexer {
   /**
@@ -178,7 +178,7 @@ class Indexer {
     }
 
     const nameInfo = parseFilename(path.basename(filePath));
-    const { values, thumbnailBase64, colorChangeCount, copies, pauseCount, pauseMessages, unsupported } =
+    const { values, thumbnailBase64, colorChangeCount, copies, pauseCount, pauseMessages } =
       await parseGcodeMetadata(filePath);
 
     const entry = {
@@ -201,7 +201,6 @@ class Indexer {
       // Array of per-pause messages (or null entries), same length as
       // pauseCount; `null` (not []) when pauseCount itself is unknown.
       pauseMessages: pauseMessages ?? null,
-      unsupportedFormat: Boolean(unsupported),
     };
 
     // Cache the parsed entry (without the thumbnail bytes -- those live
