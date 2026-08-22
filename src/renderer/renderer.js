@@ -611,12 +611,6 @@ function renderOriginInfo(origin) {
   const line = document.createElement('small');
   line.className = 'item-origin-info';
 
-  const link = document.createElement('a');
-  link.href = origin.url;
-  link.target = '_blank';
-  link.rel = 'noopener noreferrer';
-  link.textContent = label ? `View original on ${label} \u2197` : `View original \u2197`;
-  line.appendChild(link);
 
   if (origin.creatorName) {
     line.appendChild(document.createTextNode('Created by '));
