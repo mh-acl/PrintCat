@@ -1,12 +1,16 @@
 'use strict';
 
 // Flat filtering UI: no navigation, no breadcrumbs, no categories. Two
-// independent multi-select filter rows (Printers, Tags) narrow down a
-// single flat grid of items; clicking an item shows its print files.
+// independent filter rows (Printers, Tags) narrow down a single flat
+// grid of items; clicking an item shows its print files.
 // Tags come from each item's metadata.json (see itemMetadata.js) --
-// an item can carry any number of them, so the tag filter is an OR
-// match (an item matching if it has *any* selected tag), same as the
-// printer filter's OR-across-a-file's-printer semantics.
+// an item can carry any number of them, but the tag filter itself is
+// single-select: clicking a tag pill switches the filter to just that
+// tag (replacing whatever was selected before) rather than adding it
+// to a set, and clicking the active tag again clears back to "All
+// Tags". selectedTags is still a Set under the hood (0 or 1 entries)
+// so itemMatchesTags()'s OR-match logic didn't need to change. The
+// printer filter is unaffected and remains multi-select OR.
 
 let allItems = [];
 let selectedItem = null; // the item currently shown in detail view, or null
@@ -319,10 +323,15 @@ function renderTagFilter() {
       btn.textContent = `${tag} (${count})`;
       btn.className = 'filter-pill' + (selectedTags.has(tag) ? ' active' : '');
       btn.onclick = () => {
+        // Single-select: clicking a tag switches the filter to just that
+        // tag, replacing whatever was selected before. Clicking the
+        // already-active tag clears back to "All Tags". (Previously this
+        // toggled the tag in/out of a multi-select OR set -- see
+        // ARCHITECTURE.md's "Tag filter: single-select" note.)
         if (selectedTags.has(tag)) {
-          selectedTags.delete(tag);
+          selectedTags = new Set();
         } else {
-          selectedTags.add(tag);
+          selectedTags = new Set([tag]);
         }
         renderTagFilter();
         render();

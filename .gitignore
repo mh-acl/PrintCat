@@ -3,5 +3,8 @@
 **/Desktop.ini
 **/._*
 **/Thumbs.db
-dist/*
+dist/
 node_modules/
+npm-debug.log*
+.vscode/
+*.swp

@@ -623,9 +623,14 @@ own filesystems aren't touched.
 `allItems`, `selectedItem`, `selectedPrinters`, `selectedTags`,
 `keywordQuery`, `settings`. Flat browsing model — no navigation or
 breadcrumbs, no categories. Three filters combine on a single flat item grid: Printer
-pills (multi-select), Tag pills (multi-select, from `item.tags`; an
-item can match on any one of several selected tags — OR, not AND),
-and a live keyword search box (AND-match across item name + each file's
+pills (multi-select), Tag pills (**single-select**, from `item.tags`
+— clicking a tag pill replaces `selectedTags` with just that one tag
+rather than adding to it; clicking the already-active tag clears back
+to "All Tags". Changed from multi-select OR after user testing showed
+people expected a tag click to switch categories, not narrow further.
+`selectedTags` is still a `Set` under the hood so `itemMatchesTags()`'s
+OR-match logic needed no change — it just never holds more than one
+entry now), and a live keyword search box (AND-match across item name + each file's
 shortname/longname/tags — see `itemMatchesKeyword` /
 `fileMatchesKeywordInItem`). Clicking an item shows its (filtered)
 print files with a "Print This" button driving the USB flow: list
