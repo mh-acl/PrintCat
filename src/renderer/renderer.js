@@ -515,6 +515,66 @@ function renderEmptyState(message) {
   return wrap;
 }
 
+// A small magnifying-glass button that sits over a thumbnail (see
+// CSS .thumb-zoom-btn -- hidden until the containing .thumb-slot /
+// .file-thumb-wrap is hovered). getSrc is a function rather than a
+// plain string so the click handler always reads whatever src the
+// <img> currently has, even though the button is created before the
+// thumbnail promise resolves.
+function makeZoomButton(getSrc, altText) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'thumb-zoom-btn';
+  btn.title = 'View full size';
+  btn.setAttribute('aria-label', 'View full size image');
+  btn.textContent = '🔍';
+  btn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openImageLightbox(getSrc(), altText);
+  };
+  return btn;
+}
+
+// Full-size image viewer opened by the zoom button. Dismissed via its
+// close button, clicking the dimmed backdrop, or Escape.
+function openImageLightbox(src, altText) {
+  const overlay = document.createElement('div');
+  overlay.className = 'image-lightbox-overlay';
+
+  const box = document.createElement('div');
+  box.className = 'image-lightbox-box';
+
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = altText || '';
+  box.appendChild(img);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'image-lightbox-close';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.textContent = '\u00d7';
+  box.appendChild(closeBtn);
+
+  const close = () => {
+    if (overlay.parentNode) document.body.removeChild(overlay);
+    document.removeEventListener('keydown', onKeydown);
+  };
+  const onKeydown = (e) => {
+    if (e.key === 'Escape') close();
+  };
+
+  closeBtn.onclick = close;
+  overlay.onclick = (e) => {
+    if (e.target === overlay) close();
+  };
+  document.addEventListener('keydown', onKeydown);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
 function renderItemCard(item) {
   const change = pendingChanges[item.path];
 
@@ -532,11 +592,17 @@ function renderItemCard(item) {
   mediaSlot.className = 'thumb-slot';
   card.appendChild(mediaSlot);
 
+  const img = document.createElement('img');
+  img.alt = item.displayName || item.name;
+  mediaSlot.appendChild(img);
+
   window.catalogAPI.getItemThumbnail(item).then((thumb) => {
-    const img = document.createElement('img');
-    img.alt = item.displayName || item.name;
     img.src = thumb ? `file://${thumb}` : 'nothumb.svg';
-    mediaSlot.appendChild(img);
+    // Only offer zoom when there's a real image -- not for the
+    // generic "no thumbnail" placeholder graphic.
+    if (thumb) {
+      mediaSlot.appendChild(makeZoomButton(() => img.src, img.alt));
+    }
   });
 
   const label = document.createElement('span');
@@ -660,12 +726,20 @@ function renderItemDetail(item) {
     const row = document.createElement('div');
     row.className = 'file-row';
 
+    const thumbWrap = document.createElement('div');
+    thumbWrap.className = 'file-thumb-wrap';
+
     const img = document.createElement('img');
     img.alt = file.shortname;
+    thumbWrap.appendChild(img);
+
     window.catalogAPI.getFileThumbnail(file, item.imageFiles).then((thumbPath) => {
       img.src = thumbPath ? `file://${thumbPath}` : 'nothumb.svg';
+      if (thumbPath) {
+        thumbWrap.appendChild(makeZoomButton(() => img.src, img.alt));
+      }
     });
-    row.appendChild(img);
+    row.appendChild(thumbWrap);
 
     const name = document.createElement('h3');
     name.className = 'file-name';

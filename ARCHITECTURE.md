@@ -1055,6 +1055,33 @@ splits on `,`, dedupes while preserving first-seen order, and joins with
 as `"PLA/PETG"`. This is purely a display transform; the cached
 `filamentType` field itself stays the raw, uncollapsed string.
 
+## Thumbnail zoom (magnifying-glass lightbox)
+
+Both catalog thumbnail spots — the item-grid card (`renderItemCard()`'s
+`.thumb-slot`) and the item-detail print-file row (`renderItemDetail()`'s
+new `.file-thumb-wrap`, which now wraps the `<img>` that used to sit
+directly in `.file-row`) — get a small circular magnifying-glass button
+overlaid via `renderer.js`'s `makeZoomButton(getSrc, altText)`, hidden by
+default and faded in on hover (`.thumb-zoom-btn`, shown via
+`:hover .thumb-zoom-btn` CSS rules). The button is only appended once the
+thumbnail promise (`getItemThumbnail`/`getFileThumbnail`) resolves to a
+real path — never for the `nothumb.svg` placeholder. `getSrc` is a
+closure reading the `<img>`'s current `src` at click time (the button
+itself is created before the thumbnail promise resolves), so clicking it
+always opens whatever image is actually showing.
+
+Clicking the button calls `renderer.js`'s `openImageLightbox(src, altText)`,
+a generic full-size viewer: a `.image-lightbox-overlay` fullscreen dimmed
+backdrop centering a `.image-lightbox-box` containing the image (capped to
+90vw/90vh, `object-fit: contain`) and a circular `.image-lightbox-close`
+(×) button. Dismissed via the close button, clicking the backdrop outside
+the image, or Escape (a one-off `keydown` listener added on open and
+removed on close). This is a new, separate modal pattern from the
+existing `.drive-picker-overlay` ones — those all require an explicit
+button click to dismiss, but a lightbox reads better with backdrop-click
+and Escape support, so it got its own overlay/box CSS classes rather than
+reusing `.drive-picker-overlay`.
+
 ## Not yet implemented
 
 - GUI for adding/editing/deleting catalog items: "Edit Print Catalog…"
