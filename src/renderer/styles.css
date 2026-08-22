@@ -1,11 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Palette -- warm paper + near-black ink + a single Prusa-orange accent,
+     used only for primary actions and active state. Everything else stays
+     on the neutral scale so the accent actually reads as meaningful. */
+  --paper: #F7F4EF;
+  --paper-raised: #FFFFFF;
+  --ink: #211E1B;
+  --ink-soft: #6B655C;
+  --ink-faint: #9A9284;
+  --line: #DCD5C8;
+  --line-soft: #EAE4D8;
+  --accent: #E15A1D;
+  --accent-hover: #C74E17;
+  --accent-soft: #FBE6DA;
+
+  /* Edit-mode status colors -- already semantically sound, kept as-is */
+  --status-add: #1E6B34;
+  --status-add-bg: #D9F2DF;
+  --status-add-line: #7DC98F;
+  --status-edit: #7A5A0A;
+  --status-edit-bg: #FDEECB;
+  --status-edit-line: #E0B04A;
+  --status-delete: #8A2020;
+  --status-delete-bg: #FBDCDC;
+  --status-delete-line: #E08A8A;
+
+  /* Type */
+  --font-display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* Shape -- sharp-ish "spec plate" corners for cards/containers, full
+     pills reserved for filters/search where the shape means "toggle" */
+  --radius-card: 0.5em;
+  --radius-control: 0.4em;
+  --radius-pill: 2em;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
-  font-family: sans-serif;
+  font-family: var(--font-body);
+  background: var(--paper);
+  color: var(--ink);
   max-width: 900px;
   margin: 2em auto;
+  line-height: 1.45;
+}
+
+.app-header {
+  margin-bottom: 1.25em;
 }
 
 h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.01em;
   text-align: center;
+  color: var(--ink);
+  margin: 0 0 0.2em;
 }
 
 .settings-box {
@@ -14,7 +70,7 @@ h1 {
 }
 
 .settings-intro {
-  color: #666;
+  color: var(--ink-soft);
   margin: 0 0 0.75em;
   text-align: left;
 }
@@ -35,23 +91,27 @@ h1 {
 }
 
 .settings-field-label {
-  font-size: 0.9em;
-  color: #444;
+  font-size: 0.85em;
+  font-weight: 500;
+  color: var(--ink-soft);
 }
 
 .settings-text-input {
   padding: 0.5em 0.7em;
-  border-radius: 0.5em;
-  border: 1px solid #99f;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
   font-size: 1em;
+  font-family: var(--font-body);
   box-sizing: border-box;
   width: 100%;
 }
 
 .settings-text-input:focus {
   outline: none;
-  border-color: #66f;
-  box-shadow: 0 0 0 2px rgba(102, 102, 255, 0.2);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .settings-buttons {
@@ -73,17 +133,24 @@ h1 {
 .keyword-filter {
   width: 100%;
   max-width: 28em;
-  padding: 0.6em 1.1em;
-  border-radius: 1.5em;
-  border: 1px solid #99f;
+  padding: 0.6em 1.2em;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-body);
   font-size: 1em;
   box-sizing: border-box;
 }
 
+.keyword-filter::placeholder {
+  color: var(--ink-faint);
+}
+
 .keyword-filter:focus {
   outline: none;
-  border-color: #66f;
-  box-shadow: 0 0 0 2px rgba(102, 102, 255, 0.2);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 #printer-filter,
@@ -100,25 +167,35 @@ h1 {
 }
 
 .filter-pill {
-  padding: 0.5em 1em;
-  border-radius: 1.5em;
-  border: 1px solid #99f;
-  background: #eee;
-  color: #555;
+  padding: 0.45em 1em;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-soft);
+  font-family: var(--font-body);
+  font-size: 0.9em;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.filter-pill:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
 }
 
 .filter-pill.active {
-  background: #ccf;
-  color: black;
-  font-weight: bold;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  font-weight: 600;
 }
 
 .empty-state {
   width: 100%;
   text-align: center;
-  padding: 2em 1em;
-  color: #555;
+  padding: 2.5em 1em;
+  color: var(--ink-soft);
 }
 
 .empty-state-icon {
@@ -126,24 +203,28 @@ h1 {
 }
 
 .empty-state-title {
+  font-family: var(--font-display);
   font-size: 1.3em;
-  font-weight: bold;
+  font-weight: 700;
+  color: var(--ink);
   margin: 0.3em 0;
 }
 
 .empty-state-sub {
   margin: 0;
-  color: #777;
+  color: var(--ink-soft);
 }
 
 .back-link {
   display: inline-block;
   margin-bottom: 1em;
-  color: #55c;
+  color: var(--accent);
+  font-weight: 500;
   text-decoration: none;
 }
 
 .back-link:hover {
+  color: var(--accent-hover);
   text-decoration: underline;
 }
 
@@ -163,17 +244,26 @@ h1 {
 a.listing {
   display: inline-block;
   width: 12em;
-  border: 1px solid #99f;
-  border-radius: 1em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--paper-raised);
   text-align: center;
   overflow: hidden;
   text-decoration: none;
-  color: black;
+  color: var(--ink);
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+
+a.listing:hover {
+  border-color: var(--ink-faint);
+  transform: translateY(-1px);
 }
 
 a.listing .thumb-slot {
   width: 100%;
   height: 12em;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line-soft);
 }
 
 a.listing .thumb-slot img,
@@ -186,7 +276,8 @@ a.listing .thumb-slot svg {
 
 a.listing span {
   display: block;
-  padding: 0.5em;
+  padding: 0.5em 0.6em;
+  font-weight: 500;
 }
 
 .item-detail {
@@ -201,9 +292,25 @@ a.listing span {
   flex: 1 0 100%;
 }
 
+.item-origin-info {
+  display: block;
+  color: var(--ink-faint);
+  font-size: 0.85em;
+  margin-top: 0.15em;
+}
+
+.item-origin-info a {
+  color: var(--ink-faint);
+}
+
+.item-origin-info a:hover {
+  color: var(--accent);
+}
+
 .file-row {
-  border: 1px solid #ccc;
-  border-radius: 1em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--paper-raised);
   padding: 1em;
   width: 14em;
   box-sizing: border-box;
@@ -221,30 +328,67 @@ a.listing span {
 .file-row a {
   display: inline-block;
   margin-top: 0.5em;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.file-name {
+  font-family: var(--font-display);
+  font-size: 1.05em;
+  font-weight: 700;
+  margin: 0;
+}
+
+/* Batch/color-change subtitle -- part of the file's identity, sits
+   right under its name, bold monospace so it reads as a second line
+   of the title rather than a metadata entry. */
+.file-subtitle {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.7em;
+  color: var(--ink-soft);
+  margin: 0.2em 0 0;
+}
+
+/* Print stats readout -- the signature "spec plate" element: monospace,
+   muted, tightly spaced, visually distinct from the item's own name */
+.file-meta {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 0.6em;
+  padding-top: 0.5em;
 }
 
 .file-meta div {
-  margin: 0.15em 0;
+  margin: 0.2em 0;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--ink-soft);
+  letter-spacing: 0.01em;
 }
 
 .print-button {
   margin-top: 0.75em;
-  padding: 0.6em 1.2em;
-  border-radius: 2em;
-  border: 1px solid #99f;
-  background: #ccf;
+  padding: 0.6em 1.3em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: white;
+  font-family: var(--font-body);
+  font-weight: 600;
   font-size: 1em;
   cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
 
 .print-button:hover {
-  background: #bbf;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .drive-picker-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(33, 30, 27, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -252,9 +396,10 @@ a.listing span {
 }
 
 .drive-picker-box {
-  background: white;
+  background: var(--paper-raised);
   padding: 1.5em;
-  border-radius: 1em;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   gap: 0.5em;
@@ -262,6 +407,7 @@ a.listing span {
 }
 
 .drive-picker-box h3 {
+  font-family: var(--font-display);
   margin: 0 0 0.5em;
   text-align: center;
 }
@@ -269,35 +415,48 @@ a.listing span {
 .drive-picker-box p {
   margin: 0 0 0.5em;
   text-align: center;
+  color: var(--ink-soft);
 }
 
 .drive-picker-box button {
   padding: 0.75em;
-  border-radius: 0.5em;
-  border: 1px solid #99f;
-  background: #eef;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
   font-size: 1em;
   cursor: pointer;
 }
 
+.drive-picker-box button:hover {
+  border-color: var(--ink-faint);
+}
+
 .drive-picker-box button.cancel {
-  background: #eee;
-  border-color: #ccc;
+  background: var(--paper);
+  border-color: var(--line);
+  color: var(--ink-soft);
 }
 
 .drive-picker-box button.eject {
-  background: #fde3b0;
-  border-color: #e0a94a;
+  background: var(--status-edit-bg);
+  border-color: var(--status-edit-line);
+  color: var(--status-edit);
+  font-weight: 600;
 }
+
 .sync-status {
   text-align: center;
   padding-block-start: 2em;
-  font-size: small;
-  color: lightgrey;
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  color: var(--ink-faint);
 }
+
 .pause-tooltip-icon {
   cursor: help;
-  color: #666;
+  color: var(--ink-faint);
   font-style: normal;
   margin-left: 0.25em;
 }
@@ -306,29 +465,30 @@ a.listing span {
    tag pills reuse .filter-pill's shape but get their own colors so
    they read as distinct from category/printer pills at a glance. */
 .filter-pill.smart-tag-add {
-  background: #d9f2df;
-  border-color: #7dc98f;
-  color: #1e6b34;
+  background: var(--status-add-bg);
+  border-color: var(--status-add-line);
+  color: var(--status-add);
 }
 
 .filter-pill.smart-tag-edit {
-  background: #fdeecb;
-  border-color: #e0b04a;
-  color: #7a5a0a;
+  background: var(--status-edit-bg);
+  border-color: var(--status-edit-line);
+  color: var(--status-edit);
 }
 
 .filter-pill.smart-tag-delete {
-  background: #fbdcdc;
-  border-color: #e08a8a;
-  color: #8a2020;
+  background: var(--status-delete-bg);
+  border-color: var(--status-delete-line);
+  color: var(--status-delete);
 }
 
 .filter-pill.smart-tag.active {
-  font-weight: bold;
+  font-weight: 700;
 }
 
 .pending-badge {
   display: inline-block;
+  font-family: var(--font-mono);
   font-size: 0.75em;
   padding: 0.1em 0.5em;
   border-radius: 1em;
@@ -336,18 +496,18 @@ a.listing span {
 }
 
 .pending-badge-add {
-  background: #d9f2df;
-  color: #1e6b34;
+  background: var(--status-add-bg);
+  color: var(--status-add);
 }
 
 .pending-badge-edit {
-  background: #fdeecb;
-  color: #7a5a0a;
+  background: var(--status-edit-bg);
+  color: var(--status-edit);
 }
 
 .pending-badge-delete {
-  background: #fbdcdc;
-  color: #8a2020;
+  background: var(--status-delete-bg);
+  color: var(--status-delete);
 }
 
 a.listing.pending-add,
@@ -356,15 +516,15 @@ a.listing.pending-edit {
 }
 
 a.listing.pending-add {
-  border-color: #4fa868;
+  border-color: var(--status-add-line);
 }
 
 a.listing.pending-edit {
-  border-color: #d9a72e;
+  border-color: var(--status-edit-line);
 }
 
 a.listing.pending-delete {
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
 .item-edit-controls {
@@ -376,32 +536,50 @@ a.listing.pending-delete {
 
 .item-edit-controls button {
   flex: 1;
-  padding: 0.3em;
+  padding: 0.35em;
+  font-family: var(--font-body);
   font-size: 0.85em;
-  border-radius: 0.5em;
-  border: 1px solid #99f;
-  background: #eee;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
   cursor: pointer;
 }
 
+.item-edit-controls button:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+
+/* Add-item stays outlined/secondary -- Print This is the one filled,
+   accent-colored action in the app; this keeps that meaning intact. */
 .add-item-button {
   display: block;
   margin: 0 auto 1em;
-  padding: 0.6em 1.2em;
-  border-radius: 2em;
-  border: 1px solid #99f;
-  background: #ccf;
+  padding: 0.6em 1.3em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--font-body);
+  font-weight: 600;
   font-size: 1em;
   cursor: pointer;
+}
+
+.add-item-button:hover {
+  background: var(--accent-soft);
 }
 
 .backfill-origins-button {
   display: block;
   margin: 0 auto 1em;
-  padding: 0.5em 1em;
-  border-radius: 2em;
-  border: 1px solid #ccc;
-  background: #f5f5f5;
+  padding: 0.5em 1.1em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-family: var(--font-body);
   font-size: 0.9em;
   cursor: pointer;
 }
@@ -414,21 +592,26 @@ a.listing.pending-delete {
 .edit-session-bar {
   position: sticky;
   bottom: 0;
-  background: white;
-  border-top: 1px solid #ccc;
+  background: var(--paper-raised);
+  border-top: 1px solid var(--line);
   padding: 0.75em 1em;
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-top: 1em;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--ink-soft);
 }
 
 .edit-session-bar button {
-  padding: 0.5em 1em;
-  border-radius: 1.5em;
-  border: 1px solid #99f;
-  background: #eee;
-  font-size: 1em;
+  padding: 0.5em 1.1em;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.95em;
   cursor: pointer;
   margin-left: 0.5em;
 }
@@ -449,12 +632,14 @@ a.listing.pending-delete {
   align-items: center;
   gap: 0.5em;
   padding: 0.4em 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .editor-file-label {
   flex: 1;
-  font-size: 0.9em;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--ink-soft);
 }
 
 .editor-image-chips {
@@ -472,7 +657,7 @@ a.listing.pending-delete {
   height: 2.5em;
   object-fit: cover;
   border-radius: 0.3em;
-  border: 1px solid #ccc;
+  border: 1px solid var(--line);
   display: block;
 }
 
@@ -485,8 +670,8 @@ a.listing.pending-delete {
   line-height: 1;
   padding: 0;
   border-radius: 50%;
-  border: 1px solid #99f;
-  background: white;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
   font-size: 0.75em;
   cursor: pointer;
 }
@@ -508,10 +693,10 @@ a.listing.pending-delete {
 }
 
 .editor-pool-thumb.selected {
-  border-color: #66f;
+  border-color: var(--accent);
 }
 
 .editor-file-row.drop-target-active {
-  background: #eef;
-  border-color: #66f;
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }

@@ -599,7 +599,7 @@ function originPlatformLabel(url) {
 // display-side changes needed.
 function renderOriginInfo(origin) {
   const label = originPlatformLabel(origin.url);
-  const line = document.createElement('div');
+  const line = document.createElement('small');
   line.className = 'item-origin-info';
 
   const link = document.createElement('a');
@@ -610,7 +610,7 @@ function renderOriginInfo(origin) {
   line.appendChild(link);
 
   if (origin.creatorName) {
-    line.appendChild(document.createTextNode(' by '));
+    line.appendChild(document.createTextNode('Created by '));
     if (origin.creatorUrl) {
       const creatorLink = document.createElement('a');
       creatorLink.href = origin.creatorUrl;
@@ -621,7 +621,20 @@ function renderOriginInfo(origin) {
     } else {
       line.appendChild(document.createTextNode(origin.creatorName));
     }
+    line.appendChild(document.createTextNode(', from '));
   }
+  // When there's no creator to credit, this stands alone as the whole
+  // line rather than a trailing clause -- still needs its own lead-in.
+  if (!origin.creatorName) {
+    line.appendChild(document.createTextNode('From '));
+  }
+
+  const siteLink = document.createElement('a');
+  siteLink.href = origin.url;
+  siteLink.target = '_blank';
+  siteLink.rel = 'noopener noreferrer';
+  siteLink.textContent = label || 'the original site';
+  line.appendChild(siteLink);
 
   return line;
 }
@@ -651,25 +664,36 @@ function renderItemDetail(item) {
     });
     row.appendChild(img);
 
-    const name = document.createElement('strong');
+    const name = document.createElement('h3');
+    name.className = 'file-name';
     name.textContent = file.shortname;
     row.appendChild(name);
+
+    // Batch/color-change info moved out of the metadata block into a
+    // subtitle right under the file name -- these two are the "which
+    // variant is this" signal, so they read as part of the file's
+    // identity rather than a metadata line among printer/print-time.
+    const subtitleParts = [
+      file.copies && file.copies > 1 ? `batch of ${file.copies}` : null,
+      file.colorChangeCount
+        ? `${file.colorChangeCount} color change${file.colorChangeCount === 1 ? '' : 's'}`
+        : null,
+    ].filter(Boolean);
+    if (subtitleParts.length) {
+      const subtitle = document.createElement('p');
+      subtitle.className = 'file-subtitle';
+      subtitle.textContent = subtitleParts.join(', ');
+      row.appendChild(subtitle);
+    }
 
     const meta = document.createElement('div');
     meta.className = 'file-meta';
     const metaLines = [
       file.printerModel ? `Printer: ${file.printerModel}` : null,
       file.printTime ? `Print time: ${file.printTime}` : null,
-      // colorChangeCount/copies/pauseCount are auto-detected (see
-      // gcodeCommandScan.js) and can be `null` for a .bgcode file
-      // whose toolpath couldn't be scanned -- that's "unknown", so it
-      // gets the same treatment as "nothing to report" (0 changes, 1
-      // copy, 0 pauses) and is simply left off rather than shown as a
-      // count.
-      file.colorChangeCount
-        ? `${file.colorChangeCount} color change${file.colorChangeCount === 1 ? '' : 's'}`
-        : null,
-      file.copies && file.copies > 1 ? `${file.copies} copies` : null,
+      file.filamentType ? `Filament: ${formatFilamentTypes(file.filamentType)}, ${file.filamentUsedG}g` : null,
+      // colorChangeCount/copies are now shown in the subtitle above,
+      // not here -- see subtitleParts.
       // Rendered specially below (needs a tooltip icon for pause
       // messages, not just plain text) -- see the loop.
       file.pauseCount ? { pause: true, count: file.pauseCount, messages: file.pauseMessages || [] } : null,
@@ -1142,6 +1166,15 @@ function printFileLabel(pf) {
     parts.push(`batch of ${pf.copies}`);
   }
   return parts.length > 0 ? `${pf.shortname} (${parts.join(', ')})` : pf.shortname;
+}
+
+// "PLA,PLA" -> "PLA"; "PLA,PETG" -> "PLA/PETG". Order of first
+// appearance is preserved; a single-material print's one entry
+// passes through unchanged.
+function formatFilamentTypes(raw) {
+  const types = raw.split(',').map((t) => t.trim()).filter(Boolean);
+  const unique = [...new Set(types)];
+  return unique.join('/');
 }
 
 function imageRefSrc(ref, folderUrl) {

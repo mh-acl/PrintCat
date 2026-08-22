@@ -450,7 +450,21 @@ invalidate already-cached entries, or whenever file paths are about to
 shift wholesale (e.g. the category-elimination flatten), since cache
 entries are keyed by absolute path.
 Item shape: `{ type, name, displayName, path, explicitThumb, imageFiles, projectFiles, tags, files[] }`.
-File-entry shape: `{ path, mtimeMs, size, shortname, longname, tags, printerModel, printerVariant, printTime, hasEmbeddedThumbnail, colorChangeCount, copies, pauseCount, pauseMessages }`.
+File-entry shape: `{ path, mtimeMs, size, shortname, longname, tags, printerModel, printerVariant, printTime, filamentType, filamentUsedG, hasEmbeddedThumbnail, colorChangeCount, copies, pauseCount, pauseMessages }`.
+`filamentType` is the raw `filament_type` value straight from the gcode's
+own metadata (`values`, populated identically by both `gcodeParser.js` and
+`bgcodeParser.js` -- confirmed against a real `.bgcode` file, no
+format-specific translation needed) -- a single-material print gets a bare
+string like `"PLA"`, a multi-material one gets a comma-separated list like
+`"PLA,PETG"` (one entry per tool). Collapsing/deduping for display (so
+`"PLA,PLA"` shows as `"PLA"` and `"PLA,PETG"` shows as `"PLA/PETG"`) is a
+renderer-only concern -- see `renderer.js`'s `formatFilamentTypes()` below
+-- so the cached value stays raw and display formatting can change later
+without a re-scan. `filamentUsedG` comes from the `"total filament used
+[g]"` key specifically (the whole-print total across every copy/tool), not
+the per-object `"filament used [g]"` key that also exists in the same
+metadata; there's no equivalent `"total ... [mm]"` figure, so filament
+length isn't tracked, only weight.
 `colorChangeCount`/`copies`/`pauseCount` are auto-detected (M600 count / M486
 batch-object count / M601 count, `copies` defaulting to 1 when no batch is
 detected) — see `gcodeParser.js` / `bgcodeParser.js` below. `pauseMessages`
@@ -460,8 +474,8 @@ there wasn't one). For `.bgcode` files, `colorChangeCount`/`copies`/
 `pauseCount` can each come back `null` (undetectable) rather than a number
 (and `pauseMessages` `null` too, in that case); that's distinct from
 0/1/none and should be treated as "unknown" in the UI, not "none". Bumping
-`CACHE_VERSION` (currently 8, bumped from 7 when the dead, always-false
-`unsupportedFormat` field was removed from the cached entry shape) is
+`CACHE_VERSION` (currently 9, bumped from 8 when `filamentType`/
+`filamentUsedG` were added to the cached entry shape) is
 required whenever a change like this alters
 what gets cached per file, so already-cached entries get reparsed instead of
 silently missing the new field.
@@ -1017,6 +1031,24 @@ co-admin knows exactly which ones need a manual look in the item
 editor. Safe to click repeatedly: items that already have
 `creatorName` are skipped every time, so a second run is a no-op for
 anything already caught up.
+
+## Filament type + amount display
+
+Print files now carry `filamentType` and `filamentUsedG` (see `indexer.js`
+above for exactly which raw metadata keys these come from and why
+`filamentUsedG` uses the "total" key rather than the per-object one).
+`renderer.js`'s `renderItemDetail()` shows both as new lines in each print
+file's metadata block, alongside the existing printer/print-time/color-
+change/copies/pause lines: `Filament: <types>` and `<N>g filament used`,
+both simply omitted when the underlying value is `null`.
+
+`renderer.js`'s `formatFilamentTypes(raw)` (next to `printFileLabel()`)
+collapses the raw comma-separated `filamentType` string for display:
+splits on `,`, dedupes while preserving first-seen order, and joins with
+`/` — so a multi-material print with two of the same filament reads as
+`"PLA"` rather than `"PLA,PLA"`, while a genuine two-material print reads
+as `"PLA/PETG"`. This is purely a display transform; the cached
+`filamentType` field itself stays the raw, uncollapsed string.
 
 ## Not yet implemented
 

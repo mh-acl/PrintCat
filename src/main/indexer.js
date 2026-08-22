@@ -28,7 +28,7 @@ const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.svg', '.gif']);
 // change. Otherwise a logic fix (like a filename-parsing bug fix) would
 // silently keep serving the old, wrong cached output until a file's
 // mtime happens to change.
-const CACHE_VERSION = 8;
+const CACHE_VERSION = 9;
 
 class Indexer {
   /**
@@ -191,6 +191,17 @@ class Indexer {
       printerModel: values['printer_model'] || null,
       printerVariant: values['printer_variant'] || null,
       printTime: values['estimated printing time (normal mode)'] || null,
+      // Raw string as PrusaSlicer wrote it -- "PLA" for a single-material
+      // print, "PLA,PLA" or "PLA,PETG" for multi-material (one entry per
+      // tool, comma-separated). Collapsed/deduped for display in
+      // renderer.js's formatFilamentTypes(), not here -- kept raw in the
+      // cache so display formatting can change later without a re-scan.
+      filamentType: values['filament_type'] || null,
+      // Total across the whole print (all copies/tools), not the
+      // per-object "filament used [g]" figure.
+      filamentUsedG: values['total filament used [g]'] != null
+        ? parseFloat(values['total filament used [g]'])
+        : null,
       hasEmbeddedThumbnail: Boolean(thumbnailBase64),
       // Auto-detected (see gcodeCommandScan.js). Any of these three
       // can be `null` for a .bgcode file whose toolpath couldn't be
