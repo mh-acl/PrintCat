@@ -673,7 +673,6 @@ function renderItemDetail(item) {
       // Rendered specially below (needs a tooltip icon for pause
       // messages, not just plain text) -- see the loop.
       file.pauseCount ? { pause: true, count: file.pauseCount, messages: file.pauseMessages || [] } : null,
-      file.tags.length ? `Tags: ${file.tags.join(', ')}` : null,
     ].filter(Boolean);
     for (const line of metaLines) {
       const lineEl = document.createElement('div');

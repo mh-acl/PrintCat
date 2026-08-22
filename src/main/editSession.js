@@ -6,7 +6,7 @@ const path = require('path');
 const { run } = require('./gitSync');
 const { writeItemMetadata } = require('./itemMetadata');
 const { parseFilename, parseGcodeMetadata } = require('./gcodeParser');
-const { detectOriginUrl } = require('./originLocation');
+const { detectOrigin: detectOriginInFolder } = require('./originLocation');
 
 // Same extension sets indexer.js uses -- duplicated rather than
 // imported since indexer.js doesn't export them, and they're small,
@@ -81,20 +81,93 @@ class EditSession {
       .map((e) => e.name);
     // Reuses the readdir above rather than having originLocation.js
     // list the folder again -- this scan already has the entries it
-    // needs.
-    const originUrl = await detectOriginUrl(sourceDir, entries);
-    return { printFiles, imageFiles, originUrl };
+    // needs. Returns the full { url, creatorName, creatorUrl } object
+    // (or null) rather than a bare URL string, so a Printables folder's
+    // creator info survives the trip through prepareAddFolder() to the
+    // item editor without a second PDF parse.
+    const origin = await detectOriginInFolder(sourceDir, entries);
+    return { printFiles, imageFiles, origin };
   }
 
   // Same detection, for 'edit' mode: the item's folder isn't rescanned
   // via scanSourceFolder() there (its print-file/image lists already
   // come from the indexed item itself -- see renderer.js's
   // openItemEditor()), so this is a standalone entry point the editor
-  // calls only when the item's metadata.json doesn't already have an
-  // origin.url, to avoid re-parsing a Printables PDF every time an
-  // already-tagged item is opened for editing.
+  // calls whenever the item's metadata.json doesn't already have
+  // creatorName stored -- including items that already have an
+  // origin.url but predate creator extraction -- to avoid re-parsing a
+  // Printables PDF for items that have already been fully backfilled.
+  // Returns the same { url, creatorName, creatorUrl } shape as
+  // scanSourceFolder's origin.
   async detectOrigin(itemPath) {
-    return detectOriginUrl(itemPath);
+    return detectOriginInFolder(itemPath);
+  }
+
+  // Bulk version of the same per-item backfill the 'edit' editor does
+  // on-demand (see detectOrigin above), for catching up every item
+  // already in the catalog in one pass rather than requiring each one
+  // be opened and saved by hand. `items` is the array indexer.scan()
+  // already produces (main.js owns fetching that, so this stays
+  // ignorant of the folder-walk logic that lives in indexer.js) --
+  // only .path/.displayName/.tags/.origin are read from each entry.
+  //
+  // Skips (rather than throws on) anything that doesn't need or can't
+  // get an update, since one bad/ambiguous folder shouldn't abort the
+  // whole batch:
+  // - items that already have origin.creatorName are left alone
+  //   entirely (nothing to do).
+  // - items detection finds nothing usable for are counted as
+  //   `notFound` -- same as a single item's on-demand detection
+  //   turning up nothing.
+  // - items that already have an origin.url on file which DISAGREES
+  //   with what a fresh detection finds are counted as `mismatched`
+  //   and left untouched, rather than silently swapping in a
+  //   different URL out from under a possibly hand-corrected value --
+  //   same caution the single-item editor's save-time check applies,
+  //   just surfaced as "review these manually" instead of quietly
+  //   dropping the creator fields. (An item with no origin.url yet has
+  //   nothing to disagree with, so this only ever applies to
+  //   already-tagged items.)
+  //
+  // Each successful update goes through writeItemMetadata with the
+  // item's own current displayName/tags passed straight through --
+  // writeItemMetadata's displayName/tags fields replace rather than
+  // merge (see itemMetadata.js), so omitting them here would blank out
+  // any custom name/tags a co-admin had already set, not just leave
+  // them untouched.
+  async backfillOrigins(items) {
+    const updated = [];
+    const mismatched = [];
+    const notFound = [];
+
+    for (const item of items) {
+      if (item.origin && item.origin.creatorName) continue; // already backfilled
+
+      const detected = await detectOriginInFolder(item.path);
+      if (!detected || !detected.creatorName) {
+        notFound.push(item.displayName);
+        continue;
+      }
+      if (item.origin && item.origin.url && detected.url !== item.origin.url) {
+        mismatched.push(item.displayName);
+        continue;
+      }
+
+      await writeItemMetadata(item.path, {
+        displayName: item.displayName,
+        tags: item.tags,
+        origin: { url: detected.url, creatorName: detected.creatorName, creatorUrl: detected.creatorUrl },
+      });
+
+      // Marked the same way editItem() marks a change -- 'edit' unless
+      // this item was already a pending 'add' this session, in which
+      // case it stays 'add' (see editItem's identical comment above).
+      const wasAdd = this.changes[item.path] && this.changes[item.path].type === 'add';
+      this.changes[item.path] = { type: wasAdd ? 'add' : 'edit', name: item.displayName };
+      updated.push(item.displayName);
+    }
+
+    return { updated, mismatched, notFound };
   }
 
   // printFileImages is { [printFileBasename]: ImageRef[] }, where each

@@ -395,6 +395,22 @@ a.listing.pending-delete {
   cursor: pointer;
 }
 
+.backfill-origins-button {
+  display: block;
+  margin: 0 auto 1em;
+  padding: 0.5em 1em;
+  border-radius: 2em;
+  border: 1px solid #ccc;
+  background: #f5f5f5;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.backfill-origins-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .edit-session-bar {
   position: sticky;
   bottom: 0;

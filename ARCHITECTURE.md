@@ -37,6 +37,16 @@ application menu (Settings… lives here now, not a button, and a
 `BrowserWindow`, wires up `Indexer` / `ThumbnailCache` /
 `ThumbnailResolver` / `SettingsStore` / `SyncStateStore`, and watches
 `DATA_DIR` with `chokidar` to push background rescans to the renderer.
+`createWindow()` also installs a `setWindowOpenHandler()` (denies any
+`target="_blank"`/`window.open()` request from the renderer -- the
+item detail view's "View original"/creator links (see renderer.js's
+`renderOriginInfo()`) are the only current user of that -- and hands
+the URL to `shell.openExternal()` instead, so it opens in the
+co-admin's actual default browser rather than either being silently
+blocked or opening a bare in-app `BrowserWindow`, which is Electron's
+default behavior for `target="_blank"` otherwise) plus a
+`will-navigate` guard doing the same for the main window itself,
+skipping `file://` URLs so normal in-app loads/reloads aren't affected.
 `DATA_DIR` is a module-level `let`, left unresolved until
 `setupIndexer()` loads `settingsStore` (must happen first, since the
 decision depends on it) and calls `resolveDataDir(settingsStore.get())`.
@@ -840,29 +850,43 @@ Printables download specifically so files like these could be parsed
 later for a "view original" link (see "Category elimination" above) --
 this is that pass.
 
-**`originLocation.js`** — `detectOriginUrl(folderPath, entries?)`:
+**`originLocation.js`** — `detectOrigin(folderPath, entries?)`:
 best-effort, fully offline (no network requests) detection of the
-source page URL, returning `null` when nothing can be determined.
-Two schemas: a top-level `README.txt` containing Thingiverse's
-`"... on Thingiverse: {URL}"` line (regex-extracted, ignoring the rest
-of the sentence), or a top-level PDF named like
+source page, returning `null` when nothing can be determined, or
+`{ url, creatorName, creatorUrl }` when something is (creator fields
+are `undefined` where not extracted). Two schemas: a top-level
+`README.txt` containing Thingiverse's exact line `"{name} by
+{username} on Thingiverse: {url}"` (`THINGIVERSE_LINE_RE`) — captures
+`url` and the username together in one regex, anchored on the fixed
+` on Thingiverse:` text; the username capture is greedy so that if the
+item name itself happens to contain " by " (e.g. "Standby Bracket"),
+the match still lands on the *last* " by " before " on Thingiverse:",
+which is always the right split. `creatorUrl` is then constructed
+directly from the username (`https://www.thingiverse.com/{username}`)
+rather than needing a second parse. If a README doesn't match that
+exact shape (hand-edited, or an older export format), falls back to
+the old URL-only regex so the folder still gets `url` detected, just
+without creator info. Or a top-level PDF named like
 `{model-slug}-{digits}-{hex groups}.pdf` (a browser print-to-PDF of a
-Printables model page) — read via `pdf-lib` for the "View in browser"
-button's actual link annotation (cheap, and doesn't require OCR/text
-extraction or a network fetch to verify a guess). There can be more
-than one top-level PDF (e.g. a user-added instructions sheet); each
-candidate matching the naming pattern is tried until one yields a
-link matching `https://www.printables.com/model/...` specifically
+Printables model page) — read via `pdf-lib` for its link annotations.
+There can be more than one top-level PDF (e.g. a user-added
+instructions sheet); each candidate matching the naming pattern is
+tried until one yields a link matching
+`https://www.printables.com/model/...` specifically
 (`PRINTABLES_MODEL_URL_RE`) — confirmed against a real sample PDF that
 a bare "contains printables.com" check isn't enough: these PDFs' link
 annotations list the creator's profile link (from the byline) *before*
 the actual model link, and also carry `.../model?categoryId=N` links
-further down, both of which need excluding. If no candidate yields a
-`/model/` link, falls back to reconstructing
+further down, both of which need excluding. That creator-profile link
+(matched by `PRINTABLES_CREATOR_URL_RE`, path `/@{username}`) is
+captured in the same annotation walk rather than just skipped past —
+`detectPrintablesOrigin()` remembers the first one seen and, once it
+also finds the `/model/` link, returns both together as
+`creatorUrl`/`creatorName` alongside `url`. If no candidate yields a
+`/model/` link at all, falls back to reconstructing
 `https://www.printables.com/model/{model-slug}` from the first
-candidate's filename — an unverified guess, never confirmed over the
-network (this exact reconstruction is also what the real sample's
-actual annotation contained, for what it's worth). New dependency:
+candidate's filename — an unverified guess with no creator info
+(the PDF was never actually parsed successfully). New dependency:
 `pdf-lib` (`npm install pdf-lib`) — its exact call sequence
 (`PDFArray`/`PDFDict.lookup()`, `PDFName`, `.decodeText()`) still
 hasn't been run end-to-end in Node (no network access to install the
@@ -875,37 +899,52 @@ scan (that would mean re-parsing a PDF on every background rescan for
 any item without a stored origin yet) — it only runs on-demand, from
 `editSession.js`:
 - `scanSourceFolder(sourceDir)` (used by the 'add' editor) now also
-  returns `originUrl`, reusing the same `readdir` it already does for
-  print files/images.
-- A new `detectOrigin(itemPath)` method (used by the 'edit' editor,
-  only when the item's `metadata.json` doesn't already have an
-  `origin.url`) wraps `detectOriginUrl()` directly.
+  returns `origin` (the whole detected object, not just a URL string),
+  reusing the same `readdir` it already does for print files/images.
+- A `detectOrigin(itemPath)` method (used by the 'edit' editor,
+  whenever the item's `metadata.json` doesn't already have
+  `creatorName` — including items that already have an `origin.url`
+  but were catalogued before creator extraction existed) wraps the
+  module's `detectOrigin()` directly (imported under the alias
+  `detectOriginInFolder` to avoid shadowing the method's own name).
 
 **Schema** — `metadata.json` gains an optional `origin` object:
-`{ url, creatorName, creatorUrl }`. Only `url` is populated/editable
-today; `creatorName`/`creatorUrl` are reserved for a planned future
-pass that scrapes the origin page itself (once its URL is known) for
-the creator's username and profile link — `itemMetadata.js`'s
-`writeItemMetadata()` already shallow-merges `origin` onto whatever's
-already stored (same reasoning as its `printFiles` merge) rather than
-replacing it outright, specifically so that future scrape can add
-`creatorName`/`creatorUrl` without a plain "edit the URL field, leave
-everything else alone" save wiping them back out. The whole `origin`
-key is omitted from the written file when none of its three fields
-hold a truthy value. `indexer.js`'s `_buildItem()` exposes it as
-`item.origin` (`null` if absent), read-only from `metadata.json`
-(never auto-detected at scan time — see above).
+`{ url, creatorName, creatorUrl }`. `url`, `creatorName`, and
+`creatorUrl` are now all populated by detection for both known
+schemas (Thingiverse and Printables). `itemMetadata.js`'s
+`writeItemMetadata()` shallow-merges `origin` onto whatever's already
+stored (same reasoning as its `printFiles` merge) rather than
+replacing it outright, so a plain "edit the URL field, leave
+everything else alone" save can't wipe out creator info from an
+earlier detection. The whole `origin` key is omitted from the written
+file when none of its three fields hold a truthy value. `indexer.js`'s
+`_buildItem()` exposes it as `item.origin` (`null` if absent),
+read-only from `metadata.json` (never auto-detected at scan time — see
+above).
 
 **Editor UI** (`renderer.js`'s `openItemEditor()`) — a new "Original
 Location" text field, right after Tags: plain, editable, clearable,
 same as Name/Tags. 'add' mode prefills it from `scanSourceFolder()`'s
-`originUrl`; 'edit' mode prefills from the item's stored
-`origin.url` if present, else fires `detectItemOrigin(item.path)`
-(async, best-effort) and fills the field if that finds something. On
-Save, the field's current value is sent as `{ url }` in the payload to
-`editSessionCommitAdd`/`editSessionCommitEdit` regardless of whether
-it changed, matching Name/Tags' always-send-current-value behavior;
-the merge happens on the `itemMetadata.js` side, not here.
+`origin.url`; 'edit' mode prefills from the item's stored `origin.url`
+if present, and separately fires `detectItemOrigin(item.path)` (async,
+best-effort) whenever the item's stored origin lacks `creatorName` —
+regardless of whether `origin.url` is already present — so items
+catalogued before creator extraction existed get picked back up rather
+than staying permanently stuck. That re-detect only overwrites the
+visible field if it was empty to begin with (an item with its own
+stored `url` keeps showing that value even if re-detection returns a
+differently-formatted one). Either path also stashes the detected
+`{ url, creatorName, creatorUrl }` object in a closure-local
+`detectedOrigin` (`null` if nothing was ever (re-)detected this
+session). On Save, the field's current value is compared against
+`detectedOrigin.url`: if they still match, `creatorName`/`creatorUrl`
+(whichever are present) are included alongside `url` in the payload; if
+the co-admin has typed
+over the auto-filled/guessed link, only `{ url }` is sent, so a
+now-unrelated URL doesn't get paired with a stale creator credit — the
+shallow merge on the `itemMetadata.js` side then leaves any
+previously-stored creator info untouched rather than overwriting it
+with nothing.
 
 **Detail view** (`renderer.js`'s `renderItemDetail()`) — item detail
 previously had no item-level heading at all (just the file rows); this
@@ -916,15 +955,15 @@ only when `item.origin.url` is set. The platform label is derived from
 the URL's hostname (`originPlatformLabel()`) rather than stored
 separately, so a manually-entered URL from some other site still gets
 a sensible label (falls back to the bare hostname). Also renders
-`creatorName`/`creatorUrl` when present, even though nothing populates
-them yet — written this way now so the future creator-scrape data
-shows up here with no further display-side changes needed.
-`styles.css` doesn't have rules for `.item-detail-header`/
-`.item-origin-info` yet.
+`creatorName`/`creatorUrl` when present — this was written ahead of
+the data existing, and now that both Thingiverse and Printables
+detection populate these fields, they show up here with no
+display-side changes needed. `styles.css` doesn't have rules for
+`.item-detail-header`/`.item-origin-info` yet.
 
 **`main.js`/`preload.js`** — `prepareAddFolder()` now also forwards
-`scanSourceFolder()`'s `originUrl` through to the 'add' editor (alongside
-`printFiles`/`imageFiles`, unchanged otherwise). A new
+`scanSourceFolder()`'s `origin` object through to the 'add' editor
+(alongside `printFiles`/`imageFiles`, unchanged otherwise). A new
 `editSession:detectOrigin` handler wraps `editSession.detectOrigin(itemPath)`
 for 'edit' mode. `editSession:commitAdd`/`commitEdit` needed no change --
 they already forward their whole `fields` object straight through to
@@ -932,14 +971,52 @@ they already forward their whole `fields` object straight through to
 along in that object just works. `preload.js` exposes the new handler as
 `detectItemOrigin(itemPath)`.
 
-**Planned next**: once `origin.url` is reliably populated, scrape that
-page (a network fetch, only after the URL is known — this pass stays
-offline-only) for the creator's username and profile URL, writing them
-into `origin.creatorName`/`origin.creatorUrl`. The schema and display
-above are already shaped to receive that without further changes;
-what's still undecided is where that scrape runs (on editor open,
-alongside/instead of the local detection above? on next catalog sync?)
-and how failures/rate-limiting against each site should be handled.
+**Bulk backfill** — the on-demand re-detect above only catches an
+existing item up when it's individually opened in the editor *and*
+saved, which doesn't help a whole catalog of items added before
+creator extraction existed. `editSession.js`'s `backfillOrigins(items)`
+loops over the item array `indexer.scan()` already produces (passed in
+by the caller, so this method stays ignorant of the folder-walk logic
+that lives in `indexer.js`) and, for each item missing
+`origin.creatorName`, runs the same `detectOrigin()` the single-item
+path uses and writes the result straight to `metadata.json` via
+`writeItemMetadata()` -- passing the item's own current
+`displayName`/`tags` through explicitly, since those fields replace
+rather than merge on write (see `itemMetadata.js`), so omitting them
+would blank out any custom name/tags a co-admin had already set.
+Three outcomes per item, none of them thrown as errors (one bad folder
+shouldn't abort the whole batch): `updated` (written), `notFound`
+(detection found nothing usable), and `mismatched` (the item already
+has an `origin.url` on file that disagrees with what a fresh detection
+finds -- left untouched rather than silently swapped, same caution the
+single-item editor's save-time check applies, just surfaced as
+"review manually" instead of quietly dropping the creator fields).
+Each successful update is marked in `this.changes` exactly like a
+normal `editItem()` edit, so it shows up in the edit-session bar's
+counts and rides along in the eventual commit message when the session
+is confirmed and pushed -- this is just a batched version of editing
+each item by hand, not a separate mutation path.
+
+A new `editSession:backfillOrigins` handler in `main.js` requires an
+active edit session (guards with a clear error rather than throwing on
+`editSession` being null, though in practice the renderer only shows
+the button while one is active), fetches the current item list via
+`indexer.scan()`, and returns `{ result, changes, tree }` -- `changes`
+and `tree` refreshed the same way `commitAdd`/`commitEdit` already do,
+so the renderer's `pendingChanges`/`allItems` state stays in sync
+without a separate re-fetch. `preload.js` exposes it as
+`backfillOrigins()`.
+
+**Editor UI** — a "Backfill creator info" button next to "Add item" in
+`renderEditBar()` (`.backfill-origins-button` in `styles.css`, styled
+as a secondary/quieter action next to Add item's more prominent one).
+Disables itself and shows "Backfilling…" while the (potentially
+PDF-parsing-heavy) request is in flight, then reports counts via a
+plain `alert()` -- including the mismatched items' names, so the
+co-admin knows exactly which ones need a manual look in the item
+editor. Safe to click repeatedly: items that already have
+`creatorName` are skipped every time, so a second run is a no-op for
+anything already caught up.
 
 ## Not yet implemented
 

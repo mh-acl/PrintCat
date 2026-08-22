@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell } = require('electron');
 const path = require('path');
 const fsp = require('fs').promises;
 const chokidar = require('chokidar'); // npm install chokidar
@@ -218,6 +218,33 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  // The item detail view's "View original on ..." / creator links (see
+  // renderer.js's renderOriginInfo()) use target="_blank" -- without
+  // this handler, Electron's default behavior for that is either to
+  // silently block the request or pop open a bare, chromeless
+  // BrowserWindow rendering the external page *inside the app*,
+  // neither of which is "open in the co-admin's actual default
+  // browser." Denying the in-app window and handing the URL to
+  // shell.openExternal() instead is the standard Electron pattern for
+  // this. Applies to any window.open()/target="_blank" request from
+  // this app's own renderer, not just the origin links specifically --
+  // there's only ever one BrowserWindow in this app, so no need to
+  // scope it further.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  // Defense in depth: if anything ever tried to navigate this window
+  // itself to an external page (rather than opening a new one), send
+  // that out to the default browser too instead of letting the
+  // catalog's own window get hijacked away from index.html.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith('file://')) return; // normal in-app navigation (loadFile, reload)
+    event.preventDefault();
+    shell.openExternal(url);
+  });
 }
 
 // Settings must load before DATA_DIR can be resolved, since gitRepoUrl
@@ -379,8 +406,8 @@ async function prepareAddFolder(sourceDir) {
   if (!stat || !stat.isDirectory()) {
     throw new Error('That isn\'t a folder -- drop a project folder to add it as an item.');
   }
-  const { printFiles, imageFiles, originUrl } = await editSession.scanSourceFolder(sourceDir);
-  return { sourceDir, suggestedName: stripTrailingId(path.basename(sourceDir)), printFiles, imageFiles, originUrl };
+  const { printFiles, imageFiles, origin } = await editSession.scanSourceFolder(sourceDir);
+  return { sourceDir, suggestedName: stripTrailingId(path.basename(sourceDir)), printFiles, imageFiles, origin };
 }
 
 ipcMain.handle('editSession:pickAddFolder', async () => {
@@ -410,12 +437,32 @@ ipcMain.handle('editSession:browseImages', async () => {
   return filePaths.map((p) => ({ path: p, name: path.basename(p) }));
 });
 
-// Used by the 'edit' item editor to autofill "Original Location" when
-// the item's metadata.json doesn't already have an origin.url stored
-// (see originLocation.js/editSession.js) -- 'add' mode gets this for
-// free from scanSourceFolder()'s originUrl above instead, since it's
-// already scanning the folder for print files/images at that point.
+// Used by the 'edit' item editor to autofill "Original Location" (and
+// creator info, when detectable) when the item's metadata.json doesn't
+// already have creator info stored -- including items that already
+// have an origin.url but were catalogued before creator extraction
+// existed (see originLocation.js/editSession.js) -- 'add' mode gets
+// this for free from scanSourceFolder()'s origin above instead, since
+// it's already scanning the folder for print files/images at that
+// point. Returns the same { url, creatorName, creatorUrl } shape as
+// that origin field.
 ipcMain.handle('editSession:detectOrigin', async (event, itemPath) => editSession.detectOrigin(itemPath));
+
+// One-shot catch-up for every item already in the catalog that's
+// missing creator info -- see editSession.js's backfillOrigins() for
+// the per-item skip rules (mismatched/not-found items are left
+// untouched, not force-updated). Requires an active edit session, same
+// as every other mutating editSession:* handler here -- the renderer
+// only exposes the button that calls this while editModeActive, so
+// editSession is never null in practice, but the check keeps a stray
+// call from throwing a confusing "cannot read property of null"
+// instead of a clear message.
+ipcMain.handle('editSession:backfillOrigins', async () => {
+  if (!editSession) throw new Error('Start an edit session before backfilling.');
+  const items = await indexer.scan();
+  const result = await editSession.backfillOrigins(items);
+  return { result, changes: editSession.getChanges(), tree: await indexer.scan() };
+});
 
 ipcMain.handle('editSession:commitAdd', async (event, sourceDir, fields) => {
   const changes = await editSession.addItem(sourceDir, fields);

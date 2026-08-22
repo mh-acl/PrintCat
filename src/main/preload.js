@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('catalogAPI', {
   editSessionPrepareAddFolder: (sourceDir) => ipcRenderer.invoke('editSession:prepareAddFolder', sourceDir),
   editSessionBrowseImages: () => ipcRenderer.invoke('editSession:browseImages'),
   detectItemOrigin: (itemPath) => ipcRenderer.invoke('editSession:detectOrigin', itemPath),
+  backfillOrigins: () => ipcRenderer.invoke('editSession:backfillOrigins'),
   // webUtils.getPathForFile must be called from here (preload), not the
   // renderer -- it's the only supported way to get a real filesystem
   // path back from a dropped File object with contextIsolation on.
