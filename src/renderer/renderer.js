@@ -1305,8 +1305,11 @@ function openItemEditor(mode, item, prefilledSourceDir) {
   if (mode === 'edit' && !(item.origin && item.origin.url)) {
     window.catalogAPI
       .detectItemOrigin(item.path)
-      .then((url) => {
-        if (url) originField.input.value = url;
+      .then((origin) => {
+        // detectItemOrigin resolves the whole {url, creatorName, creatorUrl}
+        // object (see originLocation.js/editSession.js), not a bare URL
+        // string -- only the url is shown in this field.
+        if (origin && origin.url) originField.input.value = origin.url;
       })
       .catch(() => {}); // best-effort -- leave the field empty on failure
   }
@@ -1588,7 +1591,10 @@ function openItemEditor(mode, item, prefilledSourceDir) {
         if (!picked) return; // cancelled the folder dialog -- never show the form
         sourceDir = picked.sourceDir;
         nameField.input.value = picked.suggestedName;
-        originField.input.value = picked.originUrl || '';
+        // prepareAddFolder (main.js) returns the detected origin as an
+        // `origin` object ({url, creatorName, creatorUrl}), not a bare
+        // `originUrl` string -- only the url is shown in this field.
+        originField.input.value = (picked.origin && picked.origin.url) || '';
         folderUrl = `file://${sourceDir}`;
         printFiles = picked.printFiles.map((f) => ({
           key: f.name,
