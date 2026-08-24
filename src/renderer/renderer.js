@@ -1387,7 +1387,11 @@ function openItemEditor(mode, item, prefilledSourceDir) {
         e.stopPropagation();
       };
       row.ondragenter = () => row.classList.add('drop-target-active');
-      row.ondragleave = () => row.classList.remove('drop-target-active');
+      row.ondragleave = (e) => {
+        if (!row.contains(e.relatedTarget)) {
+          row.classList.remove('drop-target-active');
+        }
+      };
       row.ondrop = (e) => {
         e.preventDefault();
         e.stopPropagation();
