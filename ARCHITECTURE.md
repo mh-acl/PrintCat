@@ -637,11 +637,21 @@ print files with a "Print This" button driving the USB flow: list
 drives → alert/confirm/picker → copy → post-save keep-browsing/eject
 dialog → auto-dismissing "safe to unplug" poll. The Settings dialog is
 now opened via `onOpenSettings` (from the app menu), not an in-page
-button. It also has "Git Repository:"/"Branch:" text fields
-(`createSettingsTextField()`) alongside the printer checkboxes; saving
-sends `gitRepoUrl`/`gitBranch` through `settings:save`, and if the
-returned `needsRestart` flag is set, a `confirm()` prompt offers an
-immediate restart via `relaunch()`. The search box and both pill rows are wrapped in `#top-filters`,
+button. `openSettingsDialog()` builds it as tabs rather than one long
+panel — a `SETTINGS_TABS` list of `{ id, label, build }` entries (a
+"Printer" tab: the printer checkboxes/Hide-unavailable row, built by
+`buildPrinterTabPanel()`; a "Data Repository" tab: the "Git
+Repository:"/"Branch:" fields and auto-refresh control, built by
+`buildDataRepoTabPanel()`), a tab bar toggling `.settings-tab-panel`
+visibility, with Save/Cancel shared below all panels rather than
+per-tab (each `build()` returns the field handles Save reads back out
+of it, keyed in `tabHandles` by tab id). Deliberately data-driven
+so USB Wiper settings / a Tools-menu show-hide tab / an
+export-import-settings tab (all planned) are each just one more
+`SETTINGS_TABS` entry, no changes to the tab-switching plumbing.
+Saving sends `gitRepoUrl`/`gitBranch` through `settings:save`, and if
+the returned `needsRestart` flag is set, a `confirm()` prompt offers
+an immediate restart via `relaunch()`. The search box and both pill rows are wrapped in `#top-filters`,
 which `render()` hides outright while an item is open (see gotchas) —
 independent of `#printer-filter`'s own display toggling for the
 hideUnavailable case. A `#sync-status` footer note ("Last catalog
@@ -727,15 +737,16 @@ Needs `#category-filter` renamed to `#tag-filter` in `styles.css`.
   pointed at a catalog repo), `main.js`'s `whenReady()` skips
   `setupIndexer()` entirely — no indexer, tree, or sync status to
   fetch — and instead sends `menu:openSettings` with `{ required: true }`.
-- `renderer.js`'s `openSettingsDialog(opts)` has a parallel `required`
-  branch for this: different title/intro copy ("Set Up Print
-  Catalog…"), the printer checkboxes and Hide-unavailable row are
-  skipped (`allItems` is always `[]` at this point, so there's nothing
-  to derive a printer list from), and there's no Cancel button — the
-  dialog can only be dismissed by entering a repo URL and saving.
-  Saving without one is rejected with an alert rather than silently
-  closing, since that would just land back on the same dialog next
-  launch.
+- `renderer.js`'s `openSettingsDialog(opts)` delegates `{ required:
+  true }` straight to a separate `openRequiredSetupDialog()` rather
+  than handling it inline: a single-field, non-tabbed dialog ("Set Up
+  Print Catalog…", just the Git Repository/Branch/auto-refresh
+  fields, no printer checkboxes since `allItems` is always `[]` at
+  this point and there'd be nothing to derive a printer list from,
+  and no Cancel button — the dialog can only be dismissed by entering
+  a repo URL and saving). Saving without one is rejected with an
+  alert rather than silently closing, since that would just land back
+  on the same dialog next launch.
 - On a successful save in required mode, the renderer calls
   `relaunch()` directly (no "restart now?" confirm — there's nothing
   else to show until the app comes back up with an indexer against the

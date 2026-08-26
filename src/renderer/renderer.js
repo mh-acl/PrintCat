@@ -1061,20 +1061,104 @@ function createAutoRefreshField(settings) {
   return { wrap, checkbox, numberInput, unitSelect };
 }
 
+// Tab definitions for the (non-required) settings dialog. Kept as a
+// flat list so adding a 3rd/4th/5th tab later (USB Wiper settings, a
+// Tools-menu show/hide tab, an export/import-settings tab -- all
+// planned) is just appending an entry here, with no changes needed to
+// the tab bar or panel-switching logic in openSettingsDialog() below.
+// Each build() gets the (already-attached) panel element to fill in
+// and returns whatever handles the shared Save button needs to read
+// back out of it at save time.
+const SETTINGS_TABS = [
+  { id: 'printer', label: 'Printer', build: (panel, allPrinters) => buildPrinterTabPanel(panel, allPrinters) },
+  { id: 'data', label: 'Data Repository', build: (panel) => buildDataRepoTabPanel(panel) },
+];
+
+function buildPrinterTabPanel(panel, allPrinters) {
+  const intro = document.createElement('p');
+  intro.className = 'settings-intro';
+  intro.textContent = 'Choose which printers this makerspace actually has.';
+  panel.appendChild(intro);
+
+  const checkboxEls = new Map();
+
+  if (allPrinters.length === 0) {
+    const none = document.createElement('p');
+    none.className = 'settings-intro';
+    none.textContent = 'No printers found in the catalog yet.';
+    panel.appendChild(none);
+  } else {
+    for (const printer of allPrinters) {
+      const row = document.createElement('label');
+      row.className = 'settings-checkbox-row';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = settings.availablePrinters.includes(printer);
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(' ' + printer));
+      panel.appendChild(row);
+      checkboxEls.set(printer, cb);
+    }
+  }
+
+  panel.appendChild(document.createElement('hr'));
+
+  const hideRow = document.createElement('label');
+  hideRow.className = 'settings-checkbox-row';
+  const hideCb = document.createElement('input');
+  hideCb.type = 'checkbox';
+  hideCb.checked = settings.hideUnavailable;
+  hideRow.appendChild(hideCb);
+  hideRow.appendChild(document.createTextNode(' Hide unavailable printers'));
+  panel.appendChild(hideRow);
+
+  return { checkboxEls, hideCb };
+}
+
+function buildDataRepoTabPanel(panel) {
+  const intro = document.createElement('p');
+  intro.className = 'settings-intro';
+  intro.textContent = "The git repository this makerspace's catalog data lives in.";
+  panel.appendChild(intro);
+
+  const repoField = createSettingsTextField(
+    'Git Repository:',
+    settings.gitRepoUrl,
+    'https://github.com/example/catalog-data.git'
+  );
+  panel.appendChild(repoField.wrap);
+
+  const branchField = createSettingsTextField('Branch:', settings.gitBranch, 'main');
+  panel.appendChild(branchField.wrap);
+
+  panel.appendChild(document.createElement('hr'));
+
+  const autoRefreshField = createAutoRefreshField(settings);
+  panel.appendChild(autoRefreshField.wrap);
+
+  return { repoField, branchField, autoRefreshField };
+}
+
 // Lets the admin pick which printers this makerspace actually has, and
 // whether to hide anything else entirely, plus the git repo/branch to
-// sync catalog data from. Saves via IPC (persisted across launches),
-// then re-derives the active filter from the new settings so printer
-// changes take effect immediately. Git repo/branch changes require a
-// restart (see main.js's settings:save handler), since DATA_DIR itself
-// is only resolved once at startup.
+// sync catalog data from -- organized into tabs (see SETTINGS_TABS
+// above) since this dialog is expected to grow more sections over
+// time. Saves via IPC (persisted across launches), then re-derives the
+// active filter from the new settings so printer changes take effect
+// immediately. Git repo/branch changes require a restart (see main.js's
+// settings:save handler), since DATA_DIR itself is only resolved once
+// at startup.
+//
+// First-launch setup (opts.required) is handled by the separate,
+// non-tabbed openRequiredSetupDialog() below instead of this function --
+// see that function's comment for why.
 function openSettingsDialog(opts = {}) {
-  const required = Boolean(opts.required);
-  // In required mode allItems is always [] (init() skips getTree()
-  // when there's no repo configured), so there'd be nothing to derive
-  // a printer list from anyway -- skip that section of the dialog
-  // entirely rather than showing an empty/misleading printer list.
-  const allPrinters = required ? [] : Array.from(collectPrinters(allItems)).sort();
+  if (opts.required) {
+    openRequiredSetupDialog();
+    return;
+  }
+
+  const allPrinters = Array.from(collectPrinters(allItems)).sort();
 
   const overlay = document.createElement('div');
   overlay.className = 'drive-picker-overlay';
@@ -1083,52 +1167,122 @@ function openSettingsDialog(opts = {}) {
   box.className = 'drive-picker-box settings-box';
 
   const title = document.createElement('h3');
-  title.textContent = required ? 'Set Up Print Catalog' : 'Printer Settings';
+  title.textContent = 'Settings';
+  box.appendChild(title);
+
+  const tabBar = document.createElement('div');
+  tabBar.className = 'settings-tabs';
+  box.appendChild(tabBar);
+
+  const panelsWrap = document.createElement('div');
+  panelsWrap.className = 'settings-tab-panels';
+  box.appendChild(panelsWrap);
+
+  const panelEls = {};
+  const tabHandles = {};
+
+  SETTINGS_TABS.forEach((tab, i) => {
+    const panel = document.createElement('div');
+    panel.className = 'settings-tab-panel';
+    panel.style.display = i === 0 ? '' : 'none';
+    panelsWrap.appendChild(panel);
+    panelEls[tab.id] = panel;
+    tabHandles[tab.id] = tab.build(panel, allPrinters);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'settings-tab' + (i === 0 ? ' active' : '');
+    btn.textContent = tab.label;
+    btn.onclick = () => {
+      tabBar.querySelectorAll('.settings-tab').forEach((el) => el.classList.remove('active'));
+      btn.classList.add('active');
+      Object.values(panelEls).forEach((el) => {
+        el.style.display = 'none';
+      });
+      panel.style.display = '';
+    };
+    tabBar.appendChild(btn);
+  });
+
+  const buttonsRow = document.createElement('div');
+  buttonsRow.className = 'settings-buttons';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save';
+  saveBtn.onclick = async () => {
+    const { checkboxEls, hideCb } = tabHandles.printer;
+    const { repoField, branchField, autoRefreshField } = tabHandles.data;
+
+    const availablePrinters = allPrinters.filter((p) => checkboxEls.get(p).checked);
+    // Fall back to 1 for a blank/zero/negative/non-numeric field rather
+    // than saving something that'd make scheduleAutoRefresh() (main.js)
+    // skip setting up the timer at all.
+    const autoRefreshValue = Math.max(1, Math.round(Number(autoRefreshField.numberInput.value)) || 1);
+
+    const { settings: saved, needsRestart } = await window.catalogAPI.saveSettings({
+      availablePrinters,
+      hideUnavailable: hideCb.checked,
+      gitRepoUrl: repoField.input.value.trim(),
+      gitBranch: branchField.input.value.trim(),
+      autoRefreshEnabled: autoRefreshField.checkbox.checked,
+      autoRefreshValue,
+      autoRefreshUnit: autoRefreshField.unitSelect.value,
+    });
+    settings = saved;
+
+    applyDefaultPrinterFilter();
+    document.body.removeChild(overlay);
+    renderPrinterFilter();
+    renderTagFilter();
+    render();
+
+    // The git repo/branch feed into DATA_DIR, which is only resolved
+    // once at startup (see main.js) -- changing either here can't take
+    // effect on a running indexer/watcher, so ask before relaunching.
+    if (needsRestart) {
+      const restartNow = confirm(
+        'Git repository settings changed. Print Catalog needs to restart for this to take effect.\n\nRestart now?'
+      );
+      if (restartNow) window.catalogAPI.relaunch();
+    }
+  };
+  buttonsRow.appendChild(saveBtn);
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'cancel';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => {
+    document.body.removeChild(overlay);
+  };
+  buttonsRow.appendChild(cancelBtn);
+
+  box.appendChild(buttonsRow);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+// First-launch setup when no repo is configured yet. Kept as a
+// separate, non-tabbed dialog rather than folded into the tabbed
+// openSettingsDialog() above: allItems is always [] at this point
+// (init() skips getTree() when there's no repo configured), so there's
+// no printer list to show, and no other tab's content would be
+// meaningful yet either -- a tab bar with mostly-empty tabs ahead of
+// the one field that actually matters here would just be confusing.
+function openRequiredSetupDialog() {
+  const overlay = document.createElement('div');
+  overlay.className = 'drive-picker-overlay';
+
+  const box = document.createElement('div');
+  box.className = 'drive-picker-box settings-box';
+
+  const title = document.createElement('h3');
+  title.textContent = 'Set Up Print Catalog';
   box.appendChild(title);
 
   const intro = document.createElement('p');
   intro.className = 'settings-intro';
-  intro.textContent = required
-    ? "Enter the git repository this makerspace's catalog data lives in to get started."
-    : 'Choose which printers this makerspace actually has.';
+  intro.textContent = "Enter the git repository this makerspace's catalog data lives in to get started.";
   box.appendChild(intro);
-
-  const checkboxEls = new Map();
-  let hideCb = null;
-
-  if (!required) {
-    if (allPrinters.length === 0) {
-      const none = document.createElement('p');
-      none.className = 'settings-intro';
-      none.textContent = 'No printers found in the catalog yet.';
-      box.appendChild(none);
-    } else {
-      for (const printer of allPrinters) {
-        const row = document.createElement('label');
-        row.className = 'settings-checkbox-row';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = settings.availablePrinters.includes(printer);
-        row.appendChild(cb);
-        row.appendChild(document.createTextNode(' ' + printer));
-        box.appendChild(row);
-        checkboxEls.set(printer, cb);
-      }
-    }
-
-    box.appendChild(document.createElement('hr'));
-
-    const hideRow = document.createElement('label');
-    hideRow.className = 'settings-checkbox-row';
-    hideCb = document.createElement('input');
-    hideCb.type = 'checkbox';
-    hideCb.checked = settings.hideUnavailable;
-    hideRow.appendChild(hideCb);
-    hideRow.appendChild(document.createTextNode(' Hide unavailable printers'));
-    box.appendChild(hideRow);
-
-    box.appendChild(document.createElement('hr'));
-  }
 
   const repoField = createSettingsTextField(
     'Git Repository:',
@@ -1156,70 +1310,34 @@ function openSettingsDialog(opts = {}) {
     // Required mode exists only because there's no repo configured --
     // saving without one would just land back in this same dialog on
     // next launch, so refuse instead of silently closing.
-    if (required && !gitRepoUrl) {
+    if (!gitRepoUrl) {
       alert('Enter a git repository URL to continue.');
       return;
     }
 
-    const availablePrinters = required
-      ? settings.availablePrinters || []
-      : allPrinters.filter((p) => checkboxEls.get(p).checked);
-    // Fall back to 1 for a blank/zero/negative/non-numeric field rather
-    // than saving something that'd make scheduleAutoRefresh() (main.js)
-    // skip setting up the timer at all.
     const autoRefreshValue = Math.max(1, Math.round(Number(autoRefreshField.numberInput.value)) || 1);
 
-    const { settings: saved, needsRestart } = await window.catalogAPI.saveSettings({
-      availablePrinters,
-      hideUnavailable: required ? settings.hideUnavailable : hideCb.checked,
+    await window.catalogAPI.saveSettings({
+      availablePrinters: settings.availablePrinters || [],
+      hideUnavailable: settings.hideUnavailable,
       gitRepoUrl,
       gitBranch: branchField.input.value.trim(),
       autoRefreshEnabled: autoRefreshField.checkbox.checked,
       autoRefreshValue,
       autoRefreshUnit: autoRefreshField.unitSelect.value,
     });
-    settings = saved;
 
-    if (required) {
-      // Nothing to show until the app relaunches with an indexer set
-      // up against the new repo -- no "keep browsing" option makes
-      // sense here the way it does for the normal settings dialog, so
-      // just relaunch directly rather than asking.
-      window.catalogAPI.relaunch();
-      return;
-    }
-
-    applyDefaultPrinterFilter();
-    document.body.removeChild(overlay);
-    renderPrinterFilter();
-    renderTagFilter();
-    render();
-
-    // The git repo/branch feed into DATA_DIR, which is only resolved
-    // once at startup (see main.js) -- changing either here can't take
-    // effect on a running indexer/watcher, so ask before relaunching.
-    if (needsRestart) {
-      const restartNow = confirm(
-        'Git repository settings changed. Print Catalog needs to restart for this to take effect.\n\nRestart now?'
-      );
-      if (restartNow) window.catalogAPI.relaunch();
-    }
+    // Nothing to show until the app relaunches with an indexer set up
+    // against the new repo -- no "keep browsing" option makes sense
+    // here the way it does for the normal settings dialog, so just
+    // relaunch directly rather than asking.
+    window.catalogAPI.relaunch();
   };
   buttonsRow.appendChild(saveBtn);
 
-  // No Cancel in required mode -- there's nothing to fall back to
-  // (canceling out of an unconfigured, empty catalog isn't a real
-  // option), so this dialog can only be dismissed by saving.
-  if (!required) {
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'cancel';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.onclick = () => {
-      document.body.removeChild(overlay);
-    };
-    buttonsRow.appendChild(cancelBtn);
-  }
-
+  // No Cancel -- there's nothing to fall back to (canceling out of an
+  // unconfigured, empty catalog isn't a real option), so this dialog
+  // can only be dismissed by saving.
   box.appendChild(buttonsRow);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
