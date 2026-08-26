@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('catalogAPI', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   getSyncStatus: () => ipcRenderer.invoke('sync:getStatus'),
+  refreshCatalogNow: () => ipcRenderer.invoke('sync:refreshNow'),
   onSyncStatusChanged: (callback) => {
     ipcRenderer.on('sync:statusChanged', (event, status) => callback(status));
   },

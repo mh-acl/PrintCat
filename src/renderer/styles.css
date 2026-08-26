@@ -90,6 +90,13 @@ h1 {
   margin: 0.6em 0;
 }
 
+.settings-field-line {
+  display: flex;
+  flex-direction: row;
+  gap: 0.25em;
+  margin: 0.6em 0;
+}
+
 .settings-field-label {
   font-size: 0.85em;
   font-weight: 500;
@@ -112,6 +119,40 @@ h1 {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.settings-auto-refresh-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 0 0 0 0.4em; /* lines up with checkbox label */
+}
+
+.settings-number-input {
+  width: 4em;
+  padding: 0.4em 0.5em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 1em;
+  font-family: var(--font-body);
+  box-sizing: border-box;
+}
+
+.settings-unit-select {
+  padding: 0.4em 0.5em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 1em;
+  font-family: var(--font-body);
+}
+
+.settings-number-input:disabled,
+.settings-unit-select:disabled {
+  opacity: 0.5;
 }
 
 .settings-buttons {
@@ -540,12 +581,57 @@ a.listing span {
   font-weight: 600;
 }
 
+.sync-footer {
+  /* display:none by default (before renderSyncStatus() has run, e.g.
+     required-setup mode where sync is never configured) -- toggled to
+     'flex' by renderSyncStatus() once a repo is configured. */
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  padding-block-start: 2em;
+}
+
 .sync-status {
   text-align: center;
-  padding-block-start: 2em;
   font-family: var(--font-mono);
   font-size: 0.8em;
   color: var(--ink-faint);
+}
+
+.refresh-now-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8em;
+  height: 1.8em;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 0.9em;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.refresh-now-button:hover:not(:disabled) {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+
+.refresh-now-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.refresh-now-button.spinning {
+  animation: refresh-spin 1s linear infinite;
+}
+
+@keyframes refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .pause-tooltip-icon {

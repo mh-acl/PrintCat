@@ -30,6 +30,14 @@ const DEFAULT_SETTINGS = {
   // and main.js), not here, so the settings dialog can show a blank
   // field rather than a filled-in 'main'.
   gitBranch: '',
+  // Timed background refresh (in addition to the manual "refresh now"
+  // button and the always-on launch-time sync) -- see main.js's
+  // scheduleAutoRefresh(). autoRefreshValue is paired with
+  // autoRefreshUnit ('minutes' | 'hours' | 'days') to form the
+  // interval; defaults to a checked box refreshing every 2 hours.
+  autoRefreshEnabled: true,
+  autoRefreshValue: 2,
+  autoRefreshUnit: 'hours',
   // USB Wiper's "Rename drive to:" checkbox + text field (see
   // usbWiperWindow.js) -- persisted so both the on/off state and the
   // last-typed name are remembered the next time the tool window is

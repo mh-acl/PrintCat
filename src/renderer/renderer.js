@@ -78,6 +78,15 @@ async function init() {
   // forward even when nothing else has changed.
   setInterval(renderSyncStatus, 30 * 1000);
 
+  // Manual refresh -- main.js's handler already no-ops if a sync is
+  // already in flight and broadcasts sync:statusChanged as it
+  // starts/finishes, so this button doesn't need to track its own
+  // pending state; renderSyncStatus() (driven by that broadcast)
+  // already disables it and shows the spin while one's running.
+  document.getElementById('refresh-now-btn').addEventListener('click', () => {
+    window.catalogAPI.refreshCatalogNow();
+  });
+
   window.catalogAPI.onCatalogUpdated((newItems) => {
     allItems = newItems;
     renderPrinterFilter();
@@ -386,20 +395,31 @@ function formatRelativeTime(isoString) {
   return `${n} day${n === 1 ? '' : 's'} ago`;
 }
 
-// Footer note showing how fresh the catalog data is. Hidden entirely
-// when git sync isn't configured at all (a plain local DATA_DIR has no
-// "refresh" concept to report on); otherwise shows the last successful
-// sync, plus "Refresh in progress..." while one's actively running.
+// Footer note (plus the refresh-now button next to it) showing how
+// fresh the catalog data is. The whole footer is hidden entirely when
+// git sync isn't configured at all (a plain local DATA_DIR has no
+// "refresh" concept to report on, and nothing for the button to
+// trigger); otherwise shows the last successful sync, plus "Refresh in
+// progress..." while one's actively running -- whether that run was
+// kicked off by this button, the timed auto-refresh, or the
+// launch-time sync.
 function renderSyncStatus() {
+  const footer = document.getElementById('sync-footer');
   const el = document.getElementById('sync-status');
-  if (!el) return;
+  const refreshBtn = document.getElementById('refresh-now-btn');
+  if (!footer || !el) return;
 
   if (!syncStatus.configured) {
-    el.style.display = 'none';
+    footer.style.display = 'none';
     el.textContent = '';
     return;
   }
-  el.style.display = '';
+  footer.style.display = 'flex';
+
+  if (refreshBtn) {
+    refreshBtn.disabled = syncStatus.inProgress;
+    refreshBtn.classList.toggle('spinning', syncStatus.inProgress);
+  }
 
   if (!syncStatus.lastSuccessAt) {
     el.textContent = syncStatus.inProgress
@@ -987,6 +1007,60 @@ function createSettingsTextField(labelText, value, placeholder) {
   return { wrap, input };
 }
 
+// "Auto-refresh every: [n] [minutes/hours/days]" -- a plain
+// number+unit picker rather than a specialized duration control, since
+// nothing fancier is available in a bare HTML/Electron view. The
+// number input and unit select are disabled together whenever the
+// checkbox is unchecked, so it's visually clear they're inert without
+// needing to remove them from the layout. Uses the class 'settings-field-line'
+// to compactify the whole thing into one line, rather than spread over two.
+function createAutoRefreshField(settings) {
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-field-line';
+
+  const checkboxRow = document.createElement('label');
+  checkboxRow.className = 'settings-checkbox-row';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = settings.autoRefreshEnabled;
+  checkboxRow.appendChild(checkbox);
+  checkboxRow.appendChild(document.createTextNode(' Auto-refresh every:'));
+  wrap.appendChild(checkboxRow);
+
+  const pickerRow = document.createElement('div');
+  pickerRow.className = 'settings-auto-refresh-row';
+
+  const numberInput = document.createElement('input');
+  numberInput.type = 'number';
+  numberInput.min = '1';
+  numberInput.step = '1';
+  numberInput.className = 'settings-number-input';
+  numberInput.value = settings.autoRefreshValue || 2;
+  pickerRow.appendChild(numberInput);
+
+  const unitSelect = document.createElement('select');
+  unitSelect.className = 'settings-unit-select';
+  for (const unit of ['minutes', 'hours', 'days']) {
+    const opt = document.createElement('option');
+    opt.value = unit;
+    opt.textContent = unit;
+    unitSelect.appendChild(opt);
+  }
+  unitSelect.value = settings.autoRefreshUnit || 'hours';
+  pickerRow.appendChild(unitSelect);
+
+  wrap.appendChild(pickerRow);
+
+  const syncDisabledState = () => {
+    numberInput.disabled = !checkbox.checked;
+    unitSelect.disabled = !checkbox.checked;
+  };
+  syncDisabledState();
+  checkbox.addEventListener('change', syncDisabledState);
+
+  return { wrap, checkbox, numberInput, unitSelect };
+}
+
 // Lets the admin pick which printers this makerspace actually has, and
 // whether to hide anything else entirely, plus the git repo/branch to
 // sync catalog data from. Saves via IPC (persisted across launches),
@@ -1066,6 +1140,11 @@ function openSettingsDialog(opts = {}) {
   const branchField = createSettingsTextField('Branch:', settings.gitBranch, 'main');
   box.appendChild(branchField.wrap);
 
+  box.appendChild(document.createElement('hr'));
+
+  const autoRefreshField = createAutoRefreshField(settings);
+  box.appendChild(autoRefreshField.wrap);
+
   const buttonsRow = document.createElement('div');
   buttonsRow.className = 'settings-buttons';
 
@@ -1085,11 +1164,19 @@ function openSettingsDialog(opts = {}) {
     const availablePrinters = required
       ? settings.availablePrinters || []
       : allPrinters.filter((p) => checkboxEls.get(p).checked);
+    // Fall back to 1 for a blank/zero/negative/non-numeric field rather
+    // than saving something that'd make scheduleAutoRefresh() (main.js)
+    // skip setting up the timer at all.
+    const autoRefreshValue = Math.max(1, Math.round(Number(autoRefreshField.numberInput.value)) || 1);
+
     const { settings: saved, needsRestart } = await window.catalogAPI.saveSettings({
       availablePrinters,
       hideUnavailable: required ? settings.hideUnavailable : hideCb.checked,
       gitRepoUrl,
       gitBranch: branchField.input.value.trim(),
+      autoRefreshEnabled: autoRefreshField.checkbox.checked,
+      autoRefreshValue,
+      autoRefreshUnit: autoRefreshField.unitSelect.value,
     });
     settings = saved;
 

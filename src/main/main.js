@@ -291,19 +291,52 @@ async function setupIndexer() {
   // Watch the data dir for changes made outside the app (a `git pull`,
   // or someone dropping a new model folder in) and rescan in the
   // background, then push the fresh tree to the renderer.
-  const watcher = chokidar.watch(DATA_DIR, { ignoreInitial: true });
+  //
+  // awaitWriteFinish guards against reading a file mid-write -- a git
+  // sync can be checking out sizeable binary gcode files (see
+  // gitSync.js's DEFAULT_TIMEOUT_MS comment), and without this a
+  // rescan can fire the moment a file is first touched rather than
+  // once it's actually done being written.
+  const watcher = chokidar.watch(DATA_DIR, {
+    ignoreInitial: true,
+    awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+  });
   let rescanTimer = null;
   const scheduleRescan = () => {
     clearTimeout(rescanTimer);
     // Debounce -- a git pull touches many files in one burst.
-    rescanTimer = setTimeout(async () => {
-      const tree = await indexer.scan();
-      if (mainWindow) mainWindow.webContents.send('catalog:updated', tree);
-    }, 500);
+    rescanTimer = setTimeout(refreshCatalog, 500);
   };
   watcher.on('add', scheduleRescan);
   watcher.on('change', scheduleRescan);
   watcher.on('unlink', scheduleRescan);
+}
+
+// Rescans the data dir and pushes the fresh tree to the renderer.
+// Shared by the chokidar watcher above (a `git pull` or other outside
+// change), and meant to also back a future manual "refresh" button
+// and/or a timed auto-refresh -- all three are just different triggers
+// for the same "rescan and broadcast" action.
+//
+// Deliberately swallows its own errors rather than letting a transient
+// failure (e.g. a file disappearing mid-scan because a concurrent
+// `git clean -fd` raced the scan, or any other one-off fs hiccup)
+// silently drop the update forever -- previously an uncaught exception
+// here meant the open window never heard about the change until the
+// app was relaunched, since indexer.scan() itself has no internal
+// error handling. On failure we log and retry shortly instead, since
+// the next attempt will very likely land after whatever was transient
+// has settled.
+let catalogRefreshRetryTimer = null;
+async function refreshCatalog() {
+  clearTimeout(catalogRefreshRetryTimer);
+  try {
+    const tree = await indexer.scan();
+    if (mainWindow) mainWindow.webContents.send('catalog:updated', tree);
+  } catch (err) {
+    console.warn('[indexer] rescan failed, retrying shortly:', err.message);
+    catalogRefreshRetryTimer = setTimeout(refreshCatalog, 1000);
+  }
 }
 
 // Status shown in the renderer's footer ("Last catalog refresh: ...").
@@ -322,14 +355,24 @@ function broadcastSyncStatus() {
   if (mainWindow) mainWindow.webContents.send('sync:statusChanged', getSyncStatusPayload());
 }
 
-// Kicks off the git sync without blocking startup. The catalog opens
-// showing whatever was already on disk; if the sync changes anything,
-// the chokidar watcher in setupIndexer() picks up the file events and
-// pushes a fresh tree to the renderer on its own. In the common case
-// (already up to date) this just adds a no-op fetch in the
-// background; only when there's actually new data does a second scan
-// happen.
-function syncCatalogRepoInBackground() {
+// Kicks off the git sync without blocking the caller. The catalog
+// keeps showing whatever was already on disk while this runs; if the
+// sync changes anything, the chokidar watcher in setupIndexer() picks
+// up the file events and pushes a fresh tree to the renderer on its
+// own (see refreshCatalog()). In the common case (already up to date)
+// this just adds a no-op fetch in the background; only when there's
+// actually new data does a rescan happen.
+//
+// Shared by three triggers: the one-time sync on launch, the manual
+// "refresh now" button (ipcMain 'sync:refreshNow' below), and the
+// timed auto-refresh (scheduleAutoRefresh() below). Guarded against
+// overlapping runs -- if one's already in flight (from any of those
+// three triggers), a new call is a no-op rather than running a second
+// git command against the same working dir concurrently; the
+// in-flight run will pick up the latest data anyway.
+function runCatalogSync() {
+  if (syncInProgress) return;
+
   const { gitRepoUrl, gitBranch } = settingsStore.get();
   if (!gitRepoUrl) return;
 
@@ -349,11 +392,34 @@ function syncCatalogRepoInBackground() {
     if (result.synced) {
       await syncStateStore.recordSuccess();
     } else {
-      console.warn('[gitSync] launch sync did not complete:', result.reason, result.error || '');
+      console.warn('[gitSync] sync did not complete:', result.reason, result.error || '');
     }
     syncInProgress = false;
     broadcastSyncStatus();
   });
+}
+
+// Timed background refresh, on top of the launch-time sync and the
+// manual refresh button. Re-derived from settings (rather than fixed
+// at startup) so toggling the checkbox or changing the frequency in
+// Settings takes effect immediately -- unlike gitRepoUrl/gitBranch,
+// this doesn't touch DATA_DIR or the chokidar watcher, so it never
+// needs a restart. Call this once after the initial setup, and again
+// every time settings are saved.
+let autoRefreshTimer = null;
+const AUTO_REFRESH_UNIT_MS = { minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
+function scheduleAutoRefresh() {
+  clearInterval(autoRefreshTimer);
+  autoRefreshTimer = null;
+
+  const { autoRefreshEnabled, autoRefreshValue, autoRefreshUnit } = settingsStore.get();
+  if (!autoRefreshEnabled) return;
+
+  const value = Number(autoRefreshValue);
+  const unitMs = AUTO_REFRESH_UNIT_MS[autoRefreshUnit] || AUTO_REFRESH_UNIT_MS.hours;
+  if (!Number.isFinite(value) || value <= 0) return;
+
+  autoRefreshTimer = setInterval(runCatalogSync, value * unitMs);
 }
 
 // Guarded because in required-setup mode (no gitRepoUrl yet, see
@@ -521,6 +587,11 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
   const saved = await settingsStore.save(newSettings);
   const needsRestart =
     before.gitRepoUrl !== saved.gitRepoUrl || (before.gitBranch || 'main') !== (saved.gitBranch || 'main');
+  // Unlike gitRepoUrl/gitBranch, auto-refresh is just a timer -- always
+  // safe to re-derive right away, including in required-setup mode
+  // (harmless there since the app relaunches immediately afterward
+  // anyway; see renderer.js's openSettingsDialog()).
+  scheduleAutoRefresh();
   return { settings: saved, needsRestart };
 });
 
@@ -530,6 +601,16 @@ ipcMain.handle('app:relaunch', () => {
 });
 
 ipcMain.handle('sync:getStatus', async () => getSyncStatusPayload());
+
+// Manual "refresh now" button (see renderer.js's #refresh-now-btn).
+// runCatalogSync() already no-ops if a sync is already in flight, and
+// broadcasts 'sync:statusChanged' as it starts/finishes, so the
+// renderer doesn't need this call's return value for feedback -- it's
+// just returned as a convenience for an immediate read.
+ipcMain.handle('sync:refreshNow', () => {
+  runCatalogSync();
+  return getSyncStatusPayload();
+});
 
 app.whenReady().then(async () => {
   buildMenu();
@@ -555,7 +636,8 @@ app.whenReady().then(async () => {
 
   await setupIndexer();
   createWindow();
-  syncCatalogRepoInBackground();
+  runCatalogSync();
+  scheduleAutoRefresh();
 });
 
 app.on('window-all-closed', () => {

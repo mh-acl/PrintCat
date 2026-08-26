@@ -1161,7 +1161,7 @@ already forward their whole `fields` object through.
   the item editor, an image dropped directly onto a print file to
   pre-assign it) — see `renderer.js`'s document-level drop handler and
   `openItemEditor()`'s row/pool drop handlers, both described above.
-  Still missing: per-print-file `displayName`/`tags` overrides (only
+  Still missing: per-print-file `tags` overrides (only
   item-level ones, plus per-file `images`, are read/written so far —
   see `itemMetadata.js`); a gallery view for a print file with more
   than one assigned image (only the first, `images[0]`, is used as the
