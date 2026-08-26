@@ -141,6 +141,38 @@ h1 {
   color: var(--ink-soft);
 }
 
+/* Export/Import tab reuses .settings-field-label as a bare section
+   heading (not inside .settings-field, which already handles its own
+   spacing) -- needs its own top margin so "Import" doesn't crowd the
+   <hr> above it. */
+.settings-tab-panel > .settings-field-label {
+  margin: 1em 0 0.4em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settings-action-button {
+  display: block;
+  padding: 0.5em 1.1em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-family: var(--font-body);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.settings-action-button:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+
+.settings-export-import-status {
+  min-height: 1.2em;
+  font-size: 0.85em;
+}
+
 .settings-text-input {
   padding: 0.5em 0.7em;
   border-radius: var(--radius-control);

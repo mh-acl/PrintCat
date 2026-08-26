@@ -595,6 +595,98 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
   return { settings: saved, needsRestart };
 });
 
+// Holds a just-imported sync token between settings:import and
+// settings:confirmImportToken below. Deliberately never sent to the
+// renderer as part of settings:import's own return value -- the token
+// is meant to have no path into the renderer at all (see tokenStore.js),
+// so it's stashed here in the main process and only written to
+// TOKEN_PATH if the admin explicitly confirms via the renderer's own
+// confirm() dialog, exactly mirroring how a push's token read/write
+// already never touches renderer memory.
+let pendingImportToken = null;
+
+// Writes the current settings (NOT including the sync token, which
+// lives outside settingsStore entirely -- see includeToken below) to a
+// JSON file the admin picks, for copying to another laptop.
+ipcMain.handle('settings:export', async (event, { includeToken } = {}) => {
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export Print Catalog Settings',
+    defaultPath: 'print-catalog-settings.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (canceled || !filePath) return { ok: false, cancelled: true };
+
+  const payload = {
+    printCatalogSettingsExport: 1,
+    exportedAt: new Date().toISOString(),
+    settings: settingsStore.get(),
+  };
+
+  if (includeToken) {
+    if (!(await tokenExists())) {
+      throw new Error('No sync token has been provisioned on this laptop yet -- nothing to export.');
+    }
+    // Pops the native macOS admin-auth prompt (see tokenStore.js) --
+    // if the admin cancels or fails it, readSyncToken() rejects and
+    // this whole handler rejects with it, so no partial file gets
+    // written without the token the admin asked to include.
+    payload.syncToken = await readSyncToken();
+  }
+
+  await fsp.writeFile(filePath, JSON.stringify(payload, null, 2));
+  return { ok: true, path: filePath, includedToken: Boolean(includeToken) };
+});
+
+// Reads settings (and, if present, a sync token) from a previously
+// exported file and applies the settings immediately via the same
+// path as a normal Save, so needsRestart/scheduleAutoRefresh behave
+// identically to a hand-edited settings dialog. The token, if any, is
+// held back in pendingImportToken above rather than returned here --
+// see settings:confirmImportToken.
+ipcMain.handle('settings:import', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import Print Catalog Settings',
+    properties: ['openFile'],
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (canceled || filePaths.length === 0) return { ok: false, cancelled: true };
+
+  let raw;
+  try {
+    raw = JSON.parse(await fsp.readFile(filePaths[0], 'utf8'));
+  } catch (err) {
+    throw new Error("That file isn't valid JSON.");
+  }
+  if (!raw || typeof raw !== 'object' || !raw.settings || typeof raw.settings !== 'object') {
+    throw new Error("That file doesn't look like a Print Catalog settings export.");
+  }
+
+  const before = settingsStore.get();
+  const saved = await settingsStore.save({ ...before, ...raw.settings });
+  const needsRestart =
+    before.gitRepoUrl !== saved.gitRepoUrl || (before.gitBranch || 'main') !== (saved.gitBranch || 'main');
+  scheduleAutoRefresh();
+
+  pendingImportToken = typeof raw.syncToken === 'string' && raw.syncToken ? raw.syncToken : null;
+
+  return { ok: true, settings: saved, needsRestart, hasToken: Boolean(pendingImportToken) };
+});
+
+// Second step of a token import -- kept separate from settings:import
+// so the admin gets an explicit, informed confirm() (in renderer.js)
+// naming the fact that this overwrites the laptop's current token,
+// before the admin-auth prompt pops. Discards pendingImportToken
+// either way, so a declined import can't be silently applied later by
+// some other path.
+ipcMain.handle('settings:confirmImportToken', async (event, confirmed) => {
+  const token = pendingImportToken;
+  pendingImportToken = null;
+  if (!confirmed || !token) return { ok: false };
+  await writeSyncToken(token); // pops the native admin-auth prompt
+  return { ok: true };
+});
+
+
 ipcMain.handle('app:relaunch', () => {
   app.relaunch();
   app.exit(0);

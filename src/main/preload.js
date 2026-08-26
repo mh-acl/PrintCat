@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('catalogAPI', {
   isDrivePresent: (diskIdentifier) => ipcRenderer.invoke('drives:isPresent', diskIdentifier),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  exportSettings: (opts) => ipcRenderer.invoke('settings:export', opts),
+  importSettings: () => ipcRenderer.invoke('settings:import'),
+  confirmImportToken: (confirmed) => ipcRenderer.invoke('settings:confirmImportToken', confirmed),
   getSyncStatus: () => ipcRenderer.invoke('sync:getStatus'),
   refreshCatalogNow: () => ipcRenderer.invoke('sync:refreshNow'),
   onSyncStatusChanged: (callback) => {

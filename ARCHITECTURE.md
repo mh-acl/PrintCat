@@ -335,6 +335,12 @@ lost/wiped laptop can only compromise this one repo. `main.js`'s
 `getOrProvisionToken()` wraps `tokenExists()`/`readSyncToken()`/
 `writeSyncToken()` into the single "get me a usable token, provisioning
 inline if needed" call both the old and new push flows use.
+`readSyncToken()`/`writeSyncToken()` are also reused directly (not via
+`getOrProvisionToken()`, since there's no push happening) by the
+Settings dialog's Export/Import tab — see its paragraph above and
+`settings:export`/`settings:import`/`settings:confirmImportToken` in
+`main.js` — to include/restore the token when exporting/importing
+settings between laptops, gated behind the same admin-auth prompts.
 
 **`provisionTokenWindow.js`** — `promptForToken(parentWindow)`: a small
 modal `BrowserWindow` (`provisionTokenWindow.html` /
@@ -642,16 +648,34 @@ panel — a `SETTINGS_TABS` list of `{ id, label, build }` entries (a
 "Printer" tab: the printer checkboxes/Hide-unavailable row, built by
 `buildPrinterTabPanel()`; a "Data Repository" tab: the "Git
 Repository:"/"Branch:" fields and auto-refresh control, built by
-`buildDataRepoTabPanel()`), a tab bar toggling `.settings-tab-panel`
-visibility, with Save/Cancel shared below all panels rather than
-per-tab (each `build()` returns the field handles Save reads back out
-of it, keyed in `tabHandles` by tab id). Deliberately data-driven
-so USB Wiper settings / a Tools-menu show-hide tab / an
-export-import-settings tab (all planned) are each just one more
-`SETTINGS_TABS` entry, no changes to the tab-switching plumbing.
-Saving sends `gitRepoUrl`/`gitBranch` through `settings:save`, and if
-the returned `needsRestart` flag is set, a `confirm()` prompt offers
-an immediate restart via `relaunch()`. The search box and both pill rows are wrapped in `#top-filters`,
+`buildDataRepoTabPanel()`; an "Export / Import" tab, built by
+`buildExportImportTabPanel()` — see its own paragraph below), a tab bar
+toggling `.settings-tab-panel` visibility, with Save/Cancel shared
+below all panels rather than per-tab (each `build()` gets a shared
+`ctx` — `{ allPrinters, overlay }` — and returns the field handles Save
+reads back out of it, keyed in `tabHandles` by tab id; Export/Import
+returns `{}` since it doesn't feed Save). Deliberately data-driven so
+USB Wiper settings / a Tools-menu show-hide tab (both still planned)
+are each just one more `SETTINGS_TABS` entry, no changes to the
+tab-switching plumbing. Saving sends `gitRepoUrl`/`gitBranch` through
+`settings:save`, and if the returned `needsRestart` flag is set, a
+`confirm()` prompt offers an immediate restart via `relaunch()`. The
+"Export / Import" tab lets an admin save the current settings to a
+JSON file (`settings:export` IPC handler, main.js) and load them back
+on another laptop (`settings:import`), with an "Include GitHub sync
+token" checkbox on export gated behind admin authorization: the token
+never passes through renderer.js at all in either direction —
+`settings:export` reads it (`tokenStore.js`'s `readSyncToken()`,
+popping the native admin prompt) and writes it straight into the
+exported file inside the main process, while `settings:import` holds a
+just-read token back in a module-level `pendingImportToken` (main.js)
+until the renderer's own `confirm()` decides whether to write it via a
+second call, `settings:confirmImportToken` (which pops
+`writeSyncToken()`'s admin prompt); the renderer only ever sees a
+`hasToken` boolean, never the token itself. Importing applies settings
+through the same `settingsStore.save()`/`needsRestart` path as a normal
+Save, then closes and reopens the dialog so every tab reflects the
+newly-imported values immediately. The search box and both pill rows are wrapped in `#top-filters`,
 which `render()` hides outright while an item is open (see gotchas) —
 independent of `#printer-filter`'s own display toggling for the
 hideUnavailable case. A `#sync-status` footer note ("Last catalog

@@ -1062,16 +1062,19 @@ function createAutoRefreshField(settings) {
 }
 
 // Tab definitions for the (non-required) settings dialog. Kept as a
-// flat list so adding a 3rd/4th/5th tab later (USB Wiper settings, a
-// Tools-menu show/hide tab, an export/import-settings tab -- all
-// planned) is just appending an entry here, with no changes needed to
-// the tab bar or panel-switching logic in openSettingsDialog() below.
-// Each build() gets the (already-attached) panel element to fill in
-// and returns whatever handles the shared Save button needs to read
-// back out of it at save time.
+// flat list so adding a 4th/5th tab later (USB Wiper settings, a
+// Tools-menu show/hide tab -- both still planned) is just appending an
+// entry here, with no changes needed to the tab bar or panel-switching
+// logic in openSettingsDialog() below. Each build() gets the
+// (already-attached) panel element plus a shared ctx ({ allPrinters,
+// overlay } -- overlay lets the Export/Import tab close and reopen the
+// dialog after an import) and returns whatever handles the shared Save
+// button needs to read back out of it at save time (an empty object
+// for tabs, like Export/Import, that don't feed Save).
 const SETTINGS_TABS = [
-  { id: 'printer', label: 'Printer', build: (panel, allPrinters) => buildPrinterTabPanel(panel, allPrinters) },
+  { id: 'printer', label: 'Printer', build: (panel, ctx) => buildPrinterTabPanel(panel, ctx.allPrinters) },
   { id: 'data', label: 'Data Repository', build: (panel) => buildDataRepoTabPanel(panel) },
+  { id: 'export-import', label: 'Export / Import', build: (panel, ctx) => buildExportImportTabPanel(panel, ctx.overlay) },
 ];
 
 function buildPrinterTabPanel(panel, allPrinters) {
@@ -1139,6 +1142,129 @@ function buildDataRepoTabPanel(panel) {
   return { repoField, branchField, autoRefreshField };
 }
 
+// Export writes the current settings (plus, optionally, the GitHub
+// sync token) to a JSON file the admin picks; import reads one back
+// and applies it. All the actual file I/O and token handling happens
+// in main.js (settings:export/settings:import/settings:confirmImportToken)
+// -- this just drives the two admin-facing confirms and reflects the
+// result. The token itself never passes through this function or any
+// other renderer code: settings:export reads it directly into the
+// exported file in the main process, and settings:import holds a
+// just-read token back in the main process (pendingImportToken) until
+// settings:confirmImportToken says whether to write it, so the only
+// thing this code ever sees is a plain `hasToken` boolean.
+//
+// This tab doesn't feed the shared Save button (nothing here is a
+// pending field to save -- export/import both act immediately), so it
+// returns {} rather than field handles.
+function buildExportImportTabPanel(panel, overlay) {
+  const intro = document.createElement('p');
+  intro.className = 'settings-intro';
+  intro.textContent = 'Save these settings to a file, or load them from one -- handy when setting up a new laptop.';
+  panel.appendChild(intro);
+
+  const exportLabel = document.createElement('div');
+  exportLabel.className = 'settings-field-label';
+  exportLabel.textContent = 'Export';
+  panel.appendChild(exportLabel);
+
+  const tokenRow = document.createElement('label');
+  tokenRow.className = 'settings-checkbox-row';
+  const tokenCb = document.createElement('input');
+  tokenCb.type = 'checkbox';
+  tokenRow.appendChild(tokenCb);
+  tokenRow.appendChild(document.createTextNode(' Include GitHub sync token (requires admin authorization)'));
+  panel.appendChild(tokenRow);
+
+  const exportStatus = document.createElement('p');
+  exportStatus.className = 'settings-intro settings-export-import-status';
+
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.className = 'settings-action-button';
+  exportBtn.textContent = 'Export Settings…';
+  exportBtn.onclick = async () => {
+    exportStatus.textContent = '';
+    try {
+      const result = await window.catalogAPI.exportSettings({ includeToken: tokenCb.checked });
+      if (result.cancelled) return;
+      exportStatus.textContent = result.includedToken
+        ? `Exported (with sync token) to ${result.path}`
+        : `Exported to ${result.path}`;
+    } catch (err) {
+      exportStatus.textContent = `Export failed: ${err.message}`;
+    }
+  };
+  panel.appendChild(exportBtn);
+  panel.appendChild(exportStatus);
+
+  panel.appendChild(document.createElement('hr'));
+
+  const importLabel = document.createElement('div');
+  importLabel.className = 'settings-field-label';
+  importLabel.textContent = 'Import';
+  panel.appendChild(importLabel);
+
+  const importIntro = document.createElement('p');
+  importIntro.className = 'settings-intro';
+  importIntro.textContent = 'Importing overwrites the settings above with values from the chosen file.';
+  panel.appendChild(importIntro);
+
+  const importStatus = document.createElement('p');
+  importStatus.className = 'settings-intro settings-export-import-status';
+
+  const importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.className = 'settings-action-button';
+  importBtn.textContent = 'Import Settings…';
+  importBtn.onclick = async () => {
+    importStatus.textContent = '';
+    if (!confirm('Import settings from a file? This replaces the current settings shown in this dialog.')) return;
+
+    try {
+      const result = await window.catalogAPI.importSettings();
+      if (result.cancelled) return;
+
+      settings = result.settings;
+
+      let tokenImported = false;
+      if (result.hasToken) {
+        const wantsToken = confirm(
+          "This file includes a GitHub sync token. Import it too?\n\nThis overwrites this laptop's current sync token and requires admin authorization."
+        );
+        const tokenResult = await window.catalogAPI.confirmImportToken(wantsToken);
+        tokenImported = Boolean(tokenResult && tokenResult.ok);
+      }
+
+      importStatus.textContent = tokenImported ? 'Settings and sync token imported.' : 'Settings imported.';
+
+      // Re-derive the active printer filter and rebuild the dialog from
+      // scratch so every tab (printer checkboxes, repo fields, etc.)
+      // reflects the just-imported values immediately, rather than
+      // requiring the admin to close and reopen it to see them.
+      applyDefaultPrinterFilter();
+      renderPrinterFilter();
+      renderTagFilter();
+      render();
+      document.body.removeChild(overlay);
+      openSettingsDialog();
+
+      if (result.needsRestart) {
+        const restartNow = confirm(
+          'Git repository settings changed. Print Catalog needs to restart for this to take effect.\n\nRestart now?'
+        );
+        if (restartNow) window.catalogAPI.relaunch();
+      }
+    } catch (err) {
+      importStatus.textContent = `Import failed: ${err.message}`;
+    }
+  };
+  panel.appendChild(importBtn);
+  panel.appendChild(importStatus);
+
+  return {};
+}
+
 // Lets the admin pick which printers this makerspace actually has, and
 // whether to hide anything else entirely, plus the git repo/branch to
 // sync catalog data from -- organized into tabs (see SETTINGS_TABS
@@ -1180,6 +1306,7 @@ function openSettingsDialog(opts = {}) {
 
   const panelEls = {};
   const tabHandles = {};
+  const ctx = { allPrinters, overlay };
 
   SETTINGS_TABS.forEach((tab, i) => {
     const panel = document.createElement('div');
@@ -1187,7 +1314,7 @@ function openSettingsDialog(opts = {}) {
     panel.style.display = i === 0 ? '' : 'none';
     panelsWrap.appendChild(panel);
     panelEls[tab.id] = panel;
-    tabHandles[tab.id] = tab.build(panel, allPrinters);
+    tabHandles[tab.id] = tab.build(panel, ctx);
 
     const btn = document.createElement('button');
     btn.type = 'button';
