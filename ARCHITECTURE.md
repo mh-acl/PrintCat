@@ -1082,6 +1082,74 @@ button click to dismiss, but a lightbox reads better with backdrop-click
 and Escape support, so it got its own overlay/box CSS classes rather than
 reusing `.drive-picker-overlay`.
 
+## Print-file display name (pencil-icon rename)
+
+Print files can now have their own display name, independent of the
+item's display name and the filename-derived `shortname`. The
+`metadata.json` schema already supported this (`printFiles` was always a
+generic per-file field map — see the Filament/image-reconciliation
+sections above), so this feature is almost entirely wiring rather than a
+new schema. The rename *control* (pencil icon, editable input) lives
+entirely in the item editor's file list (`renderImagesSection()` inside
+`openItemEditor()`) — the item detail view (`renderItemDetail()`) has no
+rename UI of its own. It does, however, read-only display the resolved
+name (`file.metadataDisplayName || file.shortname`), same fallback as
+the editor, so a rename made in the editor is actually visible when
+browsing the catalog rather than only inside the modal that set it.
+
+Each editor file row's name (`.editor-file-name`, and the
+`.editor-file-name-input` it swaps to while editing) carries a `title`
+tooltip of `pf.key` — the actual on-disk filename, extension included —
+since a parsed `shortname` or a custom display name can otherwise
+obscure which real file a row corresponds to.
+
+`indexer.js`'s per-file cache entry gains `metadataDisplayName`, read the
+same way `metadataImages` already was: `metaPrintFiles[basename].displayName
+|| null`. Like `metadataImages`, it's attached in the post-cache shallow
+copy in `_buildItem()`, not baked into the gcode-parse cache itself, so it
+always reflects `metadata.json`'s current content on every scan rather
+than a stale snapshot.
+
+`editSession.js`'s `editItem()`/`addItem()` both gained a `printFileNames:
+{[printFileBasename]: displayName}` param, folded into the same
+`printFiles` object as image assignments via a new
+`_mergePrintFileNames()` helper — merged per-file, not replacing, so a
+name edit and an image assignment on the same print file can't clobber
+each other. `scanSourceFolder()` (the 'add' mode folder scan) now also
+surfaces `printerModel`/`printerVariant` from each file's parsed gcode
+metadata, which it already had access to via `parseGcodeMetadata()` but
+wasn't extracting — needed so 'add' mode's file list can show the same
+printer/variant info 'edit' mode's does. `itemMetadata.js` needed no
+functional change; its `printFiles` merge was already generic per-key.
+
+In `renderImagesSection()`, each `.editor-file-row`'s old single
+`.editor-file-label` span is now a `.editor-file-label-wrap` holding two
+separate spans plus a pencil button:
+- `.editor-file-name` — `pf.displayName || pf.shortname`, kept in the
+  readable `--ink` color, a touch heavier than the span next to it.
+- `.editor-file-extra` — printer + variant (e.g. "MK4S MMU3"), batch
+  size, and color-change count, joined and shown in `--ink-faint` so it
+  reads as supplementary detail rather than competing with the name.
+  This replaces the old `printFileLabel()` helper (removed), which
+  mixed the shortname and the color-change/batch parenthetical into one
+  plain-text string with no way to style the two parts differently.
+- a pencil button (`makeFileRenameButton()`) that calls
+  `startEditingPrintFileName()` on click, swapping `.editor-file-name`
+  for a text input in place (Enter or blur saves, Escape cancels,
+  guarded against `finish()` running twice since Escape also triggers
+  blur). Saving only updates the in-memory `pf.displayName` — nothing
+  hits disk until the editor's own "Save to pending" button runs, same
+  as every other field in this form.
+
+The Save handler builds `printFileNames` from every `pf` in the
+in-memory `printFiles` array that currently has a truthy `displayName`
+(whether just typed or carried over unchanged from `metadata.json`) and
+sends it alongside `printFileImages`/`name`/`tags`/`origin` to
+`editSessionCommitAdd`/`editSessionCommitEdit`. Re-sending an unchanged
+name is harmless given `_mergePrintFileNames()`'s per-key merge.
+`main.js`/`preload.js` needed no changes — `commitAdd`/`commitEdit`
+already forward their whole `fields` object through.
+
 ## Not yet implemented
 
 - GUI for adding/editing/deleting catalog items: "Edit Print Catalog…"

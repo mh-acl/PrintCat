@@ -743,7 +743,11 @@ function renderItemDetail(item) {
 
     const name = document.createElement('h3');
     name.className = 'file-name';
-    name.textContent = file.shortname;
+    // Read-only: shows the resolved name (custom override if the
+    // editor's pencil icon set one, else the parsed shortname), but
+    // this view has no rename UI of its own -- that's editor-modal
+    // only, per prior correction.
+    name.textContent = file.metadataDisplayName || file.shortname;
     row.appendChild(name);
 
     // Batch/color-change info moved out of the metadata block into a
@@ -1231,18 +1235,63 @@ function isImageFileName(name) {
   return /\.(jpe?g|png|gif|svg)$/i.test(name);
 }
 
-// A "0 color changes" (the common case) or "1 in batch" (i.e. not
-// actually a batch) note adds noise rather than helping tell similar
-// prints apart -- only the informative cases show up here.
-function printFileLabel(pf) {
-  const parts = [];
-  if (pf.colorChangeCount !== null && pf.colorChangeCount > 0) {
-    parts.push(`${pf.colorChangeCount} color change${pf.colorChangeCount === 1 ? '' : 's'}`);
-  }
-  if (pf.copies !== null && pf.copies > 1) {
-    parts.push(`batch of ${pf.copies}`);
-  }
-  return parts.length > 0 ? `${pf.shortname} (${parts.join(', ')})` : pf.shortname;
+// Pencil button next to a print file's name in the item editor's file
+// list (renderImagesSection() below). Clicking it swaps the name
+// <span> for a text input in place -- Enter or blur saves, Escape
+// cancels. The save only updates the in-memory `pf` object (part of
+// the editor's own `printFiles` array); nothing is written to disk
+// until the editor's own "Save to pending" button runs, same as every
+// other field in this form (name, tags, image assignments).
+function makeFileRenameButton(pf, nameSpan) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'editor-file-rename-btn';
+  btn.title = 'Rename this print file';
+  btn.setAttribute('aria-label', 'Rename this print file');
+  btn.textContent = '\u270e'; // ✎
+  btn.onclick = (e) => {
+    e.preventDefault();
+    startEditingPrintFileName(pf, nameSpan, btn);
+  };
+  return btn;
+}
+
+function startEditingPrintFileName(pf, nameSpan, editBtn) {
+  const parent = nameSpan.parentElement;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'editor-file-name-input';
+  input.value = pf.displayName || pf.shortname;
+  input.title = pf.key;
+
+  // Escape blurs the input too, which would otherwise re-run finish()
+  // a second time (via onblur) after this one already swapped the
+  // input back out -- guarded with a flag rather than relying on
+  // finish() being idempotent, since a second replaceChild(nameSpan,
+  // input) call would throw (input is no longer parent's child).
+  let finished = false;
+  const finish = (save) => {
+    if (finished) return;
+    finished = true;
+    parent.replaceChild(nameSpan, input);
+    editBtn.style.display = '';
+    if (!save) return;
+    const newName = input.value.trim();
+    if (!newName || newName === (pf.displayName || pf.shortname)) return;
+    pf.displayName = newName;
+    nameSpan.textContent = newName;
+  };
+
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') finish(true);
+    if (e.key === 'Escape') finish(false);
+  };
+  input.onblur = () => finish(true);
+
+  editBtn.style.display = 'none';
+  parent.replaceChild(input, nameSpan);
+  input.focus();
+  input.select();
 }
 
 // "PLA,PLA" -> "PLA"; "PLA,PETG" -> "PLA/PETG". Order of first
@@ -1425,10 +1474,40 @@ function openItemEditor(mode, item, prefilledSourceDir) {
       };
       row.appendChild(checkbox);
 
-      const label = document.createElement('span');
-      label.className = 'editor-file-label';
-      label.textContent = printFileLabel(pf);
-      row.appendChild(label);
+      const labelWrap = document.createElement('div');
+      labelWrap.className = 'editor-file-label-wrap';
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'editor-file-name';
+      nameSpan.textContent = pf.displayName || pf.shortname;
+      // pf.key is the actual on-disk filename (raw, with extension) --
+      // shown as a tooltip since a custom/parsed display name can
+      // obscure which real file this row actually is.
+      nameSpan.title = pf.key;
+      labelWrap.appendChild(nameSpan);
+
+      // Printer/variant + batch/color-change info, supplementing (not
+      // replacing) the name -- deliberately faint so it reads as
+      // secondary detail rather than competing with the name, and
+      // deliberately separate from the color-change/batch parenthetical
+      // printFileLabel() used to produce, since that mixed the two
+      // together in one string with no way to style them differently.
+      const extraParts = [
+        pf.printerModel ? [pf.printerModel, pf.printerVariant].filter(Boolean).join(' ') : null,
+        pf.copies && pf.copies > 1 ? `batch of ${pf.copies}` : null,
+        pf.colorChangeCount
+          ? `${pf.colorChangeCount} color change${pf.colorChangeCount === 1 ? '' : 's'}`
+          : null,
+      ].filter(Boolean);
+      if (extraParts.length) {
+        const extraSpan = document.createElement('span');
+        extraSpan.className = 'editor-file-extra';
+        extraSpan.textContent = extraParts.join(', ');
+        labelWrap.appendChild(extraSpan);
+      }
+
+      row.appendChild(labelWrap);
+      row.appendChild(makeFileRenameButton(pf, nameSpan));
 
       const chips = document.createElement('div');
       chips.className = 'editor-image-chips';
@@ -1526,7 +1605,15 @@ function openItemEditor(mode, item, prefilledSourceDir) {
     printFiles = item.files.map((f) => {
       const key = f.path.split(/[\\/]/).pop();
       imageAssignments[key] = (f.metadataImages || []).map((name) => ({ kind: 'existing', name }));
-      return { key, shortname: f.shortname, colorChangeCount: f.colorChangeCount, copies: f.copies };
+      return {
+        key,
+        shortname: f.shortname,
+        displayName: f.metadataDisplayName || null,
+        printerModel: f.printerModel,
+        printerVariant: f.printerVariant,
+        colorChangeCount: f.colorChangeCount,
+        copies: f.copies,
+      };
     });
     poolImages = (item.imageFiles || []).map((name) => ({ kind: 'existing', name }));
     renderImagesSection();
@@ -1553,6 +1640,16 @@ function openItemEditor(mode, item, prefilledSourceDir) {
     for (const [key, refs] of Object.entries(imageAssignments)) {
       if (refs.length > 0) printFileImages[key] = refs;
     }
+    // Only print files with a custom name set (either just typed via
+    // the pencil-icon rename, or already carried over from
+    // metadata.json in edit mode -- see the 'edit' mode printFiles
+    // mapping below) get an entry here; writeItemMetadata's printFiles
+    // merge is per-key, so re-sending an unchanged name alongside ones
+    // that did change is harmless.
+    const printFileNames = {};
+    for (const pf of printFiles) {
+      if (pf.displayName) printFileNames[pf.key] = pf.displayName;
+    }
     // { url } only -- writeItemMetadata merges this onto whatever
     // origin block already exists (see itemMetadata.js), so this
     // can't clobber a creatorName/creatorUrl a future scrape pass adds,
@@ -1563,8 +1660,20 @@ function openItemEditor(mode, item, prefilledSourceDir) {
     try {
       const result =
         mode === 'add'
-          ? await window.catalogAPI.editSessionCommitAdd(sourceDir, { name, tags, printFileImages, origin })
-          : await window.catalogAPI.editSessionCommitEdit(item.path, { name, tags, printFileImages, origin });
+          ? await window.catalogAPI.editSessionCommitAdd(sourceDir, {
+              name,
+              tags,
+              printFileImages,
+              printFileNames,
+              origin,
+            })
+          : await window.catalogAPI.editSessionCommitEdit(item.path, {
+              name,
+              tags,
+              printFileImages,
+              printFileNames,
+              origin,
+            });
       pendingChanges = result.changes;
       allItems = result.tree;
       document.body.removeChild(overlay);
@@ -1603,6 +1712,9 @@ function openItemEditor(mode, item, prefilledSourceDir) {
         printFiles = picked.printFiles.map((f) => ({
           key: f.name,
           shortname: f.shortname,
+          displayName: null, // brand new item -- nothing in metadata.json yet to read
+          printerModel: f.printerModel,
+          printerVariant: f.printerVariant,
           colorChangeCount: f.colorChangeCount,
           copies: f.copies,
         }));

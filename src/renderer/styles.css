@@ -729,11 +729,58 @@ a.listing.pending-delete {
   border-bottom: 1px solid var(--line-soft);
 }
 
-.editor-file-label {
+.editor-file-label-wrap {
   flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4em;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* The print file's actual name/label -- kept in the readable --ink
+   color and a touch heavier than the extra-info span next to it, so
+   the two are visually distinct: this is the identity, the rest is
+   supplementary detail. */
+.editor-file-name {
   font-family: var(--font-mono);
   font-size: 0.85em;
-  color: var(--ink-soft);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Printer/variant + batch/color-change info -- faint on purpose, see
+   .editor-file-name above. */
+.editor-file-extra {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  color: var(--ink-faint);
+}
+
+.editor-file-name-input {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+  min-width: 0;
+  flex: 1;
+}
+
+.editor-file-rename-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 0.9em;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.editor-file-rename-btn:hover {
+  color: var(--accent);
 }
 
 .editor-image-chips {

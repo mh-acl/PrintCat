@@ -133,6 +133,12 @@ class Indexer {
     const files = parsedFiles.map((file) => ({
       ...file,
       metadataImages: (metaPrintFiles[path.basename(file.path)] || {}).images || [],
+      // Per-print-file display name override, edited via the item
+      // editor's pencil icon (see renderer.js's renderImagesSection())
+      // -- null when nothing's been set yet, same "falls back to
+      // filename-derived" convention as the item-level displayName
+      // above.
+      metadataDisplayName: (metaPrintFiles[path.basename(file.path)] || {}).displayName || null,
     }));
 
     return {

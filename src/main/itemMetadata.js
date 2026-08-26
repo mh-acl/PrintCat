@@ -3,12 +3,14 @@
 // itemMetadata.js
 //
 // Reads/writes the per-item metadata.json sibling file (schema decided
-// in prior discussion -- see ARCHITECTURE.md). This pass only reads
-// and writes the item-level displayName/tags fields; per-print-file
-// overrides (images, per-file displayName/tags) aren't produced by
-// this app yet, but an existing `printFiles` block (however it got
-// there) is preserved rather than dropped on the next write, so
-// nothing here blocks that from being added later.
+// in prior discussion -- see ARCHITECTURE.md). Item-level
+// displayName/tags are always written here; per-print-file overrides
+// (images, and now per-file displayName) are produced by editSession.js
+// and passed through the generic `printFiles` merge below. Per-file
+// `tags` overrides aren't produced by this app yet, but an existing
+// `printFiles` block (however it got there) is preserved rather than
+// dropped on the next write, so nothing here blocks that from being
+// added later.
 
 const fs = require('fs');
 const fsp = fs.promises;
@@ -33,11 +35,12 @@ async function readItemMetadata(itemDir) {
 // Writes displayName/tags, preserving importedAt across edits (set
 // once, on the item's first write) and always refreshing
 // lastEditedAt. `printFiles`, if given, is a map of
-// { [printFileBasename]: { images: string[] } } -- each entry is
-// merged onto (not replacing) whatever that print file's existing
-// metadata block already held, so a future per-file displayName/tags
-// override (not produced by this app yet) wouldn't get clobbered by
-// an images-only write.
+// { [printFileBasename]: { images?: string[], displayName?: string } }
+// -- each entry is merged onto (not replacing) whatever that print
+// file's existing metadata block already held, so an images-only
+// write from the reconciliation UI can't clobber a displayName the
+// pencil-icon rename set (or vice versa), and a per-file `tags`
+// override (not produced by this app yet) would slot in the same way.
 //
 // `origin`, if given, is a partial { url, creatorName, creatorUrl }
 // object and is shallow-merged onto whatever origin block already

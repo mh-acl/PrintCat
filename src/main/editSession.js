@@ -73,8 +73,19 @@ class EditSession {
     for (const e of entries) {
       if (!e.isFile() || !GCODE_EXT.has(path.extname(e.name).toLowerCase())) continue;
       const { shortname } = parseFilename(e.name);
-      const { colorChangeCount, copies } = await parseGcodeMetadata(path.join(sourceDir, e.name));
-      printFiles.push({ name: e.name, shortname, colorChangeCount: colorChangeCount ?? null, copies: copies ?? null });
+      const { colorChangeCount, copies, values } = await parseGcodeMetadata(path.join(sourceDir, e.name));
+      printFiles.push({
+        name: e.name,
+        shortname,
+        colorChangeCount: colorChangeCount ?? null,
+        copies: copies ?? null,
+        // Same two keys indexer.js's _parseGcodeFile reads for the
+        // already-catalogued case -- surfaced here too so the 'add'
+        // mode editor's file list can show printer/variant next to
+        // each file's name the same way 'edit' mode does.
+        printerModel: values['printer_model'] || null,
+        printerVariant: values['printer_variant'] || null,
+      });
     }
     const imageFiles = entries
       .filter((e) => e.isFile() && IMAGE_EXT.has(path.extname(e.name).toLowerCase()))
@@ -203,7 +214,22 @@ class EditSession {
     return result;
   }
 
-  async addItem(sourceDir, { name, tags, printFileImages, origin }) {
+  // Folds a { [printFileBasename]: displayName } map into a
+  // printFiles object already shaped for writeItemMetadata (e.g. the
+  // result of _resolveImages above), merging per-file rather than
+  // replacing so a name edit and an image assignment on the same
+  // print file don't clobber each other. Returns undefined when
+  // there's nothing to write, same convention as _resolveImages.
+  _mergePrintFileNames(printFiles, printFileNames) {
+    if (!printFileNames) return printFiles;
+    const merged = { ...(printFiles || {}) };
+    for (const [printFile, displayName] of Object.entries(printFileNames)) {
+      merged[printFile] = { ...(merged[printFile] || {}), displayName };
+    }
+    return merged;
+  }
+
+  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin }) {
     const folderName = path.basename(sourceDir);
     const destDir = path.join(this.dataDir, folderName);
 
@@ -219,18 +245,24 @@ class EditSession {
 
     await fsp.mkdir(this.dataDir, { recursive: true });
     await fsp.cp(sourceDir, destDir, { recursive: true });
-    const resolvedPrintFiles = await this._resolveImages(destDir, printFileImages);
+    const resolvedPrintFiles = this._mergePrintFileNames(
+      await this._resolveImages(destDir, printFileImages),
+      printFileNames
+    );
     await writeItemMetadata(destDir, { displayName: name, tags, printFiles: resolvedPrintFiles, origin });
 
     this.changes[destDir] = { type: 'add', name };
     return this.changes;
   }
 
-  async editItem(itemPath, { name, tags, printFileImages, origin }) {
+  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin }) {
     // No category anymore, so nothing ever needs to move the item's
     // folder on an edit -- itemPath stays itemPath, only its
     // metadata.json changes.
-    const resolvedPrintFiles = await this._resolveImages(itemPath, printFileImages);
+    const resolvedPrintFiles = this._mergePrintFileNames(
+      await this._resolveImages(itemPath, printFileImages),
+      printFileNames
+    );
     await writeItemMetadata(itemPath, { displayName: name, tags, printFiles: resolvedPrintFiles, origin });
 
     // An item added earlier this session doesn't exist in the last
