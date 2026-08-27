@@ -29,29 +29,39 @@
 //   that pattern.
 //
 // - Printables: a top-level PDF named
-//   "{model-slug}-{decimal digits}-{hex groups separated by dashes}.pdf"
-//   -- a browser print-to-PDF of the model page. Browser-printed pages
-//   preserve real clickable links as PDF link annotations, so the
-//   page's "View in browser" button is read directly as an annotation
-//   rather than needing OCR or full text extraction. There can be more
-//   than one top-level PDF (e.g. a user-added instructions sheet
-//   alongside the page printout) -- every candidate matching the
-//   naming pattern is tried, in order, and the first one whose
-//   annotations actually resolve to a printables.com/model/ link wins
-//   (a plain "contains printables.com" check isn't enough -- see
-//   PRINTABLES_MODEL_URL_RE below). The same annotation list also
-//   carries a link to the creator's profile (from the page's byline),
-//   which real Printables page-printouts place *before* the model link
-//   in annotation order -- see PRINTABLES_CREATOR_URL_RE below -- so
-//   creatorUrl/creatorName are pulled from that same pass at no extra
-//   parsing cost. If no candidate PDF has a readable model-link
-//   annotation (annotation missing, or pdf-lib can't parse that
-//   particular PDF), this falls back to reconstructing the URL from
-//   the first candidate's filename -- a best-effort guess only, never
-//   verified over the network, and with no creator info available
-//   (the PDF wasn't successfully read, so there's nothing to pull the
-//   creator link from either).
+//   "{numeric model id}-{model-slug}-{UUID}.pdf" (e.g.
+//   "178035-cute-mini-octopus-1e536192-2f8d-4bbf-97af-9ddd95c4386c.pdf")
+//   -- a browser print-to-PDF of the model page, whose default filename
+//   mirrors the page's own URL path (printables.com/model/{id}-{slug})
+//   plus a browser-appended UUID disambiguator. (An earlier version of
+//   this comment/regex assumed the reverse shape, slug-then-id-then-hex
+//   -- that was never actually confirmed against a real downloaded
+//   file and turned out to be wrong; PRINTABLES_PDF_RE and the filename
+//   fallback below now match the id-first shape confirmed above.)
+//   Browser-printed pages preserve real clickable links as PDF link
+//   annotations, so the page's "View in browser" button is read
+//   directly as an annotation rather than needing OCR or full text
+//   extraction. There can be more than one top-level PDF (e.g. a
+//   user-added instructions sheet alongside the page printout) --
+//   every candidate matching the naming pattern is tried, in order,
+//   and the first one whose annotations actually resolve to a
+//   printables.com/model/ link wins (a plain "contains printables.com"
+//   check isn't enough -- see PRINTABLES_MODEL_URL_RE below). The same
+//   annotation list also carries a link to the creator's profile (from
+//   the page's byline) -- see PRINTABLES_CREATOR_URL_RE below --
+//   pulled from the same annotation pass at no extra parsing cost.
+//   This scans every annotation rather than stopping at the first
+//   model-link match, since real exports can place the "View in
+//   browser" banner link above the byline in annotation order, so the
+//   creator link isn't reliably seen before the model link. If no
+//   candidate PDF has a readable model-link annotation (annotation
+//   missing, or pdf-lib can't parse that particular PDF), this falls
+//   back to reconstructing the URL from the first candidate's filename
+//   -- a best-effort guess only, never verified over the network, and
+//   with no creator info available (the PDF wasn't successfully read,
+//   so there's nothing to pull the creator link from either).
 //
+
 // NOTE: the annotation structure this reads (page /Annots -> /A ->
 // /URI) has been confirmed against a real Printables-exported PDF
 // (its link annotations were dumped and inspected directly), so the
@@ -75,7 +85,7 @@ const { PDFDocument, PDFName } = require('pdf-lib');
 // in the line) rather than the first.
 const THINGIVERSE_LINE_RE = /\sby\s+(.+)\s+on Thingiverse:\s*(\S+)/i;
 
-const PRINTABLES_PDF_RE = /^(.+)-\d+-[0-9a-f]+(?:-[0-9a-f]+)*\.pdf$/i;
+const PRINTABLES_PDF_RE = /^(\d+-.+)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$/i;
 // Real Printables page-printout PDFs put a link to the creator's
 // profile (from the byline, e.g. "https://www.printables.com/@someone")
 // *before* the actual "View in browser" model link in annotation
@@ -149,15 +159,25 @@ async function detectThingiverseOrigin(readmePath) {
 }
 
 // Walks a Printables page-printout PDF's link annotations once,
-// picking out both the model-page link and (if seen along the way)
-// the creator-profile link that precedes it. Returns null only when
-// no model-link annotation is found -- a creator link without a model
-// link isn't enough to call this folder "detected" (and the filename
-// fallback above wouldn't have a creator to pair it with anyway).
+// picking out both the model-page link and the creator-profile link.
+// Tracks each independently and only decides the result after the full
+// scan, rather than returning the moment a model-link match is found --
+// real Printables PDF exports appear to place a "View this model in
+// your browser" banner link at the very top of the page (above the
+// title/byline), so the model link can occur *before* the creator
+// link in annotation order despite the opposite assumption in this
+// file's original notes; returning early on the first model-link match
+// meant the creator link, still to come, was never reached, so url
+// came back fine but creatorName/creatorUrl silently came back empty.
+// Returns null only when no model-link annotation is found anywhere --
+// a creator link without a model link isn't enough to call this folder
+// "detected" (and the filename fallback above wouldn't have a creator
+// to pair it with anyway).
 async function detectPrintablesOrigin(pdfPath) {
   try {
     const bytes = await fsp.readFile(pdfPath);
     const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+    let modelUrl = null;
     let creatorUrl = null;
     let creatorName = null;
     for (const page of doc.getPages()) {
@@ -175,12 +195,17 @@ async function detectPrintablesOrigin(pdfPath) {
             continue; // a URL can't be both the creator link and the model link
           }
         }
-        if (PRINTABLES_MODEL_URL_RE.test(uri)) {
-          return { url: uri, creatorName: creatorName || undefined, creatorUrl: creatorUrl || undefined };
+        // Keep the first model-link match (in case a later page has
+        // unrelated /model/ links, e.g. a "more from this maker"
+        // section) but don't stop here -- keep scanning so a creator
+        // link occurring later in annotation order still gets picked up.
+        if (!modelUrl && PRINTABLES_MODEL_URL_RE.test(uri)) {
+          modelUrl = uri;
         }
       }
     }
-    return null;
+    if (!modelUrl) return null;
+    return { url: modelUrl, creatorName: creatorName || undefined, creatorUrl: creatorUrl || undefined };
   } catch (err) {
     return null; // unreadable/corrupt/unexpected-shape PDF
   }
