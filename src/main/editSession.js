@@ -168,6 +168,12 @@ class EditSession {
         displayName: item.displayName,
         tags: item.tags,
         origin: { url: detected.url, creatorName: detected.creatorName, creatorUrl: detected.creatorUrl },
+        // Passed through unchanged, same reasoning as displayName/tags
+        // above -- writeItemMetadata's itemImage field fully replaces
+        // rather than merges (see itemMetadata.js), so omitting it here
+        // would silently clear any item-level image a co-admin had
+        // already assigned via the editor.
+        itemImage: item.metadataItemImage,
       });
 
       // Marked the same way editItem() marks a change -- 'edit' unless
@@ -186,32 +192,40 @@ class EditSession {
   // destDir) or { kind: 'external', path } (picked via "Browse for
   // images", not yet copied anywhere). Copies every distinct external
   // path into destDir exactly once (so the same external image shared
-  // across several print files doesn't get duplicated on disk),
-  // resolving collisions against what's already there, and returns a
-  // plain { [printFileBasename]: { images: string[] } } map ready for
-  // writeItemMetadata's printFiles field.
-  async _resolveImages(destDir, printFileImages) {
+  // across several print files -- or shared with the item-level image,
+  // see _resolveSingleImageRef below -- doesn't get duplicated on
+  // disk), resolving collisions against what's already there, and
+  // returns a plain { [printFileBasename]: { images: string[] } } map
+  // ready for writeItemMetadata's printFiles field. `resolvedPathToName`
+  // is shared with any sibling _resolveSingleImageRef call in the same
+  // save so that de-duping.
+  async _resolveImages(destDir, printFileImages, resolvedPathToName) {
     if (!printFileImages) return undefined;
-    const resolvedPathToName = new Map(); // external path -> final filename in destDir
     const result = {};
 
     for (const [printFile, refs] of Object.entries(printFileImages)) {
       const names = [];
       for (const ref of refs) {
-        if (ref.kind === 'existing') {
-          names.push(ref.name);
-          continue;
-        }
-        if (!resolvedPathToName.has(ref.path)) {
-          const finalName = await uniqueDestName(destDir, path.basename(ref.path));
-          await fsp.copyFile(ref.path, path.join(destDir, finalName));
-          resolvedPathToName.set(ref.path, finalName);
-        }
-        names.push(resolvedPathToName.get(ref.path));
+        names.push(await this._resolveSingleImageRef(destDir, ref, resolvedPathToName));
       }
       result[printFile] = { images: names };
     }
     return result;
+  }
+
+  // Resolves one ImageRef (see _resolveImages above) to its final
+  // filename in destDir -- shared helper for both per-print-file image
+  // assignment and the single item-level image, so an external image
+  // picked for one and reused for the other via the same resolvedPathToName
+  // map only gets copied once.
+  async _resolveSingleImageRef(destDir, ref, resolvedPathToName) {
+    if (ref.kind === 'existing') return ref.name;
+    if (!resolvedPathToName.has(ref.path)) {
+      const finalName = await uniqueDestName(destDir, path.basename(ref.path));
+      await fsp.copyFile(ref.path, path.join(destDir, finalName));
+      resolvedPathToName.set(ref.path, finalName);
+    }
+    return resolvedPathToName.get(ref.path);
   }
 
   // Folds a { [printFileBasename]: displayName } map into a
@@ -229,7 +243,7 @@ class EditSession {
     return merged;
   }
 
-  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin }) {
+  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage }) {
     const folderName = path.basename(sourceDir);
     const destDir = path.join(this.dataDir, folderName);
 
@@ -245,25 +259,45 @@ class EditSession {
 
     await fsp.mkdir(this.dataDir, { recursive: true });
     await fsp.cp(sourceDir, destDir, { recursive: true });
+    const resolvedPathToName = new Map(); // external path -> final filename, shared below
     const resolvedPrintFiles = this._mergePrintFileNames(
-      await this._resolveImages(destDir, printFileImages),
+      await this._resolveImages(destDir, printFileImages, resolvedPathToName),
       printFileNames
     );
-    await writeItemMetadata(destDir, { displayName: name, tags, printFiles: resolvedPrintFiles, origin });
+    const resolvedItemImage = itemImage
+      ? await this._resolveSingleImageRef(destDir, itemImage, resolvedPathToName)
+      : '';
+    await writeItemMetadata(destDir, {
+      displayName: name,
+      tags,
+      printFiles: resolvedPrintFiles,
+      origin,
+      itemImage: resolvedItemImage,
+    });
 
     this.changes[destDir] = { type: 'add', name };
     return this.changes;
   }
 
-  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin }) {
+  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin, itemImage }) {
     // No category anymore, so nothing ever needs to move the item's
     // folder on an edit -- itemPath stays itemPath, only its
     // metadata.json changes.
+    const resolvedPathToName = new Map(); // external path -> final filename, shared below
     const resolvedPrintFiles = this._mergePrintFileNames(
-      await this._resolveImages(itemPath, printFileImages),
+      await this._resolveImages(itemPath, printFileImages, resolvedPathToName),
       printFileNames
     );
-    await writeItemMetadata(itemPath, { displayName: name, tags, printFiles: resolvedPrintFiles, origin });
+    const resolvedItemImage = itemImage
+      ? await this._resolveSingleImageRef(itemPath, itemImage, resolvedPathToName)
+      : '';
+    await writeItemMetadata(itemPath, {
+      displayName: name,
+      tags,
+      printFiles: resolvedPrintFiles,
+      origin,
+      itemImage: resolvedItemImage,
+    });
 
     // An item added earlier this session doesn't exist in the last
     // pushed commit at all -- editing it further is still just

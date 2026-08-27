@@ -56,7 +56,7 @@ async function readItemMetadata(itemDir) {
 // key is omitted from the written file once none of its three fields
 // hold a truthy value, so an item nothing was ever detected/entered
 // for doesn't grow an empty placeholder block.
-async function writeItemMetadata(itemDir, { displayName, tags, printFiles, origin }) {
+async function writeItemMetadata(itemDir, { displayName, tags, printFiles, origin, itemImage }) {
   const existing = await readItemMetadata(itemDir);
   const now = new Date().toISOString();
 
@@ -79,6 +79,15 @@ async function writeItemMetadata(itemDir, { displayName, tags, printFiles, origi
     lastEditedAt: now,
     ...(Object.keys(mergedPrintFiles).length > 0 ? { printFiles: mergedPrintFiles } : {}),
     ...(hasOrigin ? { origin: mergedOrigin } : {}),
+    // Item-level image (distinct from any per-print-file image
+    // override in printFiles above) -- a single filename in this
+    // item's own folder, or omitted entirely when none is set. Always
+    // fully replaced from what's passed in, same as displayName/tags
+    // above rather than merged like printFiles/origin: the editor
+    // always sends the item image field's complete current state on
+    // every save, so an explicit clear (itemImage: '') correctly drops
+    // the key instead of preserving a stale value.
+    ...(itemImage ? { itemImage } : {}),
   };
 
   await fsp.writeFile(path.join(itemDir, METADATA_FILENAME), JSON.stringify(merged, null, 2));

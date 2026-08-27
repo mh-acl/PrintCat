@@ -160,6 +160,12 @@ class Indexer {
       origin: (metadata && metadata.origin) || null,
       path: dir,
       explicitThumb,
+      // A co-admin's explicit item-level image assignment (see
+      // renderer.js's item editor), distinct from explicitThumb's
+      // filename-convention detection above -- takes precedence over
+      // it in thumbnailResolver.resolveItemThumbnail, same relationship
+      // per-file metadataImages already has over filename matching.
+      metadataItemImage: (metadata && metadata.itemImage) || null,
       imageFiles, // all images present in this folder, for per-file overrides
       projectFiles: projectFiles.map((f) => path.join(dir, f.name)),
       files,

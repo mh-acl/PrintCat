@@ -81,6 +81,16 @@ class ThumbnailResolver {
   }
 
   async resolveItemThumbnail(itemNode) {
+    // An explicit item-level image assignment (set via the item
+    // editor, stored as metadata.json's itemImage) wins over the
+    // thumb.* filename convention below, mirroring how a per-file
+    // metadataImages assignment wins over filename matching in
+    // resolveFileThumbnail above -- an explicit co-admin choice should
+    // always beat a convention-based guess.
+    if (itemNode.metadataItemImage) {
+      return path.join(itemNode.path, itemNode.metadataItemImage);
+    }
+
     if (itemNode.explicitThumb) {
       return path.join(itemNode.path, itemNode.explicitThumb);
     }

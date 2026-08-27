@@ -2054,6 +2054,7 @@ function openItemEditor(mode, item, prefilledSourceDir) {
   let printFiles = [];
   let poolImages = [];
   let imageAssignments = {};
+  let itemImageRef = null; // single ImageRef ({kind:'existing'|'external', ...}) or null -- the item-level image, distinct from per-print-file assignments above
   let folderUrl = null; // `file://<item folder>` once known
   let selectedPoolIndex = null;
   const checkedFiles = new Set();
@@ -2102,10 +2103,98 @@ function openItemEditor(mode, item, prefilledSourceDir) {
     imagesSection.innerHTML = '';
     if (!folderUrl) return; // 'add' mode before a folder's been picked
 
+    // --- Item-level image -------------------------------------------
+    // One image representing the item as a whole (e.g. the catalog
+    // card thumbnail) -- distinct from, and rendered above, the
+    // per-print-file assignments below. Shares the same pool of images
+    // (poolImages) rather than having its own separate picker, since
+    // it's very often just one of the same photos already used for a
+    // print file.
+    const itemImageSection = document.createElement('div');
+    itemImageSection.className = 'editor-item-image-section';
+
+    const itemImageHeading = document.createElement('p');
+    itemImageHeading.style.fontWeight = 'bold';
+    itemImageHeading.textContent = 'Item image';
+    itemImageSection.appendChild(itemImageHeading);
+
+    const itemImageHint = document.createElement('p');
+    itemImageHint.className = 'settings-intro';
+    itemImageHint.textContent =
+      'Shown on the item\u2019s catalog card. Drag an image here, or select one below and use "Set as item image."';
+    itemImageSection.appendChild(itemImageHint);
+
+    const itemImageBox = document.createElement('div');
+    itemImageBox.className = 'editor-item-image-box';
+    itemImageBox.ondragover = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    itemImageBox.ondragenter = () => itemImageBox.classList.add('drop-target-active');
+    itemImageBox.ondragleave = (e) => {
+      if (!itemImageBox.contains(e.relatedTarget)) {
+        itemImageBox.classList.remove('drop-target-active');
+      }
+    };
+    itemImageBox.ondrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      itemImageBox.classList.remove('drop-target-active');
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        // Single slot -- only the first dropped image file applies,
+        // same as dropping several onto a print file row would only
+        // make sense as "assign all of these," which doesn't apply here.
+        const file = [...files].find((f) => isImageFileName(f.name));
+        if (file) {
+          const filePath = window.catalogAPI.getPathForFile(file);
+          itemImageRef = addExternalToPool(filePath, file.name);
+        }
+      } else {
+        // An in-app drag of an existing pool thumbnail (see its
+        // dragstart in the pool render below).
+        const idx = Number(e.dataTransfer.getData('text/plain'));
+        if (!Number.isNaN(idx) && poolImages[idx]) itemImageRef = poolImages[idx];
+      }
+      renderImagesSection();
+    };
+
+    if (itemImageRef) {
+      const chip = document.createElement('span');
+      chip.className = 'editor-image-chip';
+      const img = document.createElement('img');
+      img.src = imageRefSrc(itemImageRef, folderUrl);
+      chip.appendChild(img);
+      const removeBtn = document.createElement('button');
+      removeBtn.textContent = '\u00d7';
+      removeBtn.title = 'Remove item image';
+      removeBtn.onclick = () => {
+        itemImageRef = null;
+        renderImagesSection();
+      };
+      chip.appendChild(removeBtn);
+      itemImageBox.appendChild(chip);
+    } else {
+      const placeholder = document.createElement('span');
+      placeholder.className = 'editor-item-image-placeholder';
+      placeholder.textContent = 'No item image set';
+      itemImageBox.appendChild(placeholder);
+    }
+    itemImageSection.appendChild(itemImageBox);
+    imagesSection.appendChild(itemImageSection);
+
+    // --- Print files ---------------------------------------------------
+    // Indented and visually separated from the item-image section above
+    // (see .editor-print-files-section / .editor-item-image-section in
+    // styles.css) so it reads as "these files belong to the item," not
+    // as another peer-level image slot.
+    const printFilesSection = document.createElement('div');
+    printFilesSection.className = 'editor-print-files-section';
+
     const heading = document.createElement('p');
     heading.style.fontWeight = 'bold';
     heading.textContent = 'Print files';
-    imagesSection.appendChild(heading);
+    printFilesSection.appendChild(heading);
 
     for (const pf of printFiles) {
       const row = document.createElement('div');
@@ -2208,8 +2297,9 @@ function openItemEditor(mode, item, prefilledSourceDir) {
       });
       row.appendChild(chips);
 
-      imagesSection.appendChild(row);
+      printFilesSection.appendChild(row);
     }
+    imagesSection.appendChild(printFilesSection);
 
     const poolHeading = document.createElement('p');
     poolHeading.style.fontWeight = 'bold';
@@ -2276,11 +2366,21 @@ function openItemEditor(mode, item, prefilledSourceDir) {
     };
     poolButtons.appendChild(assignBtn);
 
+    const setItemImageBtn = document.createElement('button');
+    setItemImageBtn.textContent = 'Set selected image as item image';
+    setItemImageBtn.disabled = selectedPoolIndex === null;
+    setItemImageBtn.onclick = () => {
+      itemImageRef = poolImages[selectedPoolIndex];
+      renderImagesSection();
+    };
+    poolButtons.appendChild(setItemImageBtn);
+
     imagesSection.appendChild(poolButtons);
   }
 
   if (mode === 'edit') {
     folderUrl = `file://${item.path}`;
+    itemImageRef = item.metadataItemImage ? { kind: 'existing', name: item.metadataItemImage } : null;
     printFiles = item.files.map((f) => {
       const key = f.path.split(/[\\/]/).pop();
       imageAssignments[key] = (f.metadataImages || []).map((name) => ({ kind: 'existing', name }));
@@ -2352,6 +2452,7 @@ function openItemEditor(mode, item, prefilledSourceDir) {
               printFileImages,
               printFileNames,
               origin,
+              itemImage: itemImageRef,
             })
           : await window.catalogAPI.editSessionCommitEdit(item.path, {
               name,
@@ -2359,6 +2460,7 @@ function openItemEditor(mode, item, prefilledSourceDir) {
               printFileImages,
               printFileNames,
               origin,
+              itemImage: itemImageRef,
             });
       pendingChanges = result.changes;
       allItems = result.tree;
