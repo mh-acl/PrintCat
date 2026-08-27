@@ -1007,6 +1007,284 @@ function createSettingsTextField(labelText, value, placeholder) {
   return { wrap, input };
 }
 
+// Chip-based tag input for the item editor -- replaces the old bare
+// comma-separated text field. Two goals drove the design: (1) don't
+// let a typo silently fork a new tag ("prnt" vs "print"), and (2)
+// make it fast to find the tag you already mean rather than retyping
+// it. getAllTags is a function (not a static array) so the dropdown
+// always reflects the catalog's current tag vocabulary, including any
+// tag created earlier in this same editing session.
+//
+// Existing tags matching the typed text are offered as ordinary
+// suggestions; committing one (click, or Enter/ArrowKeys+Enter) never
+// creates anything. A tag that doesn't match anything existing only
+// appears as a distinctly-styled "+ Create new tag" suggestion, which
+// requires being explicitly selected -- plain Enter with nothing typed
+// does nothing, and comma only commits an exact existing match, never
+// a new tag, so a mistyped tag followed by a comma doesn't quietly
+// mint a near-duplicate.
+function createTagInput(labelText, initialTags, getAllTags) {
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-field tag-input-field';
+
+  const label = document.createElement('label');
+  label.className = 'settings-field-label';
+  label.textContent = labelText;
+  wrap.appendChild(label);
+
+  const box = document.createElement('div');
+  box.className = 'tag-input-box';
+  wrap.appendChild(box);
+
+  const chipList = document.createElement('div');
+  chipList.className = 'tag-chip-list';
+  box.appendChild(chipList);
+
+  // The typing input and its dropdown live in their own small
+  // relatively-positioned wrapper (rather than the dropdown being
+  // absolutely positioned against the whole field). That's what lets
+  // the dropdown hang directly below the input itself -- sized to its
+  // own content -- instead of stretching to cover the full width of
+  // the field and everything below it.
+  const inputWrap = document.createElement('div');
+  inputWrap.className = 'tag-input-inline';
+  box.appendChild(inputWrap);
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'tag-input-text';
+  input.placeholder = '+Tag'; // short on purpose -- anything longer overflows the chip-sized box
+  input.size = 1; // overridden per-keystroke below; keeps the initial box small
+  inputWrap.appendChild(input);
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 'tag-suggestion-dropdown';
+  dropdown.style.display = 'none';
+  inputWrap.appendChild(dropdown);
+
+  // Each tag is {value, isNew}. isNew marks a tag that didn't already
+  // exist in the catalog when it was added in this session -- i.e. one
+  // that saving will actually create -- so its chip can stay visually
+  // flagged (amber/caution) versus an ordinary recognized tag (blue),
+  // even after the dropdown has closed. Tags the item already had are
+  // never "new" regardless of what's in the catalog right now.
+  let tags = [...new Set((initialTags || []).map((t) => t.trim()).filter(Boolean))].map((value) => ({
+    value,
+    isNew: false,
+  }));
+  let suggestions = []; // [{kind: 'existing'|'create', value}]
+  let highlightIndex = -1;
+
+  function growInputToContent() {
+    input.style.width = Math.max(4, input.value.length + 1) + 'ch';
+  }
+
+  function renderChips() {
+    chipList.innerHTML = '';
+    for (const tag of tags) {
+      const chip = document.createElement('span');
+      chip.className = 'tag-chip' + (tag.isNew ? ' tag-chip-new' : ' tag-chip-existing');
+      if (tag.isNew) chip.title = 'New tag -- will be created when you save';
+
+      const text = document.createElement('span');
+      text.textContent = tag.value;
+      chip.appendChild(text);
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'tag-chip-remove';
+      remove.textContent = '\u00d7';
+      remove.title = `Remove tag "${tag.value}"`;
+      remove.setAttribute('aria-label', `Remove tag ${tag.value}`);
+      remove.onclick = () => {
+        tags = tags.filter((t) => t !== tag);
+        renderChips();
+        input.focus();
+      };
+      chip.appendChild(remove);
+
+      chipList.appendChild(chip);
+    }
+  }
+
+  function closeDropdown() {
+    dropdown.style.display = 'none';
+    dropdown.innerHTML = '';
+    suggestions = [];
+    highlightIndex = -1;
+  }
+
+  function commitTag(value, isNew) {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (!tags.some((t) => t.value.toLowerCase() === trimmed.toLowerCase())) {
+      tags.push({ value: trimmed, isNew: Boolean(isNew) });
+      renderChips();
+    }
+    input.value = '';
+    growInputToContent();
+    closeDropdown();
+    input.focus();
+  }
+
+  // Rebuilds `suggestions` from the current input text. With nothing
+  // typed, this shows a handful of existing tags to browse (so the
+  // field doubles as a quick picker even before typing) rather than an
+  // empty dropdown.
+  //
+  // The trailing row is one of three things: nothing (query is empty),
+  // "+ Create" (query doesn't match any catalog tag at all), or
+  // "Already tagged" (query exactly matches a tag this item already
+  // has -- checked against `tags`, not just the catalog, so retyping
+  // an already-added tag doesn't get offered back as something new to
+  // create).
+  function updateSuggestions() {
+    const query = input.value.trim().toLowerCase();
+    const catalogTags = getAllTags();
+    const available = catalogTags.filter(
+      (t) => !tags.some((existing) => existing.value.toLowerCase() === t.toLowerCase())
+    );
+
+    let filtered;
+    if (!query) {
+      filtered = available.slice(0, 8);
+    } else {
+      filtered = available
+        .filter((t) => t.toLowerCase().includes(query))
+        .sort((a, b) => {
+          const aPrefix = a.toLowerCase().startsWith(query) ? 0 : 1;
+          const bPrefix = b.toLowerCase().startsWith(query) ? 0 : 1;
+          if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+          return a.localeCompare(b);
+        });
+    }
+
+    suggestions = filtered.map((t) => ({ kind: 'existing', value: t }));
+
+    if (query) {
+      const alreadyAdded = tags.some((t) => t.value.toLowerCase() === query);
+      if (alreadyAdded) {
+        suggestions.push({ kind: 'already-added', value: input.value.trim() });
+      } else if (!catalogTags.some((t) => t.toLowerCase() === query)) {
+        suggestions.push({ kind: 'create', value: input.value.trim() });
+      }
+    }
+
+    renderDropdown();
+  }
+
+  function renderDropdown() {
+    dropdown.innerHTML = '';
+    if (suggestions.length === 0) {
+      dropdown.style.display = 'none';
+      highlightIndex = -1;
+      return;
+    }
+    if (highlightIndex < 0 || highlightIndex >= suggestions.length) highlightIndex = 0;
+
+    suggestions.forEach((s, i) => {
+      const row = document.createElement('div');
+      row.className =
+        'tag-suggestion' +
+        (s.kind === 'create' ? ' tag-suggestion-create' : '') +
+        (s.kind === 'already-added' ? ' tag-suggestion-info' : '') +
+        (i === highlightIndex ? ' active' : '');
+      if (s.kind === 'create') row.textContent = `+ Create \u201c${s.value}\u201d`;
+      else if (s.kind === 'already-added') row.textContent = `Already tagged \u201c${s.value}\u201d`;
+      else row.textContent = s.value;
+      // mousedown (not click) + preventDefault so this fires before the
+      // input's blur would otherwise tear the dropdown down. Committing
+      // an 'already-added' value is a harmless no-op in commitTag (it's
+      // already in `tags`) -- this just clears the draft, same as
+      // dismissing it.
+      row.onmousedown = (e) => {
+        e.preventDefault();
+        commitTag(s.value, s.kind === 'create');
+      };
+      dropdown.appendChild(row);
+    });
+    dropdown.style.display = '';
+  }
+
+  input.addEventListener('input', () => {
+    highlightIndex = -1;
+    growInputToContent();
+    updateSuggestions();
+  });
+
+  input.addEventListener('focus', () => updateSuggestions());
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (suggestions.length === 0) return;
+      highlightIndex = (highlightIndex + 1) % suggestions.length;
+      renderDropdown();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (suggestions.length === 0) return;
+      highlightIndex = (highlightIndex - 1 + suggestions.length) % suggestions.length;
+      renderDropdown();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (suggestions.length > 0 && highlightIndex >= 0) {
+        const s = suggestions[highlightIndex];
+        commitTag(s.value, s.kind === 'create');
+      }
+    } else if (e.key === 'Tab') {
+      // Tab only takes over when there's actually a draft in progress --
+      // an empty box lets Tab do its normal job of moving focus to the
+      // next field. With a draft present, treat it the same as Enter
+      // (commit the highlighted suggestion) rather than tabbing away and
+      // silently discarding what was typed.
+      if (input.value.trim() && suggestions.length > 0 && highlightIndex >= 0) {
+        e.preventDefault();
+        const s = suggestions[highlightIndex];
+        commitTag(s.value, s.kind === 'create');
+      }
+    } else if (e.key === ',') {
+      e.preventDefault();
+      // Comma is a fast "commit this exact tag" key, but deliberately
+      // never creates one -- only an existing tag matching the typed
+      // text (case-insensitively) commits here.
+      const query = input.value.trim().toLowerCase();
+      if (!query) return;
+      const match = getAllTags().find((t) => t.toLowerCase() === query);
+      if (match) commitTag(match, false);
+    } else if (e.key === 'Escape') {
+      closeDropdown();
+    } else if (e.key === 'Backspace' && input.value === '' && tags.length > 0) {
+      tags = tags.slice(0, -1);
+      renderChips();
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    // Short delay rather than acting immediately: guards against
+    // browsers/platforms where a dropdown-row click still fires blur
+    // before its own mousedown handler runs -- that handler calls
+    // commitTag(), which clears the draft and refocuses the input
+    // itself, so by the time this timeout fires, document.activeElement
+    // is back on `input` and there's nothing left to discard.
+    //
+    // Otherwise, focus genuinely moved elsewhere (another field, tab
+    // navigation) -- discard whatever partial tag text was left
+    // in-progress, rather than leaving an orphaned draft chip behind.
+    setTimeout(() => {
+      if (document.activeElement !== input) {
+        input.value = '';
+        growInputToContent();
+      }
+      closeDropdown();
+    }, 150);
+  });
+
+  renderChips();
+  growInputToContent();
+
+  return { wrap, getTags: () => tags.map((t) => t.value) };
+}
+
 // "Auto-refresh every: [n] [minutes/hours/days]" -- a plain
 // number+unit picker rather than a specialized duration control, since
 // nothing fancier is available in a bare HTML/Electron view. The
@@ -1660,10 +1938,10 @@ function openItemEditor(mode, item, prefilledSourceDir) {
   const nameField = createSettingsTextField('Name', mode === 'edit' ? item.displayName || item.name : '', 'Widget holder');
   box.appendChild(nameField.wrap);
 
-  const tagsField = createSettingsTextField(
-    'Tags (comma separated)',
-    mode === 'edit' ? (item.tags || []).join(', ') : '',
-    'organizers, desk'
+  const tagsField = createTagInput(
+    'Tags',
+    mode === 'edit' ? item.tags || [] : [],
+    () => Array.from(collectTags(allItems)).sort()
   );
   box.appendChild(tagsField.wrap);
 
@@ -2030,10 +2308,7 @@ function openItemEditor(mode, item, prefilledSourceDir) {
   saveBtn.textContent = 'Save to pending';
   saveBtn.onclick = async () => {
     const name = nameField.input.value.trim();
-    const tags = tagsField.input.value
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
+    const tags = tagsField.getTags();
     const printFileImages = {};
     for (const [key, refs] of Object.entries(imageAssignments)) {
       if (refs.length > 0) printFileImages[key] = refs;
