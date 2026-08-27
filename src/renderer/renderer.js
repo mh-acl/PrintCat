@@ -108,7 +108,7 @@ async function init() {
 function onKeywordInput(e) {
   keywordQuery = e.target.value;
   // Tag pill counts fold in the keyword filter too (see
-  // countFilesForTag), so they need a re-render on every
+  // countItemsForTag), so they need a re-render on every
   // keystroke same as the listing does. The printer pills don't show
   // counts, so they don't need to be touched here.
   renderTagFilter();
@@ -212,20 +212,23 @@ function fileMatchesKeywordInItem(item, file, query) {
   return textIncludesAllWords(fileSearchText(file), words);
 }
 
-// Total matching print files for one tag pill's count -- same "how
-// many files you'd narrow down to" semantics category pills used to
-// have, now also narrowed by whatever's in the search box. An item
-// can carry the tag alongside others, so this checks membership
-// rather than equality.
-function countFilesForTag(items, printerSet, tagValue, query) {
+// Total matching *items* for one tag pill's count -- deliberately
+// mirrors the exact predicate render() uses to build visibleItems
+// (itemMatchesPrinter + itemMatchesKeyword), so this number matches
+// what you'd actually see in the grid after clicking the tag. Items
+// have multiple print files each, so counting files here (the
+// previous behavior) could show a much bigger number than the item
+// count you'd actually land on. Not folded through itemMatchesTags
+// itself since the tag being counted is the one being tested, and not
+// itemMatchesSmartTags since that's edit-session-only and unrelated to
+// what a tag pill represents.
+function countItemsForTag(items, printerSet, tagValue, query) {
   let total = 0;
   for (const item of items) {
     if (!(item.tags || []).includes(tagValue)) continue;
-    for (const file of item.files) {
-      if (printerSet && printerSet.size > 0 && !printerSet.has(printerLabel(file))) continue;
-      if (!fileMatchesKeywordInItem(item, file, query)) continue;
-      total++;
-    }
+    if (!itemMatchesPrinter(item, printerSet)) continue;
+    if (!itemMatchesKeyword(item, query)) continue;
+    total++;
   }
   return total;
 }
@@ -327,7 +330,7 @@ function renderTagFilter() {
     el.appendChild(allBtn);
 
     for (const tag of tags) {
-      const count = countFilesForTag(allItems, effective, tag, keywordQuery);
+      const count = countItemsForTag(allItems, effective, tag, keywordQuery);
       const btn = document.createElement('button');
       btn.textContent = `${tag} (${count})`;
       btn.className = 'filter-pill' + (selectedTags.has(tag) ? ' active' : '');
