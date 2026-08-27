@@ -1683,17 +1683,83 @@ function openItemEditor(mode, item, prefilledSourceDir) {
   );
   box.appendChild(originField.wrap);
 
+  // Tracks the last {url, creatorName, creatorUrl} this editor actually
+  // detected/knows about, so Save (below) can decide whether it's safe
+  // to write creatorName/creatorUrl alongside url. Without this, a
+  // detection's creatorName/creatorUrl were only ever shown in this
+  // text field's url -- Save had no way to recover them, so creator
+  // info could never be written except via the separate bulk
+  // "Backfill creator info" button. Seeded from the item's own stored
+  // origin in edit mode (already-known creator info counts as
+  // "detected" for an unmodified field), left null in add mode until
+  // the folder scan resolves.
+  let detectedOrigin = mode === 'edit' && item.origin ? item.origin : null;
+
   if (mode === 'edit' && !(item.origin && item.origin.url)) {
     window.catalogAPI
       .detectItemOrigin(item.path)
       .then((origin) => {
         // detectItemOrigin resolves the whole {url, creatorName, creatorUrl}
-        // object (see originLocation.js/editSession.js), not a bare URL
-        // string -- only the url is shown in this field.
-        if (origin && origin.url) originField.input.value = origin.url;
+        // object (see originLocation.js/editSession.js) -- keep all of
+        // it, not just the url, so Save can still write creator info.
+        if (origin && origin.url) {
+          originField.input.value = origin.url;
+          detectedOrigin = origin;
+        }
       })
       .catch(() => {}); // best-effort -- leave the field empty on failure
   }
+
+  // Manual "reparse" affordance -- lets a co-admin force a fresh
+  // detection pass over the item's folder on demand, for cases the
+  // automatic pass above doesn't cover: the item already had
+  // origin.url stored so the automatic re-detect was skipped, or the
+  // folder's README.txt/PDF was added or changed after the item was
+  // first catalogued. Reuses the same detectItemOrigin() IPC as the
+  // automatic path (generic over any folder, not just existing catalog
+  // items -- see editSession.js's detectOrigin()), so it gets the same
+  // Thingiverse/Printables detection and creator-info extraction. This
+  // is an explicit, user-triggered action, so a successful reparse
+  // overwrites both the visible URL field and detectedOrigin outright
+  // -- including replacing a hand-typed URL -- rather than asking for
+  // confirmation first.
+  const reparseBtn = document.createElement('button');
+  reparseBtn.type = 'button';
+  reparseBtn.className = 'settings-action-button';
+  reparseBtn.textContent = 'Reparse creator info';
+  const reparseStatus = document.createElement('p');
+  reparseStatus.className = 'settings-intro settings-export-import-status';
+
+  // In 'add' mode the folder isn't known until the folder dialog
+  // resolves (below) -- disable rather than hide the button until
+  // sourceDir is set, so it's visible but inert until then.
+  if (mode === 'add') reparseBtn.disabled = true;
+
+  reparseBtn.onclick = async () => {
+    const folderPath = mode === 'edit' ? item.path : sourceDir;
+    if (!folderPath) return; // guards a stray click before sourceDir is set
+    reparseBtn.disabled = true;
+    reparseStatus.textContent = 'Reparsing\u2026';
+    try {
+      const origin = await window.catalogAPI.detectItemOrigin(folderPath);
+      if (origin && origin.url) {
+        originField.input.value = origin.url;
+        detectedOrigin = origin;
+        reparseStatus.textContent = origin.creatorName
+          ? `Detected creator: ${origin.creatorName}`
+          : 'Detected an origin URL, but no creator info this time.';
+      } else {
+        reparseStatus.textContent = "Couldn't detect anything from this folder.";
+      }
+    } catch (err) {
+      reparseStatus.textContent = `Reparse failed: ${err.message}`;
+    } finally {
+      reparseBtn.disabled = false;
+    }
+  };
+
+  box.appendChild(reparseBtn);
+  box.appendChild(reparseStatus);
 
   // Image reconciliation state. printFiles/poolImages/folderUrl are
   // filled in once we know what folder we're working with (immediately
@@ -1982,12 +2048,22 @@ function openItemEditor(mode, item, prefilledSourceDir) {
     for (const pf of printFiles) {
       if (pf.displayName) printFileNames[pf.key] = pf.displayName;
     }
-    // { url } only -- writeItemMetadata merges this onto whatever
-    // origin block already exists (see itemMetadata.js), so this
-    // can't clobber a creatorName/creatorUrl a future scrape pass adds,
-    // and an emptied field still overwrites url specifically (co-admin
-    // clearing a wrong auto-detected/guessed link).
-    const origin = { url: originField.input.value.trim() };
+    // Only pair creatorName/creatorUrl with url when the field still
+    // matches what detectedOrigin last resolved -- if the co-admin
+    // hand-edited or cleared the URL, it no longer corresponds to
+    // whatever creator info was detected, so that shouldn't be written
+    // alongside it (a hand-typed URL getting a stale/mismatched
+    // creator credit). writeItemMetadata still shallow-merges this
+    // onto whatever origin block already exists (see itemMetadata.js),
+    // so this can't clobber existing creatorName/creatorUrl just
+    // because this save happens not to re-detect them, and an emptied
+    // field still overwrites url specifically (co-admin clearing a
+    // wrong auto-detected/guessed link).
+    const currentUrl = originField.input.value.trim();
+    const origin =
+      detectedOrigin && detectedOrigin.url === currentUrl
+        ? { url: currentUrl, creatorName: detectedOrigin.creatorName, creatorUrl: detectedOrigin.creatorUrl }
+        : { url: currentUrl };
 
     try {
       const result =
@@ -2037,9 +2113,12 @@ function openItemEditor(mode, item, prefilledSourceDir) {
         sourceDir = picked.sourceDir;
         nameField.input.value = picked.suggestedName;
         // prepareAddFolder (main.js) returns the detected origin as an
-        // `origin` object ({url, creatorName, creatorUrl}), not a bare
-        // `originUrl` string -- only the url is shown in this field.
+        // `origin` object ({url, creatorName, creatorUrl}) -- keep the
+        // whole thing in detectedOrigin (not just the url shown here)
+        // so Save can still write creator info for a brand-new item.
         originField.input.value = (picked.origin && picked.origin.url) || '';
+        detectedOrigin = picked.origin || null;
+        reparseBtn.disabled = false;
         folderUrl = `file://${sourceDir}`;
         printFiles = picked.printFiles.map((f) => ({
           key: f.name,
