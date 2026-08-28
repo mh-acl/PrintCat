@@ -13,7 +13,6 @@
 // printer filter is unaffected and remains multi-select OR.
 
 let allItems = [];
-let selectedItem = null; // the item currently shown in detail view, or null
 let selectedPrinters = new Set(); // empty = no restriction chosen ("All Printers")
 let selectedTags = new Set(); // empty = no restriction chosen ("All Tags")
 let keywordQuery = ''; // raw text from the search box; '' = no restriction
@@ -48,9 +47,14 @@ async function init() {
     editModeActive = true;
     pendingChanges = {};
     selectedSmartTags = new Set();
-    selectedItem = null; // editing works at the grid level, not inside item detail
     renderTagFilter();
     render();
+    // If an item's view-mode modal is currently open, flip it to edit
+    // mode in place rather than leaving it stranded in view mode --
+    // per prior design discussion, entering edit mode while viewing an
+    // item should behave the same as entering edit mode from the main
+    // grid and then clicking that item to edit it.
+    if (openModalHandle) openModalHandle.switchToEdit();
   });
 
   settings = await window.catalogAPI.getSettings();
@@ -441,50 +445,6 @@ function render() {
   const listing = document.getElementById('listing');
   listing.innerHTML = '';
 
-  // The search box and pill rows only affect the flat browsing grid,
-  // never the currently-open item's file list (tags aren't even
-  // checked there -- see below), so leave them interactable and
-  // they'll just silently narrow/broaden a view you can't see. Hiding
-  // the whole block while an item is open avoids that: nothing to
-  // click, so nothing to mutate out from under the current view. This
-  // is on top of, not instead of, printer-filter's own display logic
-  // (e.g. hiding itself entirely when hideUnavailable leaves only one
-  // printer) -- #top-filters is a separate wrapper, so toggling it
-  // here never overwrites that.
-  document.getElementById('top-filters').style.display = selectedItem ? 'none' : '';
-
-  if (selectedItem) {
-    const backLink = document.createElement('a');
-    backLink.href = '#';
-    backLink.className = 'back-link';
-    backLink.textContent = '\u2039 Back to browsing';
-    backLink.onclick = (e) => {
-      e.preventDefault();
-      selectedItem = null;
-      render();
-    };
-    listing.appendChild(backLink);
-
-    let matchingFiles =
-      effective && effective.size > 0
-        ? selectedItem.files.filter((f) => effective.has(printerLabel(f)))
-        : selectedItem.files;
-    matchingFiles = matchingFiles.filter((f) => fileMatchesKeywordInItem(selectedItem, f, keywordQuery));
-
-    if (matchingFiles.length === 0) {
-      listing.appendChild(
-        renderEmptyState(
-          keywordQuery
-            ? 'No print files here match your search. Try a different keyword, or clear the search box.'
-            : 'This isn\'t sliced for the selected printer(s). Try picking a different printer, or choose "All Printers" to see every version.'
-        )
-      );
-    } else {
-      listing.appendChild(renderItemDetail({ ...selectedItem, files: matchingFiles }));
-    }
-    return;
-  }
-
   const visibleItems = allItems.filter(
     (item) =>
       itemMatchesPrinter(item, effective) &&
@@ -600,6 +560,7 @@ function openImageLightbox(src, altText) {
 
 function renderItemCard(item) {
   const change = pendingChanges[item.path];
+  const isTrashed = change && change.type === 'delete';
 
   const card = document.createElement('a');
   card.className = 'listing' + (change ? ` pending-${change.type}` : '');
@@ -607,9 +568,30 @@ function renderItemCard(item) {
   card.title = item.displayName || item.name;
   card.onclick = (e) => {
     e.preventDefault();
-    selectedItem = item;
-    render();
+    // In edit mode, display mode isn't a separate thing -- a card only
+    // ever opens for editing (see prior design discussion re: unifying
+    // "click a card in edit mode" with "click a card, then hit Edit").
+    openItemModal(item, editModeActive ? 'edit' : 'view');
   };
+
+  if (editModeActive) {
+    const trashBtn = document.createElement('button');
+    trashBtn.type = 'button';
+    trashBtn.className = 'item-trash-btn';
+    trashBtn.title = isTrashed ? 'Restore this item' : 'Delete this item';
+    trashBtn.setAttribute('aria-label', isTrashed ? 'Restore this item' : 'Delete this item');
+    trashBtn.textContent = isTrashed ? '\u21a9\ufe0f' : '\ud83d\uddd1\ufe0f'; // \u21a9\ufe0f = Restore, \ud83d\uddd1\ufe0f = 🗑️
+    trashBtn.onclick = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      pendingChanges = isTrashed
+        ? await window.catalogAPI.editSessionUndoDelete(item.path)
+        : await window.catalogAPI.editSessionDeleteItem(item.path);
+      renderTagFilter();
+      render();
+    };
+    card.appendChild(trashBtn);
+  }
 
   const mediaSlot = document.createElement('div');
   mediaSlot.className = 'thumb-slot';
@@ -638,36 +620,6 @@ function renderItemCard(item) {
     label.appendChild(badge);
   }
   card.appendChild(label);
-
-  if (editModeActive) {
-    const controls = document.createElement('div');
-    controls.className = 'item-edit-controls';
-
-    const editBtn = document.createElement('button');
-    editBtn.textContent = 'Edit';
-    editBtn.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openItemEditor('edit', item);
-    };
-    controls.appendChild(editBtn);
-
-    const deleteBtn = document.createElement('button');
-    const isTrashed = change && change.type === 'delete';
-    deleteBtn.textContent = isTrashed ? 'Undo' : 'Delete';
-    deleteBtn.onclick = async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      pendingChanges = isTrashed
-        ? await window.catalogAPI.editSessionUndoDelete(item.path)
-        : await window.catalogAPI.editSessionDeleteItem(item.path);
-      renderTagFilter();
-      render();
-    };
-    controls.appendChild(deleteBtn);
-
-    card.appendChild(controls);
-  }
 
   return card;
 }
@@ -729,6 +681,723 @@ function renderOriginInfo(origin) {
   line.appendChild(siteLink);
 
   return line;
+}
+
+// Tracks the currently open item modal (see openItemModal below), so
+// the global "enter edit mode" listener (see init()) can transition an
+// already-open view-mode modal into edit mode in place, rather than
+// requiring the co-admin to close and reopen it -- per prior design
+// discussion, entering edit mode while viewing an item should behave
+// exactly as if they'd been in the main view and clicked to edit it.
+let openModalHandle = null; // { itemPath, switchToEdit() } or null while nothing's open
+
+// Builds the in-memory edit draft for an existing catalog item -- the
+// shape mirrors what editSessionCommitEdit/editItem() already expect
+// (see editSession.js), so saving is close to a direct passthrough.
+// Pulled out to module scope (not nested in openItemModal) since
+// add-mode's editor will need the equivalent construction later too.
+function createDraftFromItem(item) {
+  return {
+    displayName: item.displayName || item.name,
+    tags: item.tags ? [...item.tags] : [],
+    origin: item.origin ? { ...item.origin } : {},
+    itemImageRef: item.metadataItemImage ? { kind: 'existing', name: item.metadataItemImage } : null,
+    printFiles: item.files.map((f) => {
+      const key = f.path.split(/[\\/]/).pop();
+      return {
+        key,
+        shortname: f.shortname,
+        displayName: f.metadataDisplayName || null,
+        printerModel: f.printerModel,
+        printerVariant: f.printerVariant,
+        colorChangeCount: f.colorChangeCount,
+        copies: f.copies,
+        images: (f.metadataImages || []).map((name) => ({ kind: 'existing', name })),
+      };
+    }),
+    poolImages: (item.imageFiles || []).map((name) => ({ kind: 'existing', name })),
+  };
+}
+
+// Builds the in-memory edit draft for a brand-new item, from the
+// result of editSessionPrepareAddFolder/editSessionPickAddFolder (see
+// main.js) -- same draft shape as createDraftFromItem above, just
+// starting from a freshly-scanned folder instead of an existing
+// catalog entry (no tags, no display-name overrides, no image
+// assignments yet).
+function createDraftFromPicked(picked) {
+  return {
+    displayName: picked.suggestedName,
+    tags: [],
+    origin: picked.origin ? { ...picked.origin } : {},
+    itemImageRef: null,
+    printFiles: picked.printFiles.map((f) => ({
+      key: f.name,
+      shortname: f.shortname,
+      displayName: null,
+      printerModel: f.printerModel,
+      printerVariant: f.printerVariant,
+      colorChangeCount: f.colorChangeCount,
+      copies: f.copies,
+      images: [],
+    })),
+    poolImages: (picked.imageFiles || []).map((name) => ({ kind: 'existing', name })),
+  };
+}
+
+// Small standalone popup for hand-editing/reviewing origin info --
+// used identically by both the pencil icon (prefilled with the
+// draft's current url/creatorName/creatorUrl) and the reparse icon
+// (prefilled with freshly detected values for review). Nothing writes
+// back to the caller's draft except via an explicit Save here -- see
+// prior design discussion for why this replaced the old "does the URL
+// still match what was last detected" heuristic.
+function openOriginEditPopup(prefill, onSave) {
+  const overlay = document.createElement('div');
+  overlay.className = 'drive-picker-overlay origin-popup-overlay';
+
+  const box = document.createElement('div');
+  box.className = 'drive-picker-box settings-box';
+
+  const title = document.createElement('h3');
+  title.textContent = 'Original location & creator';
+  box.appendChild(title);
+
+  const urlField = createSettingsTextField(
+    'Original Location URL',
+    prefill.url,
+    'https://www.thingiverse.com/thing/...'
+  );
+  box.appendChild(urlField.wrap);
+
+  const nameField = createSettingsTextField('Creator name', prefill.creatorName, 'jane_maker');
+  box.appendChild(nameField.wrap);
+
+  const creatorUrlField = createSettingsTextField(
+    'Creator profile URL',
+    prefill.creatorUrl,
+    'https://www.thingiverse.com/jane_maker'
+  );
+  box.appendChild(creatorUrlField.wrap);
+
+  const buttonsRow = document.createElement('div');
+  buttonsRow.className = 'settings-buttons';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save';
+  saveBtn.onclick = () => {
+    onSave({
+      url: urlField.input.value.trim(),
+      creatorName: nameField.input.value.trim(),
+      creatorUrl: creatorUrlField.input.value.trim(),
+    });
+    document.body.removeChild(overlay);
+  };
+  buttonsRow.appendChild(saveBtn);
+
+  const discardBtn = document.createElement('button');
+  discardBtn.className = 'cancel';
+  discardBtn.textContent = 'Discard';
+  discardBtn.onclick = () => document.body.removeChild(overlay);
+  buttonsRow.appendChild(discardBtn);
+
+  box.appendChild(buttonsRow);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+// Opens an item modal, replacing both the old selectedItem/"back to
+// browsing" in-place navigation (stage 1) and openItemEditor entirely
+// (stage 2 folded in 'edit', this pass folds in 'add' -- the
+// standalone openItemEditor function is removed below). The main grid
+// behind it is never touched -- closing the modal just removes the
+// overlay, so there's nothing to restore.
+//
+// item is null for 'add' (mirroring openItemEditor's old signature);
+// prefilledSourceDir carries a dropped folder path straight through to
+// the same editSessionPrepareAddFolder IPC as before, skipping the
+// folder-picker dialog.
+function openItemModal(item, initialMode, prefilledSourceDir) {
+  let mode = initialMode;
+  let draft = null; // built once the item (or, for 'add', the picked folder) is known
+  let selectedTargets = new Set(); // 'item', or a print-file key -- edit/add mode only
+  let editTagsField = null; // the edit-mode tag chip input, so Save can read its current tags
+  let refreshEditFilesArea = () => {}; // rebuilds just the file cards + gallery, set by buildEditRoot()
+  let sourceDir = item ? item.path : null; // becomes known for 'add' once the folder's picked, below
+  let folderUrl = item ? `file://${item.path}` : null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'drive-picker-overlay item-modal-overlay';
+
+  const box = document.createElement('div');
+  box.className = 'drive-picker-box settings-box item-modal-box';
+  overlay.appendChild(box);
+
+  const topBar = document.createElement('div');
+  topBar.className = 'item-modal-topbar';
+  box.appendChild(topBar);
+
+  const content = document.createElement('div');
+  box.appendChild(content);
+
+  function close() {
+    if (overlay.parentNode) document.body.removeChild(overlay);
+    document.removeEventListener('keydown', onKeydown);
+    if (item && openModalHandle && openModalHandle.itemPath === item.path) openModalHandle = null;
+  }
+  // Escape only dismisses in view mode -- in edit/add mode it would
+  // silently discard an in-progress draft with no confirmation, unlike
+  // the explicit Cancel button.
+  function onKeydown(e) {
+    if (e.key === 'Escape' && mode === 'view') close();
+  }
+  document.addEventListener('keydown', onKeydown);
+  overlay.onclick = (e) => {
+    if (e.target === overlay && mode === 'view') close();
+  };
+
+  function renderTopBar() {
+    topBar.innerHTML = '';
+    if (mode === 'view') {
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'item-modal-close';
+      closeBtn.textContent = '\u2039 Close';
+      closeBtn.onclick = close;
+      topBar.appendChild(closeBtn);
+    } else {
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'item-modal-close cancel';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.onclick = close;
+      topBar.appendChild(cancelBtn);
+
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'item-modal-close save';
+      saveBtn.textContent = 'Save to pending';
+      saveBtn.onclick = saveDraft;
+      topBar.appendChild(saveBtn);
+    }
+  }
+
+  function renderContent() {
+    content.innerHTML = '';
+    if (mode === 'view') {
+      const effective = effectivePrinterFilter();
+      let matchingFiles =
+        effective && effective.size > 0 ? item.files.filter((f) => effective.has(printerLabel(f))) : item.files;
+      matchingFiles = matchingFiles.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
+      if (matchingFiles.length === 0) {
+        content.appendChild(
+          renderEmptyState(
+            keywordQuery
+              ? 'No print files here match your search. Try a different keyword, or clear the search box.'
+              : 'This isn\'t sliced for the selected printer(s). Try picking a different printer, or choose "All Printers" to see every version.'
+          )
+        );
+      } else {
+        content.appendChild(renderItemDetail({ ...item, files: matchingFiles }));
+      }
+    } else {
+      content.appendChild(buildEditRoot());
+    }
+  }
+
+  // --- Edit-mode image-assignment helpers -------------------------------
+  // Mirror openItemEditor's assignRefToFile/addExternalToPool/
+  // suggestBatchShare, adapted for the draft object and for
+  // multi-target assignment (assignImageToTargets) alongside the
+  // existing single-target drag-and-drop path (assignSingleTargetImage).
+
+  function suggestBatchShareForDraft(justAssignedKey, ref) {
+    const source = draft.printFiles.find((f) => f.key === justAssignedKey);
+    if (!source || source.colorChangeCount === null) return;
+    for (const target of draft.printFiles) {
+      if (target.key === justAssignedKey) continue;
+      if (target.colorChangeCount !== source.colorChangeCount) continue;
+      if (strippedBatchName(target.key) !== strippedBatchName(source.key)) continue;
+      if (target.images.some((r) => imageRefEquals(r, ref))) continue;
+      const share = confirm(
+        `"${target.shortname}" looks like a variant of "${source.shortname}" (same color changes) -- share this image with it too?`
+      );
+      if (share) target.images.push(ref);
+    }
+  }
+
+  function assignSingleTargetImage(targetId, ref) {
+    if (targetId === 'item') {
+      draft.itemImageRef = ref;
+    } else {
+      const pf = draft.printFiles.find((f) => f.key === targetId);
+      if (!pf || pf.images.some((r) => imageRefEquals(r, ref))) return;
+      pf.images.push(ref);
+      suggestBatchShareForDraft(targetId, ref);
+    }
+    refreshEditFilesArea();
+  }
+
+  // The arrow-button path: assigns one image to every currently
+  // selected target at once (item thumbnail chip and/or print-file
+  // cards) -- see prior design discussion for why this stays
+  // multi-target rather than one-at-a-time (preserves the
+  // batch-photo-sharing workflow).
+  function assignImageToTargets(ref) {
+    for (const targetId of selectedTargets) assignSingleTargetImage(targetId, ref);
+  }
+
+  function addExternalToPoolDraft(extPath, name) {
+    const existing = draft.poolImages.find((r) => r.kind === 'external' && r.path === extPath);
+    if (existing) return existing;
+    const ref = { kind: 'external', path: extPath, name };
+    draft.poolImages.push(ref);
+    return ref;
+  }
+
+  // --- Edit-mode DOM builders ---------------------------------------------
+
+  function buildItemThumbChip() {
+    const chip = document.createElement('div');
+    chip.className = 'item-modal-thumb-chip' + (selectedTargets.has('item') ? ' selected' : '');
+    chip.ondragover = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    chip.ondrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        const f = files[0];
+        if (isImageFileName(f.name)) {
+          assignSingleTargetImage('item', addExternalToPoolDraft(window.catalogAPI.getPathForFile(f), f.name));
+        }
+      } else {
+        const idx = Number(e.dataTransfer.getData('text/plain'));
+        if (!Number.isNaN(idx) && draft.poolImages[idx]) assignSingleTargetImage('item', draft.poolImages[idx]);
+      }
+    };
+
+    const selectToggle = document.createElement('input');
+    selectToggle.type = 'checkbox';
+    selectToggle.className = 'item-modal-target-select';
+    selectToggle.title = 'Select as an image-assignment target';
+    selectToggle.checked = selectedTargets.has('item');
+    selectToggle.onchange = () => {
+      if (selectToggle.checked) selectedTargets.add('item');
+      else selectedTargets.delete('item');
+      refreshEditFilesArea();
+    };
+    chip.appendChild(selectToggle);
+
+    const img = document.createElement('img');
+    img.src = draft.itemImageRef ? imageRefSrc(draft.itemImageRef, folderUrl) : 'nothumb.svg';
+    img.alt = 'Item image';
+    chip.appendChild(img);
+
+    if (draft.itemImageRef) {
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'item-modal-chip-remove';
+      removeBtn.textContent = '\u00d7';
+      removeBtn.title = 'Remove item image';
+      removeBtn.onclick = (e) => {
+        e.stopPropagation();
+        draft.itemImageRef = null;
+        refreshEditFilesArea();
+      };
+      chip.appendChild(removeBtn);
+    }
+
+    return chip;
+  }
+
+  function buildPrintFileCard(pf) {
+    const card = document.createElement('div');
+    card.className = 'item-modal-file-card' + (selectedTargets.has(pf.key) ? ' selected' : '');
+    card.ondragover = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    card.ondragenter = () => card.classList.add('drop-target-active');
+    card.ondragleave = (e) => {
+      if (!card.contains(e.relatedTarget)) card.classList.remove('drop-target-active');
+    };
+    card.ondrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      card.classList.remove('drop-target-active');
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        for (const f of files) {
+          if (!isImageFileName(f.name)) continue;
+          assignSingleTargetImage(pf.key, addExternalToPoolDraft(window.catalogAPI.getPathForFile(f), f.name));
+        }
+      } else {
+        const idx = Number(e.dataTransfer.getData('text/plain'));
+        if (!Number.isNaN(idx) && draft.poolImages[idx]) assignSingleTargetImage(pf.key, draft.poolImages[idx]);
+      }
+    };
+
+    const selectToggle = document.createElement('input');
+    selectToggle.type = 'checkbox';
+    selectToggle.className = 'item-modal-target-select';
+    selectToggle.title = 'Select as an image-assignment target';
+    selectToggle.checked = selectedTargets.has(pf.key);
+    selectToggle.onchange = () => {
+      if (selectToggle.checked) selectedTargets.add(pf.key);
+      else selectedTargets.delete(pf.key);
+      refreshEditFilesArea();
+    };
+    card.appendChild(selectToggle);
+
+    const thumbWrap = document.createElement('div');
+    thumbWrap.className = 'file-thumb-wrap';
+    const img = document.createElement('img');
+    img.alt = pf.displayName || pf.shortname;
+    img.src = pf.images.length > 0 ? imageRefSrc(pf.images[0], folderUrl) : 'nothumb.svg';
+    thumbWrap.appendChild(img);
+    card.appendChild(thumbWrap);
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'item-modal-file-name-input';
+    nameInput.value = pf.displayName || pf.shortname;
+    nameInput.title = pf.key;
+    nameInput.oninput = () => {
+      pf.displayName = nameInput.value;
+    };
+    card.appendChild(nameInput);
+
+    const subtitleParts = [
+      pf.copies && pf.copies > 1 ? `batch of ${pf.copies}` : null,
+      pf.colorChangeCount
+        ? `${pf.colorChangeCount} color change${pf.colorChangeCount === 1 ? '' : 's'}`
+        : null,
+      pf.printerModel ? [pf.printerModel, pf.printerVariant].filter(Boolean).join(' ') : null,
+    ].filter(Boolean);
+    if (subtitleParts.length) {
+      const subtitle = document.createElement('p');
+      subtitle.className = 'file-subtitle';
+      subtitle.textContent = subtitleParts.join(', ');
+      card.appendChild(subtitle);
+    }
+
+    const chips = document.createElement('div');
+    chips.className = 'editor-image-chips';
+    pf.images.forEach((ref, idx) => {
+      const chip = document.createElement('span');
+      chip.className = 'editor-image-chip';
+      const chipImg = document.createElement('img');
+      chipImg.src = imageRefSrc(ref, folderUrl);
+      chip.appendChild(chipImg);
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = '\u00d7';
+      removeBtn.title = 'Remove';
+      removeBtn.onclick = (e) => {
+        e.stopPropagation();
+        pf.images.splice(idx, 1);
+        refreshEditFilesArea();
+      };
+      chip.appendChild(removeBtn);
+      chips.appendChild(chip);
+    });
+    card.appendChild(chips);
+
+    return card;
+  }
+
+  function buildGalleryColumn() {
+    const col = document.createElement('div');
+    col.className = 'item-modal-edit-gallery';
+    col.ondragover = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    col.ondrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const files = e.dataTransfer.files;
+      if (!files || files.length === 0) return; // in-app drags only make sense onto a target, not back onto the gallery
+      for (const f of files) {
+        if (!isImageFileName(f.name)) continue;
+        addExternalToPoolDraft(window.catalogAPI.getPathForFile(f), f.name);
+      }
+      refreshEditFilesArea();
+    };
+
+    const heading = document.createElement('p');
+    heading.className = 'item-modal-gallery-heading';
+    heading.textContent = 'Available images';
+    col.appendChild(heading);
+
+    const hint = document.createElement('p');
+    hint.className = 'settings-intro';
+    hint.textContent =
+      selectedTargets.size > 0
+        ? `Click \u2190 on an image to assign it to ${selectedTargets.size} selected target${
+            selectedTargets.size === 1 ? '' : 's'
+          }.`
+        : 'Select the item image and/or one or more print files, then click \u2190 on an image to assign it. Drag-and-drop also works.';
+    col.appendChild(hint);
+
+    const grid = document.createElement('div');
+    grid.className = 'item-modal-gallery-grid';
+    if (draft.poolImages.length === 0) {
+      const none = document.createElement('p');
+      none.className = 'settings-intro';
+      none.textContent = 'No images yet -- use "Add image" below, or drag images in.';
+      grid.appendChild(none);
+    }
+    draft.poolImages.forEach((ref, idx) => {
+      const cell = document.createElement('div');
+      cell.className = 'item-modal-gallery-item';
+
+      const thumb = document.createElement('img');
+      thumb.className = 'item-modal-gallery-thumb';
+      thumb.src = imageRefSrc(ref, folderUrl);
+      thumb.title = ref.name;
+      thumb.draggable = true;
+      thumb.ondragstart = (e) => e.dataTransfer.setData('text/plain', String(idx));
+      cell.appendChild(thumb);
+
+      const assignBtn = document.createElement('button');
+      assignBtn.type = 'button';
+      assignBtn.className = 'item-modal-assign-btn';
+      assignBtn.title = 'Assign to selected target(s)';
+      assignBtn.setAttribute('aria-label', 'Assign to selected targets');
+      assignBtn.textContent = '\u2190';
+      assignBtn.disabled = selectedTargets.size === 0;
+      assignBtn.onclick = () => assignImageToTargets(ref);
+      cell.appendChild(assignBtn);
+
+      grid.appendChild(cell);
+    });
+    col.appendChild(grid);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'settings-action-button';
+    addBtn.textContent = 'Add image\u2026';
+    addBtn.onclick = async () => {
+      const picked = await window.catalogAPI.editSessionBrowseImages();
+      for (const p of picked) addExternalToPoolDraft(p.path, p.name);
+      refreshEditFilesArea();
+    };
+    col.appendChild(addBtn);
+
+    return col;
+  }
+
+  // Origin row is refreshed in place (not via the outer renderContent)
+  // so hand-editing/reparsing origin info doesn't rebuild the name
+  // field or tag input and lose their focus/in-progress text.
+  function renderOriginRow(container) {
+    container.innerHTML = '';
+
+    const info = document.createElement('span');
+    info.className = 'item-modal-origin-summary';
+    info.textContent = draft.origin.url
+      ? draft.origin.creatorName
+        ? `By ${draft.origin.creatorName} \u2014 ${draft.origin.url}`
+        : draft.origin.url
+      : 'No original location set.';
+    container.appendChild(info);
+
+    const pencilBtn = document.createElement('button');
+    pencilBtn.type = 'button';
+    pencilBtn.className = 'item-modal-origin-btn';
+    pencilBtn.title = 'Edit original-location info';
+    pencilBtn.setAttribute('aria-label', 'Edit original-location info');
+    pencilBtn.textContent = '\u270e';
+    pencilBtn.onclick = () => {
+      openOriginEditPopup(
+        {
+          url: draft.origin.url || '',
+          creatorName: draft.origin.creatorName || '',
+          creatorUrl: draft.origin.creatorUrl || '',
+        },
+        (result) => {
+          draft.origin = result;
+          renderOriginRow(container);
+        }
+      );
+    };
+    container.appendChild(pencilBtn);
+
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'item-modal-origin-btn';
+    refreshBtn.title = 'Reparse from folder';
+    refreshBtn.setAttribute('aria-label', 'Reparse original-location info from folder');
+    refreshBtn.textContent = '\u27f3';
+    refreshBtn.onclick = async () => {
+      refreshBtn.disabled = true;
+      try {
+        const detected = await window.catalogAPI.detectItemOrigin(sourceDir);
+        if (detected && detected.url) {
+          openOriginEditPopup(
+            {
+              url: detected.url || '',
+              creatorName: detected.creatorName || '',
+              creatorUrl: detected.creatorUrl || '',
+            },
+            (result) => {
+              draft.origin = result;
+              renderOriginRow(container);
+            }
+          );
+        } else {
+          alert("Couldn't detect anything from this item's folder.");
+        }
+      } catch (err) {
+        alert(`Reparse failed: ${err.message}`);
+      } finally {
+        refreshBtn.disabled = false;
+      }
+    };
+    container.appendChild(refreshBtn);
+  }
+
+  function buildEditRoot() {
+    const root = document.createElement('div');
+    root.className = 'item-modal-edit';
+
+    if (mode === 'add') {
+      const addLabel = document.createElement('p');
+      addLabel.className = 'item-modal-add-label';
+      addLabel.textContent = 'Add item';
+      root.appendChild(addLabel);
+    }
+
+    const header = document.createElement('div');
+    header.className = 'item-modal-edit-header';
+    root.appendChild(header);
+
+    const thumbChipHolder = document.createElement('div');
+    thumbChipHolder.className = 'item-modal-thumb-chip-holder';
+    header.appendChild(thumbChipHolder);
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'item-modal-name-input';
+    nameInput.value = draft.displayName;
+    nameInput.placeholder = 'Item name';
+    nameInput.oninput = () => {
+      draft.displayName = nameInput.value;
+    };
+    header.appendChild(nameInput);
+
+    const originRow = document.createElement('div');
+    originRow.className = 'item-modal-origin-row';
+    root.appendChild(originRow);
+    renderOriginRow(originRow);
+
+    const tagsWrapLabel = document.createElement('div');
+    tagsWrapLabel.className = 'item-modal-tags-row';
+    editTagsField = createTagInput('Tagged', draft.tags, () => Array.from(collectTags(allItems)).sort());
+    tagsWrapLabel.appendChild(editTagsField.wrap);
+    root.appendChild(tagsWrapLabel);
+
+    const filesArea = document.createElement('div');
+    filesArea.className = 'item-modal-edit-body';
+    root.appendChild(filesArea);
+
+    refreshEditFilesArea = () => {
+      filesArea.innerHTML = '';
+      thumbChipHolder.innerHTML = '';
+      thumbChipHolder.appendChild(buildItemThumbChip());
+
+      const filesCol = document.createElement('div');
+      filesCol.className = 'item-modal-edit-files';
+      for (const pf of draft.printFiles) filesCol.appendChild(buildPrintFileCard(pf));
+      filesArea.appendChild(filesCol);
+
+      filesArea.appendChild(buildGalleryColumn());
+    };
+    refreshEditFilesArea();
+
+    return root;
+  }
+
+  async function saveDraft() {
+    const tags = editTagsField.getTags();
+    const printFileImages = {};
+    const printFileNames = {};
+    for (const pf of draft.printFiles) {
+      if (pf.images.length > 0) printFileImages[pf.key] = pf.images;
+      if (pf.displayName) printFileNames[pf.key] = pf.displayName;
+    }
+    const payload = {
+      name: draft.displayName.trim(),
+      tags,
+      printFileImages,
+      printFileNames,
+      origin: draft.origin,
+      itemImage: draft.itemImageRef,
+    };
+    try {
+      const result =
+        mode === 'add'
+          ? await window.catalogAPI.editSessionCommitAdd(sourceDir, payload)
+          : await window.catalogAPI.editSessionCommitEdit(sourceDir, payload);
+      pendingChanges = result.changes;
+      allItems = result.tree;
+      close();
+      renderPrinterFilter();
+      renderTagFilter();
+      render();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  // Flips this specific open modal into edit mode in place -- called
+  // either immediately below (opened directly in edit mode) or later
+  // by the global "enter edit mode" listener (see init()) if this
+  // modal is still open in view mode when that happens. No-ops if
+  // already in edit mode, since global edit mode can't newly engage
+  // without this modal already having been opened while it was active.
+  // Never relevant for 'add' -- that always starts in edit mode.
+  function enterEditMode() {
+    if (mode === 'edit') return;
+    mode = 'edit';
+    draft = createDraftFromItem(item);
+    selectedTargets = new Set();
+    renderTopBar();
+    renderContent();
+  }
+
+  if (mode === 'add') {
+    // Mirrors openItemEditor's old add-mode flow: the folder has to be
+    // known before there's anything to name/tag, so pick/prepare it
+    // first and never show the modal at all if that's cancelled.
+    const preparePromise = prefilledSourceDir
+      ? window.catalogAPI.editSessionPrepareAddFolder(prefilledSourceDir)
+      : window.catalogAPI.editSessionPickAddFolder();
+    preparePromise
+      .then((picked) => {
+        if (!picked) return; // cancelled the folder dialog -- never show the form
+        sourceDir = picked.sourceDir;
+        folderUrl = `file://${sourceDir}`;
+        draft = createDraftFromPicked(picked);
+        renderTopBar();
+        renderContent();
+        document.body.appendChild(overlay);
+      })
+      .catch((err) => alert(err.message)); // e.g. a dropped path that wasn't actually a folder
+    return;
+  }
+
+  openModalHandle = { itemPath: item.path, switchToEdit: enterEditMode };
+
+  if (mode === 'edit') draft = createDraftFromItem(item);
+
+  renderTopBar();
+  renderContent();
+  document.body.appendChild(overlay);
 }
 
 function renderItemDetail(item) {
@@ -1764,7 +2433,7 @@ function renderEditBar() {
   const addBtn = document.createElement('button');
   addBtn.textContent = 'Add item';
   addBtn.className = 'add-item-button';
-  addBtn.onclick = () => openItemEditor('add', null);
+  addBtn.onclick = () => openItemModal(null, 'add');
   listing.appendChild(addBtn);
 
   const counts = { add: 0, edit: 0, delete: 0 };
@@ -1848,65 +2517,6 @@ function isImageFileName(name) {
   return /\.(jpe?g|png|gif|svg)$/i.test(name);
 }
 
-// Pencil button next to a print file's name in the item editor's file
-// list (renderImagesSection() below). Clicking it swaps the name
-// <span> for a text input in place -- Enter or blur saves, Escape
-// cancels. The save only updates the in-memory `pf` object (part of
-// the editor's own `printFiles` array); nothing is written to disk
-// until the editor's own "Save to pending" button runs, same as every
-// other field in this form (name, tags, image assignments).
-function makeFileRenameButton(pf, nameSpan) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'editor-file-rename-btn';
-  btn.title = 'Rename this print file';
-  btn.setAttribute('aria-label', 'Rename this print file');
-  btn.textContent = '\u270e'; // ✎
-  btn.onclick = (e) => {
-    e.preventDefault();
-    startEditingPrintFileName(pf, nameSpan, btn);
-  };
-  return btn;
-}
-
-function startEditingPrintFileName(pf, nameSpan, editBtn) {
-  const parent = nameSpan.parentElement;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'editor-file-name-input';
-  input.value = pf.displayName || pf.shortname;
-  input.title = pf.key;
-
-  // Escape blurs the input too, which would otherwise re-run finish()
-  // a second time (via onblur) after this one already swapped the
-  // input back out -- guarded with a flag rather than relying on
-  // finish() being idempotent, since a second replaceChild(nameSpan,
-  // input) call would throw (input is no longer parent's child).
-  let finished = false;
-  const finish = (save) => {
-    if (finished) return;
-    finished = true;
-    parent.replaceChild(nameSpan, input);
-    editBtn.style.display = '';
-    if (!save) return;
-    const newName = input.value.trim();
-    if (!newName || newName === (pf.displayName || pf.shortname)) return;
-    pf.displayName = newName;
-    nameSpan.textContent = newName;
-  };
-
-  input.onkeydown = (e) => {
-    if (e.key === 'Enter') finish(true);
-    if (e.key === 'Escape') finish(false);
-  };
-  input.onblur = () => finish(true);
-
-  editBtn.style.display = 'none';
-  parent.replaceChild(input, nameSpan);
-  input.focus();
-  input.select();
-}
-
 // "PLA,PLA" -> "PLA"; "PLA,PETG" -> "PLA/PETG". Order of first
 // appearance is preserved; a single-material print's one entry
 // passes through unchanged.
@@ -1924,601 +2534,6 @@ function imageRefEquals(a, b) {
   return a.kind === b.kind && (a.kind === 'existing' ? a.name === b.name : a.path === b.path);
 }
 
-// Shared editor for both adding a new item and editing an existing
-// one -- see prior design discussion for why these share one form.
-// mode is 'add' or 'edit'; item is null for 'add'.
-function openItemEditor(mode, item, prefilledSourceDir) {
-  const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay';
-
-  const box = document.createElement('div');
-  box.className = 'drive-picker-box settings-box editor-box';
-
-  const title = document.createElement('h3');
-  title.textContent = mode === 'add' ? 'Add item' : 'Edit item';
-  box.appendChild(title);
-
-  const nameField = createSettingsTextField('Name', mode === 'edit' ? item.displayName || item.name : '', 'Widget holder');
-  box.appendChild(nameField.wrap);
-
-  const tagsField = createTagInput(
-    'Tags',
-    mode === 'edit' ? item.tags || [] : [],
-    () => Array.from(collectTags(allItems)).sort()
-  );
-  box.appendChild(tagsField.wrap);
-
-  // Auto-detected from the item's folder when possible (see
-  // originLocation.js) -- Thingiverse's README.txt or a Printables
-  // page-printout PDF -- but always just a plain editable/clearable
-  // text field otherwise, same as name/tags. 'add' mode gets its
-  // prefill from scanSourceFolder()'s originUrl below; 'edit' mode
-  // prefills from the item's already-stored metadata.json origin, and
-  // only bothers re-detecting (async, below) when that's empty, so an
-  // item already tagged with an origin doesn't get its folder
-  // re-scanned/re-parsed every time it's opened for editing.
-  const originField = createSettingsTextField(
-    'Original Location',
-    mode === 'edit' ? (item.origin && item.origin.url) || '' : '',
-    'https://www.thingiverse.com/thing/...'
-  );
-  box.appendChild(originField.wrap);
-
-  // Tracks the last {url, creatorName, creatorUrl} this editor actually
-  // detected/knows about, so Save (below) can decide whether it's safe
-  // to write creatorName/creatorUrl alongside url. Without this, a
-  // detection's creatorName/creatorUrl were only ever shown in this
-  // text field's url -- Save had no way to recover them, so creator
-  // info could never be written except via the separate bulk
-  // "Backfill creator info" button. Seeded from the item's own stored
-  // origin in edit mode (already-known creator info counts as
-  // "detected" for an unmodified field), left null in add mode until
-  // the folder scan resolves.
-  let detectedOrigin = mode === 'edit' && item.origin ? item.origin : null;
-
-  if (mode === 'edit' && !(item.origin && item.origin.url)) {
-    window.catalogAPI
-      .detectItemOrigin(item.path)
-      .then((origin) => {
-        // detectItemOrigin resolves the whole {url, creatorName, creatorUrl}
-        // object (see originLocation.js/editSession.js) -- keep all of
-        // it, not just the url, so Save can still write creator info.
-        if (origin && origin.url) {
-          originField.input.value = origin.url;
-          detectedOrigin = origin;
-        }
-      })
-      .catch(() => {}); // best-effort -- leave the field empty on failure
-  }
-
-  // Manual "reparse" affordance -- lets a co-admin force a fresh
-  // detection pass over the item's folder on demand, for cases the
-  // automatic pass above doesn't cover: the item already had
-  // origin.url stored so the automatic re-detect was skipped, or the
-  // folder's README.txt/PDF was added or changed after the item was
-  // first catalogued. Reuses the same detectItemOrigin() IPC as the
-  // automatic path (generic over any folder, not just existing catalog
-  // items -- see editSession.js's detectOrigin()), so it gets the same
-  // Thingiverse/Printables detection and creator-info extraction. This
-  // is an explicit, user-triggered action, so a successful reparse
-  // overwrites both the visible URL field and detectedOrigin outright
-  // -- including replacing a hand-typed URL -- rather than asking for
-  // confirmation first.
-  const reparseBtn = document.createElement('button');
-  reparseBtn.type = 'button';
-  reparseBtn.className = 'settings-action-button';
-  reparseBtn.textContent = 'Reparse creator info';
-  const reparseStatus = document.createElement('p');
-  reparseStatus.className = 'settings-intro settings-export-import-status';
-
-  // In 'add' mode the folder isn't known until the folder dialog
-  // resolves (below) -- disable rather than hide the button until
-  // sourceDir is set, so it's visible but inert until then.
-  if (mode === 'add') reparseBtn.disabled = true;
-
-  reparseBtn.onclick = async () => {
-    const folderPath = mode === 'edit' ? item.path : sourceDir;
-    if (!folderPath) return; // guards a stray click before sourceDir is set
-    reparseBtn.disabled = true;
-    reparseStatus.textContent = 'Reparsing\u2026';
-    try {
-      const origin = await window.catalogAPI.detectItemOrigin(folderPath);
-      if (origin && origin.url) {
-        originField.input.value = origin.url;
-        detectedOrigin = origin;
-        reparseStatus.textContent = origin.creatorName
-          ? `Detected creator: ${origin.creatorName}`
-          : 'Detected an origin URL, but no creator info this time.';
-      } else {
-        reparseStatus.textContent = "Couldn't detect anything from this folder.";
-      }
-    } catch (err) {
-      reparseStatus.textContent = `Reparse failed: ${err.message}`;
-    } finally {
-      reparseBtn.disabled = false;
-    }
-  };
-
-  box.appendChild(reparseBtn);
-  box.appendChild(reparseStatus);
-
-  // Image reconciliation state. printFiles/poolImages/folderUrl are
-  // filled in once we know what folder we're working with (immediately
-  // for 'edit', after the folder dialog resolves for 'add' -- see
-  // below). imageAssignments is keyed by print-file basename (the same
-  // key indexer.js's metadataImages lookup uses) -> ordered array of
-  // ImageRef ({kind:'existing', name} or {kind:'external', path,
-  // name}). Many-to-many is the point (see prior design discussion),
-  // so poolImages is just "every image available to this item" --
-  // assigning one to a print file doesn't remove it from the pool.
-  let printFiles = [];
-  let poolImages = [];
-  let imageAssignments = {};
-  let itemImageRef = null; // single ImageRef ({kind:'existing'|'external', ...}) or null -- the item-level image, distinct from per-print-file assignments above
-  let folderUrl = null; // `file://<item folder>` once known
-  let selectedPoolIndex = null;
-  const checkedFiles = new Set();
-
-  const imagesSection = document.createElement('div');
-  box.appendChild(imagesSection);
-
-  function assignRefToFile(key, ref) {
-    const current = imageAssignments[key] || (imageAssignments[key] = []);
-    if (current.some((r) => imageRefEquals(r, ref))) return;
-    current.push(ref);
-    suggestBatchShare(key, ref);
-  }
-
-  // Adds an OS file dropped or browsed in as a pool entry, deduping by
-  // path -- returns the ref (existing or newly added) so callers can
-  // also assign it to a specific print file in the same gesture (see
-  // the per-row drop handler in renderImagesSection below).
-  function addExternalToPool(path, name) {
-    const existing = poolImages.find((r) => r.kind === 'external' && r.path === path);
-    if (existing) return existing;
-    const ref = { kind: 'external', path, name };
-    poolImages.push(ref);
-    return ref;
-  }
-
-  function suggestBatchShare(justAssignedKey, ref) {
-    const source = printFiles.find((f) => f.key === justAssignedKey);
-    if (!source || source.colorChangeCount === null) return;
-    for (const target of printFiles) {
-      if (target.key === justAssignedKey) continue;
-      if (target.colorChangeCount !== source.colorChangeCount) continue;
-      if (strippedBatchName(target.key) !== strippedBatchName(source.key)) continue;
-      const already = (imageAssignments[target.key] || []).some((r) => imageRefEquals(r, ref));
-      if (already) continue;
-      const share = confirm(
-        `"${target.shortname}" looks like a variant of "${source.shortname}" (same color changes) -- share this image with it too?`
-      );
-      if (share) {
-        imageAssignments[target.key] = [...(imageAssignments[target.key] || []), ref];
-      }
-    }
-  }
-
-  function renderImagesSection() {
-    imagesSection.innerHTML = '';
-    if (!folderUrl) return; // 'add' mode before a folder's been picked
-
-    // --- Item-level image -------------------------------------------
-    // One image representing the item as a whole (e.g. the catalog
-    // card thumbnail) -- distinct from, and rendered above, the
-    // per-print-file assignments below. Shares the same pool of images
-    // (poolImages) rather than having its own separate picker, since
-    // it's very often just one of the same photos already used for a
-    // print file.
-    const itemImageSection = document.createElement('div');
-    itemImageSection.className = 'editor-item-image-section';
-
-    const itemImageHeading = document.createElement('p');
-    itemImageHeading.style.fontWeight = 'bold';
-    itemImageHeading.textContent = 'Item image';
-    itemImageSection.appendChild(itemImageHeading);
-
-    const itemImageHint = document.createElement('p');
-    itemImageHint.className = 'settings-intro';
-    itemImageHint.textContent =
-      'Shown on the item\u2019s catalog card. Drag an image here, or select one below and use "Set as item image."';
-    itemImageSection.appendChild(itemImageHint);
-
-    const itemImageBox = document.createElement('div');
-    itemImageBox.className = 'editor-item-image-box';
-    itemImageBox.ondragover = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
-    itemImageBox.ondragenter = () => itemImageBox.classList.add('drop-target-active');
-    itemImageBox.ondragleave = (e) => {
-      if (!itemImageBox.contains(e.relatedTarget)) {
-        itemImageBox.classList.remove('drop-target-active');
-      }
-    };
-    itemImageBox.ondrop = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      itemImageBox.classList.remove('drop-target-active');
-      const files = e.dataTransfer.files;
-      if (files && files.length > 0) {
-        // Single slot -- only the first dropped image file applies,
-        // same as dropping several onto a print file row would only
-        // make sense as "assign all of these," which doesn't apply here.
-        const file = [...files].find((f) => isImageFileName(f.name));
-        if (file) {
-          const filePath = window.catalogAPI.getPathForFile(file);
-          itemImageRef = addExternalToPool(filePath, file.name);
-        }
-      } else {
-        // An in-app drag of an existing pool thumbnail (see its
-        // dragstart in the pool render below).
-        const idx = Number(e.dataTransfer.getData('text/plain'));
-        if (!Number.isNaN(idx) && poolImages[idx]) itemImageRef = poolImages[idx];
-      }
-      renderImagesSection();
-    };
-
-    if (itemImageRef) {
-      const chip = document.createElement('span');
-      chip.className = 'editor-image-chip';
-      const img = document.createElement('img');
-      img.src = imageRefSrc(itemImageRef, folderUrl);
-      chip.appendChild(img);
-      const removeBtn = document.createElement('button');
-      removeBtn.textContent = '\u00d7';
-      removeBtn.title = 'Remove item image';
-      removeBtn.onclick = () => {
-        itemImageRef = null;
-        renderImagesSection();
-      };
-      chip.appendChild(removeBtn);
-      itemImageBox.appendChild(chip);
-    } else {
-      const placeholder = document.createElement('span');
-      placeholder.className = 'editor-item-image-placeholder';
-      placeholder.textContent = 'No item image set';
-      itemImageBox.appendChild(placeholder);
-    }
-    itemImageSection.appendChild(itemImageBox);
-    imagesSection.appendChild(itemImageSection);
-
-    // --- Print files ---------------------------------------------------
-    // Indented and visually separated from the item-image section above
-    // (see .editor-print-files-section / .editor-item-image-section in
-    // styles.css) so it reads as "these files belong to the item," not
-    // as another peer-level image slot.
-    const printFilesSection = document.createElement('div');
-    printFilesSection.className = 'editor-print-files-section';
-
-    const heading = document.createElement('p');
-    heading.style.fontWeight = 'bold';
-    heading.textContent = 'Print files';
-    printFilesSection.appendChild(heading);
-
-    for (const pf of printFiles) {
-      const row = document.createElement('div');
-      row.className = 'editor-file-row';
-      row.ondragover = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      };
-      row.ondragenter = () => row.classList.add('drop-target-active');
-      row.ondragleave = (e) => {
-        if (!row.contains(e.relatedTarget)) {
-          row.classList.remove('drop-target-active');
-        }
-      };
-      row.ondrop = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        row.classList.remove('drop-target-active');
-        const files = e.dataTransfer.files;
-        if (files && files.length > 0) {
-          // OS image file(s) dropped directly onto this print file --
-          // per prior discussion, this both adds them to the pool
-          // (they weren't there before) and assigns them to this row
-          // in one gesture, rather than requiring a separate step.
-          for (const file of files) {
-            if (!isImageFileName(file.name)) continue;
-            const filePath = window.catalogAPI.getPathForFile(file);
-            assignRefToFile(pf.key, addExternalToPool(filePath, file.name));
-          }
-        } else {
-          // An in-app drag of an existing pool thumbnail (see its
-          // dragstart below) -- just assign it, nothing new to add.
-          const idx = Number(e.dataTransfer.getData('text/plain'));
-          if (!Number.isNaN(idx) && poolImages[idx]) assignRefToFile(pf.key, poolImages[idx]);
-        }
-        renderImagesSection();
-      };
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = checkedFiles.has(pf.key);
-      checkbox.onchange = () => {
-        if (checkbox.checked) checkedFiles.add(pf.key);
-        else checkedFiles.delete(pf.key);
-      };
-      row.appendChild(checkbox);
-
-      const labelWrap = document.createElement('div');
-      labelWrap.className = 'editor-file-label-wrap';
-
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'editor-file-name';
-      nameSpan.textContent = pf.displayName || pf.shortname;
-      // pf.key is the actual on-disk filename (raw, with extension) --
-      // shown as a tooltip since a custom/parsed display name can
-      // obscure which real file this row actually is.
-      nameSpan.title = pf.key;
-      labelWrap.appendChild(nameSpan);
-
-      // Printer/variant + batch/color-change info, supplementing (not
-      // replacing) the name -- deliberately faint so it reads as
-      // secondary detail rather than competing with the name, and
-      // deliberately separate from the color-change/batch parenthetical
-      // printFileLabel() used to produce, since that mixed the two
-      // together in one string with no way to style them differently.
-      const extraParts = [
-        pf.printerModel ? [pf.printerModel, pf.printerVariant].filter(Boolean).join(' ') : null,
-        pf.copies && pf.copies > 1 ? `batch of ${pf.copies}` : null,
-        pf.colorChangeCount
-          ? `${pf.colorChangeCount} color change${pf.colorChangeCount === 1 ? '' : 's'}`
-          : null,
-      ].filter(Boolean);
-      if (extraParts.length) {
-        const extraSpan = document.createElement('span');
-        extraSpan.className = 'editor-file-extra';
-        extraSpan.textContent = extraParts.join(', ');
-        labelWrap.appendChild(extraSpan);
-      }
-
-      row.appendChild(labelWrap);
-      row.appendChild(makeFileRenameButton(pf, nameSpan));
-
-      const chips = document.createElement('div');
-      chips.className = 'editor-image-chips';
-      (imageAssignments[pf.key] || []).forEach((ref, idx) => {
-        const chip = document.createElement('span');
-        chip.className = 'editor-image-chip';
-        const img = document.createElement('img');
-        img.src = imageRefSrc(ref, folderUrl);
-        chip.appendChild(img);
-        const removeBtn = document.createElement('button');
-        removeBtn.textContent = '\u00d7';
-        removeBtn.title = 'Remove';
-        removeBtn.onclick = () => {
-          imageAssignments[pf.key].splice(idx, 1);
-          renderImagesSection();
-        };
-        chip.appendChild(removeBtn);
-        chips.appendChild(chip);
-      });
-      row.appendChild(chips);
-
-      printFilesSection.appendChild(row);
-    }
-    imagesSection.appendChild(printFilesSection);
-
-    const poolHeading = document.createElement('p');
-    poolHeading.style.fontWeight = 'bold';
-    poolHeading.textContent = 'Available images';
-    imagesSection.appendChild(poolHeading);
-
-    const pool = document.createElement('div');
-    pool.className = 'editor-image-pool';
-    pool.ondragover = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
-    pool.ondrop = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const files = e.dataTransfer.files;
-      if (!files || files.length === 0) return; // in-app drags only make sense onto a print file row, not back onto the pool
-      for (const file of files) {
-        if (!isImageFileName(file.name)) continue;
-        addExternalToPool(window.catalogAPI.getPathForFile(file), file.name);
-      }
-      renderImagesSection();
-    };
-    if (poolImages.length === 0) {
-      const none = document.createElement('p');
-      none.className = 'settings-intro';
-      none.textContent = 'No images yet -- use "Browse for images" below, or drag images in.';
-      pool.appendChild(none);
-    }
-    poolImages.forEach((ref, idx) => {
-      const thumb = document.createElement('img');
-      thumb.className = 'editor-pool-thumb' + (selectedPoolIndex === idx ? ' selected' : '');
-      thumb.src = imageRefSrc(ref, folderUrl);
-      thumb.title = ref.name;
-      thumb.draggable = true;
-      thumb.ondragstart = (e) => e.dataTransfer.setData('text/plain', String(idx));
-      thumb.onclick = () => {
-        selectedPoolIndex = selectedPoolIndex === idx ? null : idx;
-        renderImagesSection();
-      };
-      pool.appendChild(thumb);
-    });
-    imagesSection.appendChild(pool);
-
-    const poolButtons = document.createElement('div');
-    poolButtons.className = 'settings-buttons';
-
-    const browseBtn = document.createElement('button');
-    browseBtn.textContent = 'Browse for images\u2026';
-    browseBtn.onclick = async () => {
-      const picked = await window.catalogAPI.editSessionBrowseImages();
-      for (const p of picked) addExternalToPool(p.path, p.name);
-      renderImagesSection();
-    };
-    poolButtons.appendChild(browseBtn);
-
-    const assignBtn = document.createElement('button');
-    assignBtn.textContent = 'Assign selected image to checked files';
-    assignBtn.disabled = selectedPoolIndex === null || checkedFiles.size === 0;
-    assignBtn.onclick = () => {
-      const ref = poolImages[selectedPoolIndex];
-      for (const key of checkedFiles) assignRefToFile(key, ref);
-      renderImagesSection();
-    };
-    poolButtons.appendChild(assignBtn);
-
-    const setItemImageBtn = document.createElement('button');
-    setItemImageBtn.textContent = 'Set selected image as item image';
-    setItemImageBtn.disabled = selectedPoolIndex === null;
-    setItemImageBtn.onclick = () => {
-      itemImageRef = poolImages[selectedPoolIndex];
-      renderImagesSection();
-    };
-    poolButtons.appendChild(setItemImageBtn);
-
-    imagesSection.appendChild(poolButtons);
-  }
-
-  if (mode === 'edit') {
-    folderUrl = `file://${item.path}`;
-    itemImageRef = item.metadataItemImage ? { kind: 'existing', name: item.metadataItemImage } : null;
-    printFiles = item.files.map((f) => {
-      const key = f.path.split(/[\\/]/).pop();
-      imageAssignments[key] = (f.metadataImages || []).map((name) => ({ kind: 'existing', name }));
-      return {
-        key,
-        shortname: f.shortname,
-        displayName: f.metadataDisplayName || null,
-        printerModel: f.printerModel,
-        printerVariant: f.printerVariant,
-        colorChangeCount: f.colorChangeCount,
-        copies: f.copies,
-      };
-    });
-    poolImages = (item.imageFiles || []).map((name) => ({ kind: 'existing', name }));
-    renderImagesSection();
-  }
-
-  // 'add' needs a source folder before there's anything to name/tag in
-  // the first place -- pick it right away, and back out of the whole
-  // editor if the co-admin cancels the folder dialog rather than
-  // showing an empty form with nothing to attach it to.
-  let sourceDir = null;
-
-  const buttonsRow = document.createElement('div');
-  buttonsRow.className = 'settings-buttons';
-
-  const saveBtn = document.createElement('button');
-  saveBtn.textContent = 'Save to pending';
-  saveBtn.onclick = async () => {
-    const name = nameField.input.value.trim();
-    const tags = tagsField.getTags();
-    const printFileImages = {};
-    for (const [key, refs] of Object.entries(imageAssignments)) {
-      if (refs.length > 0) printFileImages[key] = refs;
-    }
-    // Only print files with a custom name set (either just typed via
-    // the pencil-icon rename, or already carried over from
-    // metadata.json in edit mode -- see the 'edit' mode printFiles
-    // mapping below) get an entry here; writeItemMetadata's printFiles
-    // merge is per-key, so re-sending an unchanged name alongside ones
-    // that did change is harmless.
-    const printFileNames = {};
-    for (const pf of printFiles) {
-      if (pf.displayName) printFileNames[pf.key] = pf.displayName;
-    }
-    // Only pair creatorName/creatorUrl with url when the field still
-    // matches what detectedOrigin last resolved -- if the co-admin
-    // hand-edited or cleared the URL, it no longer corresponds to
-    // whatever creator info was detected, so that shouldn't be written
-    // alongside it (a hand-typed URL getting a stale/mismatched
-    // creator credit). writeItemMetadata still shallow-merges this
-    // onto whatever origin block already exists (see itemMetadata.js),
-    // so this can't clobber existing creatorName/creatorUrl just
-    // because this save happens not to re-detect them, and an emptied
-    // field still overwrites url specifically (co-admin clearing a
-    // wrong auto-detected/guessed link).
-    const currentUrl = originField.input.value.trim();
-    const origin =
-      detectedOrigin && detectedOrigin.url === currentUrl
-        ? { url: currentUrl, creatorName: detectedOrigin.creatorName, creatorUrl: detectedOrigin.creatorUrl }
-        : { url: currentUrl };
-
-    try {
-      const result =
-        mode === 'add'
-          ? await window.catalogAPI.editSessionCommitAdd(sourceDir, {
-              name,
-              tags,
-              printFileImages,
-              printFileNames,
-              origin,
-              itemImage: itemImageRef,
-            })
-          : await window.catalogAPI.editSessionCommitEdit(item.path, {
-              name,
-              tags,
-              printFileImages,
-              printFileNames,
-              origin,
-              itemImage: itemImageRef,
-            });
-      pendingChanges = result.changes;
-      allItems = result.tree;
-      document.body.removeChild(overlay);
-      renderPrinterFilter();
-      renderTagFilter();
-      render();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-  buttonsRow.appendChild(saveBtn);
-
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'cancel';
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.onclick = () => document.body.removeChild(overlay);
-  buttonsRow.appendChild(cancelBtn);
-
-  box.appendChild(buttonsRow);
-  overlay.appendChild(box);
-
-  if (mode === 'add') {
-    const preparePromise = prefilledSourceDir
-      ? window.catalogAPI.editSessionPrepareAddFolder(prefilledSourceDir)
-      : window.catalogAPI.editSessionPickAddFolder();
-    preparePromise
-      .then((picked) => {
-        if (!picked) return; // cancelled the folder dialog -- never show the form
-        sourceDir = picked.sourceDir;
-        nameField.input.value = picked.suggestedName;
-        // prepareAddFolder (main.js) returns the detected origin as an
-        // `origin` object ({url, creatorName, creatorUrl}) -- keep the
-        // whole thing in detectedOrigin (not just the url shown here)
-        // so Save can still write creator info for a brand-new item.
-        originField.input.value = (picked.origin && picked.origin.url) || '';
-        detectedOrigin = picked.origin || null;
-        reparseBtn.disabled = false;
-        folderUrl = `file://${sourceDir}`;
-        printFiles = picked.printFiles.map((f) => ({
-          key: f.name,
-          shortname: f.shortname,
-          displayName: null, // brand new item -- nothing in metadata.json yet to read
-          printerModel: f.printerModel,
-          printerVariant: f.printerVariant,
-          colorChangeCount: f.colorChangeCount,
-          copies: f.copies,
-        }));
-        poolImages = picked.imageFiles.map((name) => ({ kind: 'existing', name }));
-        renderImagesSection();
-        document.body.appendChild(overlay);
-      })
-      .catch((err) => alert(err.message)); // e.g. a dropped path that wasn't actually a folder
-  } else {
-    document.body.appendChild(overlay);
-  }
-}
-
 // Chromium's default behavior for an unhandled drop is to navigate the
 // window to the dropped file, which would break the app -- prevent
 // that unconditionally, everywhere, then separately opt in to the one
@@ -2533,7 +2548,7 @@ document.addEventListener('drop', (e) => {
   const files = e.dataTransfer.files;
   if (!files || files.length === 0) return;
   const sourceDir = window.catalogAPI.getPathForFile(files[0]);
-  openItemEditor('add', null, sourceDir);
+  openItemModal(null, 'add', sourceDir);
 });
 
 init();
