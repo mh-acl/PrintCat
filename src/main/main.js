@@ -472,8 +472,15 @@ async function prepareAddFolder(sourceDir) {
   if (!stat || !stat.isDirectory()) {
     throw new Error('That isn\'t a folder -- drop a project folder to add it as an item.');
   }
-  const { printFiles, imageFiles, origin } = await editSession.scanSourceFolder(sourceDir);
-  return { sourceDir, suggestedName: stripTrailingId(path.basename(sourceDir)), printFiles, imageFiles, origin };
+  const { printFiles, imageFiles, explicitThumb, origin } = await editSession.scanSourceFolder(sourceDir);
+  return {
+    sourceDir,
+    suggestedName: stripTrailingId(path.basename(sourceDir)),
+    printFiles,
+    imageFiles,
+    explicitThumb,
+    origin,
+  };
 }
 
 ipcMain.handle('editSession:pickAddFolder', async () => {

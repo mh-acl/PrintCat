@@ -14,6 +14,20 @@ const { detectOrigin: detectOriginInFolder } = require('./originLocation');
 const GCODE_EXT = new Set(['.gcode', '.bgcode']);
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.svg', '.gif']);
 
+// Same thumb.* filename-convention check as indexer.js's private
+// _findExplicitThumb -- duplicated (rather than imported off Indexer)
+// since it's a small, stable, standalone check on a readdir() result
+// this module already has, same reasoning as the extension sets above.
+function findExplicitThumb(entries) {
+  const hit = entries.find(
+    (e) =>
+      e.isFile() &&
+      path.basename(e.name, path.extname(e.name)).toLowerCase() === 'thumb' &&
+      IMAGE_EXT.has(path.extname(e.name).toLowerCase())
+  );
+  return hit ? hit.name : null;
+}
+
 async function pathExists(p) {
   try {
     await fsp.access(p);
@@ -72,11 +86,18 @@ class EditSession {
     const printFiles = [];
     for (const e of entries) {
       if (!e.isFile() || !GCODE_EXT.has(path.extname(e.name).toLowerCase())) continue;
-      const { shortname } = parseFilename(e.name);
+      const { shortname, longname } = parseFilename(e.name);
       const { colorChangeCount, copies, values } = await parseGcodeMetadata(path.join(sourceDir, e.name));
       printFiles.push({
         name: e.name,
         shortname,
+        // Kept alongside shortname (previously discarded here) so
+        // renderer.js's createDraftFromPicked can run the same
+        // longname/shortname filename-matching fallback that
+        // createDraftFromItem uses for already-catalogued items --
+        // otherwise a freshly-added folder with legacy filename-matched
+        // images would show broken images in the add-mode editor too.
+        longname,
         colorChangeCount: colorChangeCount ?? null,
         copies: copies ?? null,
         // Same two keys indexer.js's _parseGcodeFile reads for the
@@ -90,6 +111,13 @@ class EditSession {
     const imageFiles = entries
       .filter((e) => e.isFile() && IMAGE_EXT.has(path.extname(e.name).toLowerCase()))
       .map((e) => e.name);
+    // Same thumb.* convention indexer.js checks for already-catalogued
+    // items -- without this, a freshly-added folder that relies on
+    // that convention (rather than an explicit metadata.json image)
+    // would show a broken item thumbnail in the add-mode editor, same
+    // bug as the print-file-level one this scan already guards against
+    // above via longname.
+    const explicitThumb = findExplicitThumb(entries);
     // Reuses the readdir above rather than having originLocation.js
     // list the folder again -- this scan already has the entries it
     // needs. Returns the full { url, creatorName, creatorUrl } object
@@ -97,7 +125,7 @@ class EditSession {
     // creator info survives the trip through prepareAddFolder() to the
     // item editor without a second PDF parse.
     const origin = await detectOriginInFolder(sourceDir, entries);
-    return { printFiles, imageFiles, origin };
+    return { printFiles, imageFiles, explicitThumb, origin };
   }
 
   // Same detection, for 'edit' mode: the item's folder isn't rescanned

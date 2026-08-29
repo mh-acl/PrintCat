@@ -697,13 +697,39 @@ let openModalHandle = null; // { itemPath, switchToEdit() } or null while nothin
 // Pulled out to module scope (not nested in openItemModal) since
 // add-mode's editor will need the equivalent construction later too.
 function createDraftFromItem(item) {
+  const imageFiles = item.imageFiles || [];
   return {
     displayName: item.displayName || item.name,
     tags: item.tags ? [...item.tags] : [],
     origin: item.origin ? { ...item.origin } : {},
-    itemImageRef: item.metadataItemImage ? { kind: 'existing', name: item.metadataItemImage } : null,
+    // Explicit metadata.json assignment wins, same as the main
+    // process's resolveItemThumbnail -- but fall back to the
+    // thumb.* filename convention (item.explicitThumb) before
+    // giving up, so legacy items assigned that way don't lose their
+    // image just because edit mode never used to look for it.
+    itemImageRef: item.metadataItemImage
+      ? { kind: 'existing', name: item.metadataItemImage }
+      : item.explicitThumb
+        ? { kind: 'existing', name: item.explicitThumb }
+        : null,
     printFiles: item.files.map((f) => {
       const key = f.path.split(/[\\/]/).pop();
+      const explicitImages = (f.metadataImages || []).map((name) => ({ kind: 'existing', name }));
+      // Mirrors thumbnailResolver.js's resolveFileThumbnail
+      // longname/shortname filename-matching fallback -- without it,
+      // a legacy image that was only ever matched by filename (never
+      // written into metadataImages) shows up as a broken image in
+      // edit mode even though view mode resolves it fine via
+      // getFileThumbnail. Everything this needs (longname/shortname,
+      // the item's imageFiles) is already on the renderer's item
+      // object, so no extra IPC round-trip is needed.
+      const images =
+        explicitImages.length > 0
+          ? explicitImages
+          : (() => {
+              const matched = matchImageByFilename(f, imageFiles);
+              return matched ? [{ kind: 'existing', name: matched }] : [];
+            })();
       return {
         key,
         shortname: f.shortname,
@@ -712,11 +738,32 @@ function createDraftFromItem(item) {
         printerVariant: f.printerVariant,
         colorChangeCount: f.colorChangeCount,
         copies: f.copies,
-        images: (f.metadataImages || []).map((name) => ({ kind: 'existing', name })),
+        images,
       };
     }),
-    poolImages: (item.imageFiles || []).map((name) => ({ kind: 'existing', name })),
+    poolImages: imageFiles.map((name) => ({ kind: 'existing', name })),
   };
+}
+
+// Case-insensitive basename-without-extension match against a file
+// entry's longname then shortname -- same precedence as
+// thumbnailResolver.js's byBaseName lookup. Kept local to renderer.js
+// (rather than shared with the main process) since it operates on
+// plain strings already available client-side and the renderer has
+// no access to Node's `path` module (contextIsolation/no
+// nodeIntegration).
+function matchImageByFilename(fileEntry, imageFiles) {
+  const byBaseName = new Map(imageFiles.map((name) => [baseNameNoExt(name).toLowerCase(), name]));
+  return (
+    byBaseName.get(fileEntry.longname.toLowerCase()) ||
+    byBaseName.get(fileEntry.shortname.toLowerCase()) ||
+    null
+  );
+}
+
+function baseNameNoExt(filename) {
+  const idx = filename.lastIndexOf('.');
+  return idx === -1 ? filename : filename.slice(0, idx);
 }
 
 // Builds the in-memory edit draft for a brand-new item, from the
@@ -726,22 +773,36 @@ function createDraftFromItem(item) {
 // catalog entry (no tags, no display-name overrides, no image
 // assignments yet).
 function createDraftFromPicked(picked) {
+  const imageFiles = picked.imageFiles || [];
   return {
     displayName: picked.suggestedName,
     tags: [],
     origin: picked.origin ? { ...picked.origin } : {},
-    itemImageRef: null,
-    printFiles: picked.printFiles.map((f) => ({
-      key: f.name,
-      shortname: f.shortname,
-      displayName: null,
-      printerModel: f.printerModel,
-      printerVariant: f.printerVariant,
-      colorChangeCount: f.colorChangeCount,
-      copies: f.copies,
-      images: [],
-    })),
-    poolImages: (picked.imageFiles || []).map((name) => ({ kind: 'existing', name })),
+    // Same explicit-metadata-first, thumb.*-convention-fallback
+    // precedence as createDraftFromItem above -- there's no
+    // metadata.json yet for a freshly-scanned folder, so this only
+    // ever resolves via picked.explicitThumb.
+    itemImageRef: picked.explicitThumb ? { kind: 'existing', name: picked.explicitThumb } : null,
+    printFiles: picked.printFiles.map((f) => {
+      // Same longname/shortname filename-matching fallback as
+      // createDraftFromItem above -- a freshly-scanned folder can
+      // already contain legacy filename-matched images (e.g. an old
+      // folder being (re)added that predates metadata.json), and
+      // without this they'd show up broken in the add-mode editor
+      // exactly like the edit-mode bug this mirrors.
+      const matched = matchImageByFilename(f, imageFiles);
+      return {
+        key: f.name,
+        shortname: f.shortname,
+        displayName: null,
+        printerModel: f.printerModel,
+        printerVariant: f.printerVariant,
+        colorChangeCount: f.colorChangeCount,
+        copies: f.copies,
+        images: matched ? [{ kind: 'existing', name: matched }] : [],
+      };
+    }),
+    poolImages: imageFiles.map((name) => ({ kind: 'existing', name })),
   };
 }
 
