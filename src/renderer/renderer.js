@@ -17,7 +17,7 @@ let selectedPrinters = new Set(); // empty = no restriction chosen ("All Printer
 let selectedTags = new Set(); // empty = no restriction chosen ("All Tags")
 let keywordQuery = ''; // raw text from the search box; '' = no restriction
 let settings = { availablePrinters: [], hideUnavailable: false, gitRepoUrl: '', gitBranch: '' };
-let syncStatus = { configured: false, lastSuccessAt: null, inProgress: false };
+let syncStatus = { configured: false, lastSuccessAt: null, inProgress: false, pausedForEdit: false };
 
 // Edit mode: the main screen doubles as the editing UI (see
 // ARCHITECTURE.md) rather than being a separate mode/window. pendingChanges
@@ -424,8 +424,18 @@ function renderSyncStatus() {
   footer.style.display = 'flex';
 
   if (refreshBtn) {
-    refreshBtn.disabled = syncStatus.inProgress;
+    refreshBtn.disabled = syncStatus.inProgress || syncStatus.pausedForEdit;
     refreshBtn.classList.toggle('spinning', syncStatus.inProgress);
+  }
+
+  // Sync is skipped entirely (see main.js's runCatalogSync) while a
+  // co-admin has an edit session open -- a git reset --hard/clean -fd
+  // mid-session would silently wipe their staged adds/edits. Say so
+  // explicitly rather than leaving the button greyed out with no
+  // explanation.
+  if (syncStatus.pausedForEdit) {
+    el.textContent = 'Catalog refresh paused while editing';
+    return;
   }
 
   if (!syncStatus.lastSuccessAt) {

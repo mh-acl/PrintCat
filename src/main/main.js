@@ -152,6 +152,7 @@ function enterEditSession() {
   }
   if (!editSession) editSession = new EditSession(DATA_DIR);
   mainWindow.webContents.send('editSession:entered');
+  broadcastSyncStatus(); // reflects pausedForEdit right away, not just on the next sync tick
 }
 
 function buildMenu() {
@@ -348,6 +349,10 @@ function getSyncStatusPayload() {
     configured: Boolean(settingsStore && settingsStore.get().gitRepoUrl),
     lastSuccessAt: syncStateStore ? syncStateStore.get().lastSuccessAt : null,
     inProgress: syncInProgress,
+    // Lets the renderer explain (and grey out the refresh button)
+    // rather than have a click silently no-op -- see runCatalogSync()'s
+    // editSession guard above.
+    pausedForEdit: Boolean(editSession),
   };
 }
 
@@ -370,8 +375,20 @@ function broadcastSyncStatus() {
 // three triggers), a new call is a no-op rather than running a second
 // git command against the same working dir concurrently; the
 // in-flight run will pick up the latest data anyway.
+//
+// Also guarded against an active edit session: editSession.js stages
+// every add/edit as uncommitted working-tree state (new untracked
+// folders, modified metadata.json files) directly inside DATA_DIR, and
+// gitSync.js's `reset --hard` + `clean -fd` would silently discard all
+// of it with no warning -- previously nothing stopped the timed
+// auto-refresh or the "Refresh Now" button from doing exactly that
+// mid-edit. Skipping here is safe: this just means one fewer sync
+// tick happens while a co-admin is mid-session, and the timer/button
+// will succeed again as soon as editSession goes back to null (the
+// session is cancelled or pushed).
 function runCatalogSync() {
   if (syncInProgress) return;
+  if (editSession) return;
 
   const { gitRepoUrl, gitBranch } = settingsStore.get();
   if (!gitRepoUrl) return;
@@ -554,6 +571,7 @@ ipcMain.handle('editSession:undoDelete', async (event, itemPath) => editSession.
 ipcMain.handle('editSession:cancelSession', async () => {
   await editSession.cancel();
   editSession = null;
+  broadcastSyncStatus(); // clears pausedForEdit right away
   return indexer.scan();
 });
 
@@ -579,6 +597,7 @@ ipcMain.handle('editSession:confirmSession', async () => {
   });
 
   editSession = null;
+  broadcastSyncStatus(); // clears pausedForEdit right away
   return { ok: true, tree: await indexer.scan() };
 });
 

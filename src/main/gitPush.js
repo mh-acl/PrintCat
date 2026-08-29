@@ -46,6 +46,30 @@ async function remoteHeadMatchesLocal(targetDir, authedUrl, branch, timeoutMs) {
 // targetDir had no uncommitted changes at all (e.g. a re-run after an
 // item was already synced) -- that's a normal, non-error outcome, not
 // a failure.
+// Strips every occurrence of the raw token out of an Error's message
+// and stdout/stderr before it's allowed to propagate. Once authedUrl
+// (below) exists, every `run()` call in this function embeds the
+// token directly into its own argv -- and gitSync.js's run() builds
+// its rejection Error from `${cmd} ${args.join(' ')}`, so a failing
+// push, retry, or even the ls-remote fallback check would otherwise
+// hand back an Error whose .message contains the live token verbatim.
+// That error is exactly what main.js's editSession:confirmSession
+// handler lets propagate to the renderer, which shows err.message in
+// a plain alert() -- every other part of this app goes out of its way
+// to keep the token out of renderer memory entirely (see
+// tokenStore.js's design notes), so this is the one path that could
+// otherwise put it on screen (and in whatever console/log captures the
+// alert's text). Mutates and returns the same error so callers can
+// just `throw redactToken(err, token)`.
+function redactToken(err, token) {
+  if (!token || !err || typeof err !== 'object') return err;
+  const scrub = (s) => (typeof s === 'string' ? s.split(token).join('***') : s);
+  if (typeof err.message === 'string') err.message = scrub(err.message);
+  if (typeof err.stdout === 'string') err.stdout = scrub(err.stdout);
+  if (typeof err.stderr === 'string') err.stderr = scrub(err.stderr);
+  return err;
+}
+
 async function pushNewItem({ targetDir, repoUrl, branch = 'main', token, commitMessage, timeoutMs }) {
   if (!repoUrl.startsWith('https://')) {
     throw new Error('Only HTTPS repository URLs are supported for pushing.');
@@ -67,26 +91,34 @@ async function pushNewItem({ targetDir, repoUrl, branch = 'main', token, commitM
   // one invocation via -c rather than changed globally.
   const pushArgs = ['-c', 'http.postBuffer=524288000', 'push', authedUrl, `HEAD:${branch}`];
 
+  // Everything from here on embeds `authedUrl` (token included) into a
+  // command line that `run()` may echo back inside a rejection Error
+  // -- see redactToken()'s comment above for why every exit out of
+  // this block goes through it.
   try {
-    await run('git', pushArgs, { cwd: targetDir, timeoutMs });
-    return { pushed: true };
-  } catch (firstErr) {
-    if (await remoteHeadMatchesLocal(targetDir, authedUrl, branch, timeoutMs)) {
-      return { pushed: true };
-    }
-
-    // Didn't actually land -- try once more forcing HTTP/1.1, the
-    // documented fix for the HTTP/2-sideband-disconnect variant of
-    // this error on networks that mishandle it.
     try {
-      await run('git', ['-c', 'http.version=HTTP/1.1', ...pushArgs], { cwd: targetDir, timeoutMs });
+      await run('git', pushArgs, { cwd: targetDir, timeoutMs });
       return { pushed: true };
-    } catch (retryErr) {
+    } catch (firstErr) {
       if (await remoteHeadMatchesLocal(targetDir, authedUrl, branch, timeoutMs)) {
         return { pushed: true };
       }
-      throw retryErr;
+
+      // Didn't actually land -- try once more forcing HTTP/1.1, the
+      // documented fix for the HTTP/2-sideband-disconnect variant of
+      // this error on networks that mishandle it.
+      try {
+        await run('git', ['-c', 'http.version=HTTP/1.1', ...pushArgs], { cwd: targetDir, timeoutMs });
+        return { pushed: true };
+      } catch (retryErr) {
+        if (await remoteHeadMatchesLocal(targetDir, authedUrl, branch, timeoutMs)) {
+          return { pushed: true };
+        }
+        throw retryErr;
+      }
     }
+  } catch (err) {
+    throw redactToken(err, token);
   }
 }
 
