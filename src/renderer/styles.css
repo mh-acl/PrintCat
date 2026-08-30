@@ -956,6 +956,35 @@ a.listing.pending-delete {
   border-color: var(--status-delete-line);
 }
 
+/* Edit-mode-only "needs attention" indicator (see indexer.js's
+   _computeAttentionFlags / renderItemCard) -- mirrors .item-trash-btn's
+   circular top-corner treatment on the opposite side, so the two read
+   as a matched pair of edit-mode-only overlays rather than one looking
+   like an afterthought. Not a button (see renderItemCard) -- centers
+   the emoji glyph the same way .item-trash-btn centers its icon glyph.
+   Selector is `a.listing span.item-attention-icon`, not just the bare
+   class, because it's a <span> under `a.listing` -- the plain class
+   selector alone (specificity 0,1,0) loses to `a.listing span`'s
+   0.5em/0.6em padding (specificity 0,1,2) above, which off-centers the
+   glyph inside the circle; this selector's specificity (0,2,2) wins,
+   and the explicit padding: 0 clears that inherited padding outright. */
+a.listing span.item-attention-icon {
+  position: absolute;
+  top: 0.4em;
+  right: 0.4em;
+  z-index: 2;
+  width: 1.9em;
+  height: 1.9em;
+  padding: 0;
+  line-height: 1.7em;
+  text-align: center;
+  border-radius: 50%;
+  border: 1px solid var(--status-delete-line);
+  background: var(--paper-raised);
+  font-size: 1em;
+  cursor: default;
+}
+
 /* Add-item stays outlined/secondary -- Print This is the one filled,
    accent-colored action in the app; this keeps that meaning intact. */
 .add-item-button {
@@ -997,6 +1026,15 @@ a.listing.pending-delete {
 .edit-session-bar {
   position: sticky;
   bottom: 0;
+  /* Without an explicit z-index this defaults to auto (~0), which
+     loses to the item cards' .item-trash-btn/.item-attention-icon
+     (z-index: 2) -- those corner overlays would scroll past on top of
+     this bar instead of going underneath it. 10 clears those (and any
+     other in-grid z-index: 1/2 usage) with room to spare, while
+     staying well below the modal/lightbox overlays (z-index: 1000/1100)
+     so opening an item still correctly covers this bar rather than the
+     reverse. */
+  z-index: 10;
   background: var(--paper-raised);
   border-top: 1px solid var(--line);
   padding: 0.75em 1em;
@@ -1343,4 +1381,3 @@ a.listing.pending-delete {
   font-size: 0.75em;
   cursor: pointer;
 }
-

@@ -4,7 +4,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const { run } = require('./gitSync');
-const { writeItemMetadata } = require('./itemMetadata');
+const { writeItemMetadata, METADATA_FILENAME } = require('./itemMetadata');
 const { parseFilename, parseGcodeMetadata } = require('./gcodeParser');
 const { detectOrigin: detectOriginInFolder } = require('./originLocation');
 
@@ -13,6 +13,112 @@ const { detectOrigin: detectOriginInFolder } = require('./originLocation');
 // stable constants.
 const GCODE_EXT = new Set(['.gcode', '.bgcode']);
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.svg', '.gif']);
+
+// GitHub hard-rejects any single blob at or above 100MB at
+// receive-pack -- server-side, unconditionally, regardless of client
+// settings like http.postBuffer. Caught here (before a folder is ever
+// copied into DATA_DIR or an existing item's folder is touched) so an
+// oversized file never gets git-added/committed in the first place --
+// once committed, it's stuck in local history and neither
+// EditSession.cancel() (which only reverts uncommitted/untracked
+// state) nor a retried push can undo it. Mirrored as a second,
+// defensive check in gitPush.js right before the actual commit, in
+// case a file lands in an item's folder some other way (e.g. dropped
+// in via Finder after this editor session already scanned it).
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
+
+// Recursively walks `dir` and returns { relPath, size } for every file
+// at or above limitBytes. relPath is relative to `dir` (not the full
+// path) so callers can report a filename the co-admin actually
+// recognizes rather than an absolute path buried inside DATA_DIR.
+async function findOversizedFiles(dir, limitBytes) {
+  const oversized = [];
+  async function walk(currentDir, relPrefix) {
+    const entries = await fsp.readdir(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      const relPath = relPrefix ? path.join(relPrefix, entry.name) : entry.name;
+      if (entry.isDirectory()) {
+        await walk(fullPath, relPath);
+      } else if (entry.isFile()) {
+        const stat = await fsp.stat(fullPath);
+        if (stat.size >= limitBytes) {
+          oversized.push({ relPath, size: stat.size });
+        }
+      }
+    }
+  }
+  await walk(dir, '');
+  return oversized;
+}
+
+// Shared error message for both this file's checks and gitPush.js's --
+// names every offending file (with its size) rather than just saying
+// "a file is too big", since with multiple print files in one item
+// folder the co-admin needs to know which one to remove or compress.
+function oversizedFilesMessage(oversized, limitBytes) {
+  const limitMb = Math.floor(limitBytes / (1024 * 1024));
+  const lines = oversized
+    .map((f) => `  - ${f.relPath} (${(f.size / (1024 * 1024)).toFixed(1)} MB)`)
+    .join('\n');
+  return (
+    `The following file(s) are at or above GitHub's ${limitMb}MB per-file limit and can't be added:\n` +
+    `${lines}\n\nRemove or compress them and try again.`
+  );
+}
+
+// Files worth keeping once an item's origin is verified (see
+// hasVerifiedOrigin/pruneToEssentialFiles below): the print-ready
+// outputs (.3mf/.gcode/.bgcode -- same sets indexer.js actually reads),
+// the images, and text/PDF docs (since that's often where
+// originLocation.js's own detection reads the source URL from, e.g. a
+// Printables info PDF or a Thingiverse readme). Everything else at the
+// item's top level -- source .stl/.step/.obj meshes, zip-original
+// license/readme dupes, anything else that rode along in the original
+// download -- plus every subfolder outright, gets dropped once an item
+// reaches this stage. metadata.json itself is always kept regardless
+// of this list (see pruneToEssentialFiles).
+const PROJECT_EXT = new Set(['.3mf']);
+const DOC_EXT = new Set(['.txt', '.pdf']);
+const KEEP_EXT = new Set([...GCODE_EXT, ...PROJECT_EXT, ...DOC_EXT, ...IMAGE_EXT]);
+
+// "Verified" here means detectOrigin actually resolved a creator, not
+// just a bare guessed URL -- same bar backfillOrigins already uses to
+// decide an item doesn't need re-detecting. Takes the *merged* object
+// writeItemMetadata returns (not the raw origin argument callers pass
+// in) because writeItemMetadata shallow-merges origin onto whatever
+// was already on file -- an edit that only touches name/tags, leaving
+// `origin` undefined, can still land on an item whose existing
+// metadata already carries a full verified origin from an earlier
+// backfill pass, and that item should still get pruned on this save.
+function hasVerifiedOrigin(mergedMetadata) {
+  const origin = mergedMetadata && mergedMetadata.origin;
+  return Boolean(origin && origin.url && origin.creatorName);
+}
+
+// Strips itemDir down to just the KEEP_EXT files (plus metadata.json)
+// at its top level, deleting every subfolder outright. Only ever
+// called once an item's origin is verified (see hasVerifiedOrigin) --
+// the origin URL becomes the fallback way to recover the original
+// source model later, in place of keeping it in this repo. This is a
+// one-way trim: it only prunes the folder as it stands *right now*,
+// during this add/edit -- it doesn't touch git history, so space
+// already spent on a since-pruned item's old files needs a separate
+// one-time history rewrite (git filter-repo or similar) to actually
+// reclaim.
+async function pruneToEssentialFiles(itemDir) {
+  const entries = await fsp.readdir(itemDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(itemDir, entry.name);
+    if (entry.isDirectory()) {
+      await fsp.rm(fullPath, { recursive: true, force: true });
+      continue;
+    }
+    if (entry.name === METADATA_FILENAME) continue;
+    if (KEEP_EXT.has(path.extname(entry.name).toLowerCase())) continue;
+    await fsp.rm(fullPath, { force: true });
+  }
+}
 
 // Same thumb.* filename-convention check as indexer.js's private
 // _findExplicitThumb -- duplicated (rather than imported off Indexer)
@@ -285,6 +391,15 @@ class EditSession {
       throw new Error(`"${folderName}" already exists in the catalog.`);
     }
 
+    // Checked against sourceDir (not destDir) so this rejects before
+    // anything is copied into DATA_DIR at all -- see MAX_FILE_BYTES
+    // comment above for why this has to happen before the folder ever
+    // touches git's working tree.
+    const oversized = await findOversizedFiles(sourceDir, MAX_FILE_BYTES);
+    if (oversized.length > 0) {
+      throw new Error(oversizedFilesMessage(oversized, MAX_FILE_BYTES));
+    }
+
     await fsp.mkdir(this.dataDir, { recursive: true });
     await fsp.cp(sourceDir, destDir, { recursive: true });
     const resolvedPathToName = new Map(); // external path -> final filename, shared below
@@ -295,13 +410,20 @@ class EditSession {
     const resolvedItemImage = itemImage
       ? await this._resolveSingleImageRef(destDir, itemImage, resolvedPathToName)
       : '';
-    await writeItemMetadata(destDir, {
+    const writtenMetadata = await writeItemMetadata(destDir, {
       displayName: name,
       tags,
       printFiles: resolvedPrintFiles,
       origin,
       itemImage: resolvedItemImage,
     });
+
+    // New items get today's protocol applied immediately: if origin is
+    // already verified at add time, there's no "existing item" to leave
+    // alone -- see pruneToEssentialFiles above.
+    if (hasVerifiedOrigin(writtenMetadata)) {
+      await pruneToEssentialFiles(destDir);
+    }
 
     this.changes[destDir] = { type: 'add', name };
     return this.changes;
@@ -311,6 +433,18 @@ class EditSession {
     // No category anymore, so nothing ever needs to move the item's
     // folder on an edit -- itemPath stays itemPath, only its
     // metadata.json changes.
+
+    // Checked here too (not just in addItem) since an existing item's
+    // folder can pick up a new oversized file outside this editor
+    // entirely -- e.g. a co-admin dropping an updated print file
+    // straight into the folder on disk before opening the editor to
+    // reassign its image. Catching it here, before any metadata write,
+    // keeps it from ever reaching git add/commit.
+    const oversized = await findOversizedFiles(itemPath, MAX_FILE_BYTES);
+    if (oversized.length > 0) {
+      throw new Error(oversizedFilesMessage(oversized, MAX_FILE_BYTES));
+    }
+
     const resolvedPathToName = new Map(); // external path -> final filename, shared below
     const resolvedPrintFiles = this._mergePrintFileNames(
       await this._resolveImages(itemPath, printFileImages, resolvedPathToName),
@@ -319,13 +453,22 @@ class EditSession {
     const resolvedItemImage = itemImage
       ? await this._resolveSingleImageRef(itemPath, itemImage, resolvedPathToName)
       : '';
-    await writeItemMetadata(itemPath, {
+    const writtenMetadata = await writeItemMetadata(itemPath, {
       displayName: name,
       tags,
       printFiles: resolvedPrintFiles,
       origin,
       itemImage: resolvedItemImage,
     });
+
+    // Pre-existing items only get pruned the next time they're
+    // touched through this editor -- that's the rollout window for
+    // today's protocol change, so an item nobody's opened yet keeps
+    // its full original folder for now regardless of whether it
+    // already has a verified origin on file.
+    if (hasVerifiedOrigin(writtenMetadata)) {
+      await pruneToEssentialFiles(itemPath);
+    }
 
     // An item added earlier this session doesn't exist in the last
     // pushed commit at all -- editing it further is still just

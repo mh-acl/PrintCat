@@ -677,6 +677,23 @@ function renderItemCard(item) {
       render();
     };
     card.appendChild(trashBtn);
+
+    // Edit-mode-only "needs attention" indicator (see indexer.js's
+    // _computeAttentionFlags) -- a plain span rather than a button
+    // since it's purely informational (native title tooltip on hover);
+    // no click handler, so a click on it just falls through to the
+    // card's own onclick and opens the editor like clicking anywhere
+    // else on the card, which is the natural way to act on it. Designed
+    // to hold more than one flag id later without changing this
+    // rendering: every flag's message is just joined into the one
+    // tooltip.
+    if (item.attentionFlags && item.attentionFlags.length > 0) {
+      const attentionIcon = document.createElement('span');
+      attentionIcon.className = 'item-attention-icon';
+      attentionIcon.textContent = '\u26a0\ufe0f'; // ⚠️
+      attentionIcon.title = item.attentionFlags.map((f) => f.message).join('\n\n');
+      card.appendChild(attentionIcon);
+    }
   }
 
   const mediaSlot = document.createElement('div');

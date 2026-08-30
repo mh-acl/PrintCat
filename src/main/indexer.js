@@ -13,11 +13,20 @@ const fsp = fs.promises;
 const path = require('path');
 const { parseFilename, parseGcodeMetadata } = require('./gcodeParser');
 const { stripTrailingId } = require('./folderName');
-const { readItemMetadata } = require('./itemMetadata');
+const { readItemMetadata, METADATA_FILENAME } = require('./itemMetadata');
 
 const GCODE_EXT = new Set(['.gcode', '.bgcode']);
 const PROJECT_EXT = new Set(['.3mf']);
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.svg', '.gif']);
+// Same list editSession.js's KEEP_EXT uses for its post-save pruning --
+// duplicated rather than imported, same convention as the extension
+// sets above (indexer.js and editSession.js each keep their own small,
+// stable copies). Used here purely to *detect and report* an item's
+// current state for the edit-mode attention icon (see
+// _computeAttentionFlags below); editSession.js is the only place that
+// actually deletes anything.
+const DOC_EXT = new Set(['.txt', '.pdf']);
+const KEEP_EXT = new Set([...GCODE_EXT, ...PROJECT_EXT, ...DOC_EXT, ...IMAGE_EXT]);
 
 // Bump this whenever gcodeParser.js's parsing logic changes in a way
 // that would produce different results for already-cached files, OR
@@ -169,6 +178,11 @@ class Indexer {
       imageFiles, // all images present in this folder, for per-file overrides
       projectFiles: projectFiles.map((f) => path.join(dir, f.name)),
       files,
+      // Edit-mode-only warning icon data -- see _computeAttentionFlags.
+      // Always computed (cheap: reuses this call's own readdir, no
+      // extra I/O) but renderer.js only ever displays it while
+      // editModeActive, same as the trash button.
+      attentionFlags: this._computeAttentionFlags(entries, metadata && metadata.origin),
     };
   }
 
@@ -180,6 +194,43 @@ class Indexer {
         IMAGE_EXT.has(path.extname(e.name).toLowerCase())
     );
     return hit ? hit.name : null;
+  }
+
+  // Edit-mode-only "needs attention" flags for the item card's warning
+  // icon (see renderer.js's renderItemCard). Returns an array so more
+  // flag types can be added later without changing this method's
+  // shape -- each is { id, message }, `message` being the tooltip
+  // text shown on hover. Computed live off the folder's current
+  // contents (not a persisted flag) so it's always accurate regardless
+  // of how an item got into its current state.
+  //
+  // Today's only check: whether this item still has files outside
+  // editSession.js's KEEP_EXT list, or any subfolder, at its top level
+  // -- i.e. whether it's been through the post-verified-origin pruning
+  // pass yet (see editSession.js's pruneToEssentialFiles). The tooltip
+  // wording differs depending on *why* it hasn't: an item with a
+  // verified origin just hasn't been re-saved since that protocol
+  // started (actionable -- edit and save it to clean it up), while one
+  // without verified origin is being kept in full on purpose for now.
+  _computeAttentionFlags(entries, origin) {
+    const flags = [];
+    const hasSubfolder = entries.some((e) => e.isDirectory() && !e.name.startsWith('.'));
+    const hasExtraTopLevelFile = entries.some(
+      (e) =>
+        e.isFile() &&
+        e.name !== METADATA_FILENAME &&
+        !KEEP_EXT.has(path.extname(e.name).toLowerCase())
+    );
+    if (hasSubfolder || hasExtraTopLevelFile) {
+      const verifiedOrigin = Boolean(origin && origin.url && origin.creatorName);
+      flags.push({
+        id: 'not-pruned',
+        message: verifiedOrigin
+          ? "Origin info is verified, but this item still has its original extra files (source model, subfolders, etc.). They'll be removed the next time this item is edited and saved."
+          : "This item still has its full original folder (source model, subfolders, etc.) since it has no verified origin info yet for cleanup to fall back on.",
+      });
+    }
+    return flags;
   }
 
   async _parseGcodeFile(filePath) {

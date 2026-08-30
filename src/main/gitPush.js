@@ -1,6 +1,64 @@
 'use strict';
 
+const fs = require('fs');
+const fsp = fs.promises;
+const path = require('path');
 const { run } = require('./gitSync');
+
+// Same limit and reasoning as editSession.js's MAX_FILE_BYTES --
+// duplicated rather than imported, same convention that file already
+// uses for its own small stable constants (see its GCODE_EXT/IMAGE_EXT
+// comment). This is the defensive second check: editSession.js already
+// rejects an oversized file before it's ever copied into an item's
+// folder, but this catches anything that slips through some other way
+// (a file dropped straight into DATA_DIR outside the app, or a future
+// caller of pushNewItem that doesn't go through editSession at all) --
+// right before the commit that would otherwise bake it into history
+// for good.
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
+
+// Checks only the files git status --porcelain reports as
+// added/modified (i.e. exactly what's about to be committed), not the
+// whole working tree -- an already-committed oversized file from
+// before this check existed shouldn't block an unrelated item's push.
+// Returns { relPath, size } for each offender so the error can name
+// them specifically.
+async function findOversizedPendingFiles(targetDir, statusOutput, limitBytes) {
+  const oversized = [];
+  const lines = statusOutput.split('\n').filter((line) => line.trim().length > 0);
+  for (const line of lines) {
+    // Porcelain v1: two status chars + a space + the path (renames add
+    // ` -> newPath`, in which case the new path is what's actually
+    // being committed). Quoted paths (unusual filenames) get their
+    // surrounding quotes stripped on a best-effort basis; a path this
+    // can't make sense of is skipped rather than aborting the whole
+    // push over a defensive check.
+    const rest = line.slice(3);
+    const arrowIdx = rest.indexOf(' -> ');
+    const relPath = (arrowIdx >= 0 ? rest.slice(arrowIdx + 4) : rest).replace(/^"|"$/g, '');
+    try {
+      const stat = await fsp.stat(path.join(targetDir, relPath));
+      if (stat.isFile() && stat.size >= limitBytes) {
+        oversized.push({ relPath, size: stat.size });
+      }
+    } catch (err) {
+      // Deleted/renamed-away path, or one this couldn't resolve --
+      // nothing to check, move on.
+    }
+  }
+  return oversized;
+}
+
+function oversizedFilesMessage(oversized, limitBytes) {
+  const limitMb = Math.floor(limitBytes / (1024 * 1024));
+  const lines = oversized
+    .map((f) => `  - ${f.relPath} (${(f.size / (1024 * 1024)).toFixed(1)} MB)`)
+    .join('\n');
+  return (
+    `The following file(s) are at or above GitHub's ${limitMb}MB per-file limit and can't be pushed:\n` +
+    `${lines}\n\nRemove or compress them, then try again.`
+  );
+}
 
 // GitHub's git-over-HTTP push can fail with a hard "RPC failed; HTTP
 // 400 ... unexpected disconnect while reading sideband packet" error
@@ -78,6 +136,11 @@ async function pushNewItem({ targetDir, repoUrl, branch = 'main', token, commitM
   const { stdout: statusOutput } = await run('git', ['status', '--porcelain'], { cwd: targetDir, timeoutMs });
   if (!statusOutput.trim()) {
     return { pushed: false, reason: 'nothing-to-commit' };
+  }
+
+  const oversized = await findOversizedPendingFiles(targetDir, statusOutput, MAX_FILE_BYTES);
+  if (oversized.length > 0) {
+    throw new Error(oversizedFilesMessage(oversized, MAX_FILE_BYTES));
   }
 
   await run('git', ['add', '-A'], { cwd: targetDir, timeoutMs });
