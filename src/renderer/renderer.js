@@ -134,6 +134,18 @@ function printerLabel(file) {
   return [file.printerModel, file.printerVariant].filter(Boolean).join(' ') || 'Unknown printer';
 }
 
+// Builds a safe file:// URL from an absolute filesystem path. Item and
+// print-file names come straight from arbitrary Thingiverse/Printables zip
+// downloads and are kept as-is (see ARCHITECTURE.md), so characters like
+// "#" or "%" that are meaningful in a URL (fragment marker, percent-escape)
+// are entirely plausible in them. Encoding each path segment individually
+// -- not the separating slashes -- makes those bytes round-trip as literal
+// characters in the path instead of being misread as URL syntax.
+function fileUrl(absolutePath) {
+  const encoded = absolutePath.split('/').map(encodeURIComponent).join('/');
+  return `file://${encoded}`;
+}
+
 function collectPrinters(items) {
   const set = new Set();
   for (const item of items) {
@@ -235,6 +247,33 @@ function countItemsForTag(items, printerSet, tagValue, query) {
     total++;
   }
   return total;
+}
+
+function capitalize(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Builds a "nothing matches" message that names only the currently-active
+// restriction(s) that would actually surface something if relaxed --
+// tested individually (holding the others fixed) rather than always
+// pointing at the same one regardless of what's actually active, so the
+// suggestion matches the person's actual situation instead of sending
+// them to fix the wrong thing.
+//
+// `restrictions` is an array of:
+//   { active: boolean, wouldHelp: () => boolean, suggestion: string }
+// `allClearMessage` is shown when none of the restrictions are active at
+// all (e.g. an empty catalog). `combinedMessage` is shown when every
+// active restriction is individually necessary -- no single change would
+// help, only loosening more than one at once would.
+function buildFilterMessage(restrictions, allClearMessage, combinedMessage) {
+  const active = restrictions.filter((r) => r.active);
+  if (active.length === 0) return allClearMessage;
+
+  const fixes = active.filter((r) => r.wouldHelp()).map((r) => r.suggestion);
+  if (fixes.length === 0) return combinedMessage;
+
+  return `${capitalize(fixes.join(', or '))}.`;
 }
 
 // The filter actually in effect, folding the admin's hideUnavailable
@@ -450,6 +489,49 @@ function renderSyncStatus() {
     : `Last catalog refresh: ${formatRelativeTime(syncStatus.lastSuccessAt)}`;
 }
 
+// Builds the "nothing matches" message for the main grid, checking each
+// currently-active restriction (search text, tag filter, printer filter,
+// and -- in edit mode -- the Pending/Edited/Trashed smart-tag filter)
+// individually to see which one(s) are actually responsible for the
+// empty grid, rather than always blaming the same one.
+function buildGridEmptyMessage(effectivePrinters) {
+  const wouldMatchWithout = (overrides) =>
+    allItems.some(
+      (item) =>
+        itemMatchesPrinter(item, overrides.printers ?? effectivePrinters) &&
+        itemMatchesTags(item, overrides.tags ?? selectedTags) &&
+        itemMatchesSmartTags(item, overrides.smartTags ?? selectedSmartTags) &&
+        itemMatchesKeyword(item, overrides.keyword ?? keywordQuery)
+    );
+
+  return buildFilterMessage(
+    [
+      {
+        active: Boolean(keywordQuery),
+        wouldHelp: () => wouldMatchWithout({ keyword: '' }),
+        suggestion: 'try a different search term, or clear the search box',
+      },
+      {
+        active: selectedTags.size > 0,
+        wouldHelp: () => wouldMatchWithout({ tags: new Set() }),
+        suggestion: 'choose "All Tags"',
+      },
+      {
+        active: effectivePrinters.size > 0,
+        wouldHelp: () => wouldMatchWithout({ printers: new Set() }),
+        suggestion: 'choose "All Printers"',
+      },
+      {
+        active: selectedSmartTags.size > 0,
+        wouldHelp: () => wouldMatchWithout({ smartTags: new Set() }),
+        suggestion: 'clear the Pending/Edited/Trashed filter',
+      },
+    ],
+    'There are no items in the catalog yet.',
+    'Nothing matches the current search and filters together. Try loosening more than one at a time.'
+  );
+}
+
 function render() {
   const effective = effectivePrinterFilter();
   const listing = document.getElementById('listing');
@@ -464,13 +546,7 @@ function render() {
   );
 
   if (visibleItems.length === 0) {
-    listing.appendChild(
-      renderEmptyState(
-        keywordQuery
-          ? 'Nothing matches your search. Try a different keyword, or clear the search box.'
-          : 'Nothing matches the selected filters. Try different printers or tags, or choose "All" for each.'
-      )
-    );
+    listing.appendChild(renderEmptyState(buildGridEmptyMessage(effective)));
     renderEditBar();
     return;
   }
@@ -611,14 +687,22 @@ function renderItemCard(item) {
   img.alt = item.displayName || item.name;
   mediaSlot.appendChild(img);
 
-  window.catalogAPI.getItemThumbnail(item).then((thumb) => {
-    img.src = thumb ? `file://${thumb}` : 'nothumb.svg';
-    // Only offer zoom when there's a real image -- not for the
-    // generic "no thumbnail" placeholder graphic.
-    if (thumb) {
-      mediaSlot.appendChild(makeZoomButton(() => img.src, img.alt));
-    }
-  });
+  window.catalogAPI
+    .getItemThumbnail(item)
+    .then((thumb) => {
+      img.src = thumb ? fileUrl(thumb) : 'nothumb.svg';
+      // Only offer zoom when there's a real image -- not for the
+      // generic "no thumbnail" placeholder graphic.
+      if (thumb) {
+        mediaSlot.appendChild(makeZoomButton(() => img.src, img.alt));
+      }
+    })
+    // A rejected lookup (e.g. the file vanished mid-scan during a
+    // background sync) shouldn't leave the <img> with no src at all --
+    // fall back to the same placeholder as "no thumbnail found".
+    .catch(() => {
+      img.src = 'nothumb.svg';
+    });
 
   const label = document.createElement('span');
   label.textContent = item.displayName || item.name;
@@ -895,7 +979,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   let editTagsField = null; // the edit-mode tag chip input, so Save can read its current tags
   let refreshEditFilesArea = () => {}; // rebuilds just the file cards + gallery, set by buildEditRoot()
   let sourceDir = item ? item.path : null; // becomes known for 'add' once the folder's picked, below
-  let folderUrl = item ? `file://${item.path}` : null;
+  let folderPath = item ? item.path : null; // raw fs path, not a URL -- see imageRefSrc/fileUrl
 
   const overlay = document.createElement('div');
   overlay.className = 'drive-picker-overlay item-modal-overlay';
@@ -916,16 +1000,18 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     document.removeEventListener('keydown', onKeydown);
     if (item && openModalHandle && openModalHandle.itemPath === item.path) openModalHandle = null;
   }
-  // Escape only dismisses in view mode -- in edit/add mode it would
-  // silently discard an in-progress draft with no confirmation, unlike
-  // the explicit Cancel button.
+  // This modal supports its explicit button (Close in view mode, Cancel
+  // in edit/add mode) and Escape, but deliberately NOT click-on-backdrop
+  // -- unlike the image lightbox, dismissing this one in edit/add mode
+  // discards an in-progress draft, and a backdrop click is too easy to
+  // trigger by accident for something with that consequence. Escape maps
+  // to the same close() the Cancel/Close button already uses in every
+  // mode, so it's no more destructive than that button -- it's just a
+  // keyboard equivalent of it, not a separate lighter-weight dismissal.
   function onKeydown(e) {
-    if (e.key === 'Escape' && mode === 'view') close();
+    if (e.key === 'Escape') close();
   }
   document.addEventListener('keydown', onKeydown);
-  overlay.onclick = (e) => {
-    if (e.target === overlay && mode === 'view') close();
-  };
 
   function renderTopBar() {
     topBar.innerHTML = '';
@@ -957,17 +1043,31 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     content.innerHTML = '';
     if (mode === 'view') {
       const effective = effectivePrinterFilter();
-      let matchingFiles =
+      const matchesPrinterOnly =
         effective && effective.size > 0 ? item.files.filter((f) => effective.has(printerLabel(f))) : item.files;
-      matchingFiles = matchingFiles.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
+      const matchingFiles = matchesPrinterOnly.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
       if (matchingFiles.length === 0) {
-        content.appendChild(
-          renderEmptyState(
-            keywordQuery
-              ? 'No print files here match your search. Try a different keyword, or clear the search box.'
-              : 'This isn\'t sliced for the selected printer(s). Try picking a different printer, or choose "All Printers" to see every version.'
-          )
+        // Same reasoning as the main grid's empty state (buildGridEmptyMessage)
+        // -- check which active restriction (search text, printer filter)
+        // is actually responsible rather than always naming the same one.
+        const matchesKeywordOnly = item.files.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
+        const message = buildFilterMessage(
+          [
+            {
+              active: Boolean(keywordQuery),
+              wouldHelp: () => matchesPrinterOnly.length > 0,
+              suggestion: 'try a different search term, or clear the search box',
+            },
+            {
+              active: effective && effective.size > 0,
+              wouldHelp: () => matchesKeywordOnly.length > 0,
+              suggestion: 'choose "All Printers" to see every version',
+            },
+          ],
+          'This item has no print files.',
+          'No print files here match both your search and the selected printer(s). Try loosening one of them.'
         );
+        content.appendChild(renderEmptyState(message));
       } else {
         content.appendChild(renderItemDetail({ ...item, files: matchingFiles }));
       }
@@ -1063,7 +1163,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     chip.appendChild(selectToggle);
 
     const img = document.createElement('img');
-    img.src = draft.itemImageRef ? imageRefSrc(draft.itemImageRef, folderUrl) : 'nothumb.svg';
+    img.src = draft.itemImageRef ? imageRefSrc(draft.itemImageRef, folderPath) : 'nothumb.svg';
     img.alt = 'Item image';
     chip.appendChild(img);
 
@@ -1127,7 +1227,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     thumbWrap.className = 'file-thumb-wrap';
     const img = document.createElement('img');
     img.alt = pf.displayName || pf.shortname;
-    img.src = pf.images.length > 0 ? imageRefSrc(pf.images[0], folderUrl) : 'nothumb.svg';
+    img.src = pf.images.length > 0 ? imageRefSrc(pf.images[0], folderPath) : 'nothumb.svg';
     thumbWrap.appendChild(img);
     card.appendChild(thumbWrap);
 
@@ -1161,7 +1261,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       const chip = document.createElement('span');
       chip.className = 'editor-image-chip';
       const chipImg = document.createElement('img');
-      chipImg.src = imageRefSrc(ref, folderUrl);
+      chipImg.src = imageRefSrc(ref, folderPath);
       chip.appendChild(chipImg);
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
@@ -1228,7 +1328,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 
       const thumb = document.createElement('img');
       thumb.className = 'item-modal-gallery-thumb';
-      thumb.src = imageRefSrc(ref, folderUrl);
+      thumb.src = imageRefSrc(ref, folderPath);
       thumb.title = ref.name;
       thumb.draggable = true;
       thumb.ondragstart = (e) => e.dataTransfer.setData('text/plain', String(idx));
@@ -1452,7 +1552,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       .then((picked) => {
         if (!picked) return; // cancelled the folder dialog -- never show the form
         sourceDir = picked.sourceDir;
-        folderUrl = `file://${sourceDir}`;
+        folderPath = sourceDir;
         draft = createDraftFromPicked(picked);
         renderTopBar();
         renderContent();
@@ -1496,12 +1596,19 @@ function renderItemDetail(item) {
     img.alt = file.shortname;
     thumbWrap.appendChild(img);
 
-    window.catalogAPI.getFileThumbnail(file, item.imageFiles).then((thumbPath) => {
-      img.src = thumbPath ? `file://${thumbPath}` : 'nothumb.svg';
-      if (thumbPath) {
-        thumbWrap.appendChild(makeZoomButton(() => img.src, img.alt));
-      }
-    });
+    window.catalogAPI
+      .getFileThumbnail(file, item.imageFiles)
+      .then((thumbPath) => {
+        img.src = thumbPath ? fileUrl(thumbPath) : 'nothumb.svg';
+        if (thumbPath) {
+          thumbWrap.appendChild(makeZoomButton(() => img.src, img.alt));
+        }
+      })
+      // Same reasoning as the item-card thumbnail above -- don't leave
+      // the image blank on a rejected lookup.
+      .catch(() => {
+        img.src = 'nothumb.svg';
+      });
     row.appendChild(thumbWrap);
 
     const name = document.createElement('h3');
@@ -1533,9 +1640,20 @@ function renderItemDetail(item) {
     const meta = document.createElement('div');
     meta.className = 'file-meta';
     const metaLines = [
-      file.printerModel ? `Printer: ${file.printerModel}` : null,
+      // Always the full model+variant label (not just the model) --
+      // otherwise two files sliced for different variants of the same
+      // printer model (e.g. different nozzles) would show identically
+      // here with nothing to tell them apart.
+      file.printerModel ? `Printer: ${printerLabel(file)}` : null,
       file.printTime ? `Print time: ${file.printTime}` : null,
-      file.filamentType ? `Filament: ${formatFilamentTypes(file.filamentType)}, ${file.filamentUsedG}g` : null,
+      // filamentUsedG can be null independently of filamentType (see
+      // indexer.js) -- drop the weight clause entirely rather than
+      // showing a literal "null" when it didn't parse.
+      file.filamentType
+        ? `Filament: ${formatFilamentTypes(file.filamentType)}${
+            file.filamentUsedG != null ? `, ${file.filamentUsedG}g` : ''
+          }`
+        : null,
       // colorChangeCount/copies are now shown in the subtitle above,
       // not here -- see subtitleParts.
       // Rendered specially below (needs a tooltip icon for pause
@@ -1585,22 +1703,33 @@ async function handlePrintClick(file) {
   const drives = await window.catalogAPI.listDrives();
 
   if (drives.length === 0) {
-    alert('No USB drive detected. Plug one in and try again.');
+    await showMessageDialog('No USB drive detected. Plug one in and try again.');
     return;
   }
 
   const drive = drives.length === 1 ? drives[0] : await pickDrive(drives);
   if (!drive) return; // cancelled the picker
 
-  const confirmed = confirm(`Save "${file.shortname}" to "${drive.name}"?`);
+  const confirmed = await showConfirmDialog(`Save "${file.shortname}" to "${drive.name}"?`, {
+    confirmLabel: 'Save',
+  });
   if (!confirmed) return;
 
   try {
-    await window.catalogAPI.saveFileToDrive(file.path, drive.mountPoint);
-    const choice = await showActionDialog(`Saved "${file.shortname}" to "${drive.name}".`, [
-      { label: 'Keep Browsing', value: 'continue' },
-      { label: 'Eject Drive', value: 'eject', className: 'eject' },
-    ]);
+    // The drive is shared with everyone else at the makerspace and may
+    // already have a same-named file on it -- saveFileToDrive picks a
+    // non-colliding name (see uniqueFilename.js) and reports back
+    // whatever name it actually used, which can differ from
+    // file.shortname.
+    const saved = await window.catalogAPI.saveFileToDrive(file.path, drive.mountPoint);
+    const choice = await showActionDialog(
+      `Saved "${saved.name}" to "${drive.name}".`,
+      [
+        { label: 'Keep Browsing', value: 'continue' },
+        { label: 'Eject Drive', value: 'eject', className: 'eject' },
+      ],
+      { escapeValue: 'continue' }
+    );
 
     if (choice === 'eject') {
       try {
@@ -1610,16 +1739,33 @@ async function handlePrintClick(file) {
           drive.diskIdentifier
         );
       } catch (err) {
-        alert(`Couldn't eject the drive: ${err.message}`);
+        await showMessageDialog(`Couldn't eject the drive: ${err.message}`);
       }
     }
   } catch (err) {
-    alert(`Couldn't save the file: ${err.message}`);
+    await showMessageDialog(`Couldn't save the file: ${err.message}`);
   }
 }
 
+// Dismissal pattern shared by every dialog below (drive picker, action
+// dialog, eject-safe dialog, message/confirm dialogs): the explicit
+// button(s) plus Escape, but deliberately NOT click-on-backdrop -- these
+// all sit in the middle of the "save/eject a USB drive" flow, where an
+// accidental dismissal is more disruptive than in something like the
+// image lightbox. attachEscapeHandler wires Escape to whatever the
+// dialog's own "safe default" resolution is and returns a cleanup
+// function each dialog's own finish/close path should call.
+function attachEscapeHandler(onEscape) {
+  const onKeydown = (e) => {
+    if (e.key === 'Escape') onEscape();
+  };
+  document.addEventListener('keydown', onKeydown);
+  return () => document.removeEventListener('keydown', onKeydown);
+}
+
 // Shown only when more than one USB drive is plugged in at once.
-// Resolves to the chosen drive, or null if the user cancels.
+// Resolves to the chosen drive, or null if the user cancels (via the
+// Cancel button or Escape).
 function pickDrive(drives) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -1632,7 +1778,9 @@ function pickDrive(drives) {
     title.textContent = 'Choose a USB drive';
     box.appendChild(title);
 
+    const detachEscape = attachEscapeHandler(() => finish(null));
     const finish = (result) => {
+      detachEscape();
       document.body.removeChild(overlay);
       resolve(result);
     };
@@ -1656,9 +1804,13 @@ function pickDrive(drives) {
 }
 
 // A generic "message + a few buttons" modal -- used for the
-// continue-browsing-or-eject choice after a save completes. Resolves
-// to whichever action's `value` was clicked.
-function showActionDialog(message, actions) {
+// continue-browsing-or-eject choice after a save completes. Resolves to
+// whichever action's `value` was clicked. `escapeValue`, if given, is
+// the action value Escape resolves to (the caller's "safe default", e.g.
+// "keep browsing" rather than "eject") -- if omitted, Escape does
+// nothing, since a dialog with no safe default shouldn't guess which
+// choice was meant.
+function showActionDialog(message, actions, { escapeValue } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'drive-picker-overlay';
@@ -1670,7 +1822,11 @@ function showActionDialog(message, actions) {
     text.textContent = message;
     box.appendChild(text);
 
+    const detachEscape = attachEscapeHandler(() => {
+      if (escapeValue !== undefined) finish(escapeValue);
+    });
     const finish = (value) => {
+      detachEscape();
       document.body.removeChild(overlay);
       resolve(value);
     };
@@ -1691,8 +1847,8 @@ function showActionDialog(message, actions) {
 // Shown after a successful eject. Auto-closes once the drive is
 // physically removed (polling, since diskutil eject already unmounted
 // the volume -- we're watching for the whole disk to vanish from the
-// external-disk list). A manual Dismiss button stays available in
-// case detection ever misses for some reason.
+// external-disk list). The Dismiss button and Escape both close it
+// manually in case detection ever misses for some reason.
 function showEjectSafeDialog(message, diskIdentifier) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -1713,8 +1869,10 @@ function showEjectSafeDialog(message, diskIdentifier) {
     document.body.appendChild(overlay);
 
     let pollTimer = null;
+    const detachEscape = attachEscapeHandler(() => close());
     const close = () => {
       clearInterval(pollTimer);
+      detachEscape();
       if (overlay.parentNode) document.body.removeChild(overlay);
       resolve();
     };
@@ -1725,6 +1883,77 @@ function showEjectSafeDialog(message, diskIdentifier) {
       const stillPresent = await window.catalogAPI.isDrivePresent(diskIdentifier);
       if (!stillPresent) close();
     }, 1000);
+  });
+}
+
+// Styled replacement for the native alert() -- a single-button "OK"
+// info dialog. Button + Escape, no click-on-backdrop (see
+// attachEscapeHandler above).
+function showMessageDialog(message, buttonLabel = 'OK') {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'drive-picker-overlay';
+
+    const box = document.createElement('div');
+    box.className = 'drive-picker-box';
+
+    const text = document.createElement('p');
+    text.textContent = message;
+    box.appendChild(text);
+
+    const detachEscape = attachEscapeHandler(() => finish());
+    const finish = () => {
+      detachEscape();
+      document.body.removeChild(overlay);
+      resolve();
+    };
+
+    const okBtn = document.createElement('button');
+    okBtn.textContent = buttonLabel;
+    okBtn.onclick = finish;
+    box.appendChild(okBtn);
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    okBtn.focus();
+  });
+}
+
+// Styled replacement for the native confirm() -- resolves true/false.
+// Button + Escape (Escape = Cancel), no click-on-backdrop.
+function showConfirmDialog(message, { confirmLabel = 'OK', cancelLabel = 'Cancel' } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'drive-picker-overlay';
+
+    const box = document.createElement('div');
+    box.className = 'drive-picker-box';
+
+    const text = document.createElement('p');
+    text.textContent = message;
+    box.appendChild(text);
+
+    const detachEscape = attachEscapeHandler(() => finish(false));
+    const finish = (value) => {
+      detachEscape();
+      document.body.removeChild(overlay);
+      resolve(value);
+    };
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'cancel';
+    cancelBtn.textContent = cancelLabel;
+    cancelBtn.onclick = () => finish(false);
+    box.appendChild(cancelBtn);
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.textContent = confirmLabel;
+    confirmBtn.onclick = () => finish(true);
+    box.appendChild(confirmBtn);
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    confirmBtn.focus();
   });
 }
 
@@ -2597,8 +2826,8 @@ function formatFilamentTypes(raw) {
   return unique.join('/');
 }
 
-function imageRefSrc(ref, folderUrl) {
-  return ref.kind === 'existing' ? `${folderUrl}/${ref.name}` : `file://${ref.path}`;
+function imageRefSrc(ref, folderPath) {
+  return ref.kind === 'existing' ? fileUrl(`${folderPath}/${ref.name}`) : fileUrl(ref.path);
 }
 
 function imageRefEquals(a, b) {

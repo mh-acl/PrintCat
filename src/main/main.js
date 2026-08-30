@@ -19,6 +19,7 @@ const { readSyncToken, writeSyncToken, tokenExists } = require('./tokenStore');
 const { promptForToken } = require('./provisionTokenWindow');
 const { EditSession } = require('./editSession');
 const { stripTrailingId } = require('./folderName');
+const { uniqueFilename } = require('./uniqueFilename');
 
 // The single in-progress editing session, or null when a co-admin
 // hasn't entered edit mode. Only one at a time -- see
@@ -463,9 +464,23 @@ ipcMain.handle('drives:saveFile', async (event, sourcePath, mountPoint) => {
     throw new Error('Refusing to copy a file outside the data directory');
   }
 
-  const destPath = path.join(mountPoint, path.basename(sourcePath));
+  // These are shared, accumulating USB drives (see drives.js) -- a
+  // generic print-file name colliding with something already on the
+  // stick is plausible, so pick a non-colliding name (name.1.ext,
+  // name.2.ext, ...) instead of silently overwriting whatever's there.
+  const desiredName = path.basename(sourcePath);
+  const destName = await uniqueFilename(desiredName, async (candidate) => {
+    try {
+      await fsp.access(path.join(mountPoint, candidate));
+      return true;
+    } catch (err) {
+      return false;
+    }
+  });
+
+  const destPath = path.join(mountPoint, destName);
   await fsp.copyFile(resolvedSource, destPath);
-  return destPath;
+  return { path: destPath, name: destName };
 });
 
 ipcMain.handle('drives:eject', async (event, diskIdentifier) => {
