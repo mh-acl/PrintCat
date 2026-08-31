@@ -646,7 +646,7 @@ function renderItemCard(item) {
   const isTrashed = change && change.type === 'delete';
 
   const card = document.createElement('a');
-  card.className = 'listing' + (change ? ` pending-${change.type}` : '');
+  card.className = 'item-card' + (change ? ` pending-${change.type}` : '');
   card.href = '#';
   card.title = item.displayName || item.name;
   card.onclick = (e) => {
@@ -696,6 +696,7 @@ function renderItemCard(item) {
   card.appendChild(mediaSlot);
 
   const img = document.createElement('img');
+  img.className = 'item-card-thumb';
   img.alt = item.displayName || item.name;
   mediaSlot.appendChild(img);
 
@@ -717,6 +718,7 @@ function renderItemCard(item) {
     });
 
   const label = document.createElement('span');
+  label.className = 'item-card-label';
   label.textContent = item.displayName || item.name;
   if (change) {
     const badge = document.createElement('span');
@@ -921,10 +923,10 @@ function createDraftFromPicked(picked) {
 // still match what was last detected" heuristic.
 function openOriginEditPopup(prefill, onSave) {
   const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay origin-popup-overlay';
+  overlay.className = 'modal-overlay origin-popup-overlay';
 
   const box = document.createElement('div');
-  box.className = 'drive-picker-box settings-box';
+  box.className = 'modal-box settings-box';
 
   const title = document.createElement('h3');
   title.textContent = 'Original location & creator';
@@ -994,10 +996,10 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   let folderPath = item ? item.path : null; // raw fs path, not a URL -- see imageRefSrc/fileUrl
 
   const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay item-modal-overlay';
+  overlay.className = 'modal-overlay item-modal-overlay';
 
   const box = document.createElement('div');
-  box.className = 'drive-picker-box settings-box item-modal-box';
+  box.className = 'modal-box settings-box item-modal-box';
   overlay.appendChild(box);
 
   const topBar = document.createElement('div');
@@ -1782,10 +1784,10 @@ function attachEscapeHandler(onEscape) {
 function pickDrive(drives) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const title = document.createElement('h3');
     title.textContent = 'Choose a USB drive';
@@ -1826,10 +1828,10 @@ function pickDrive(drives) {
 function showActionDialog(message, actions, { escapeValue } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -1865,10 +1867,10 @@ function showActionDialog(message, actions, { escapeValue } = {}) {
 function showEjectSafeDialog(message, diskIdentifier) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -1905,10 +1907,10 @@ function showEjectSafeDialog(message, diskIdentifier) {
 function showMessageDialog(message, buttonLabel = 'OK') {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -1937,10 +1939,10 @@ function showMessageDialog(message, buttonLabel = 'OK') {
 function showConfirmDialog(message, { confirmLabel = 'OK', cancelLabel = 'Cancel' } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -2550,10 +2552,10 @@ function openSettingsDialog(opts = {}) {
   const allPrinters = Array.from(collectPrinters(allItems)).sort();
 
   const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay';
+  overlay.className = 'modal-overlay';
 
   const box = document.createElement('div');
-  box.className = 'drive-picker-box settings-box';
+  box.className = 'modal-box settings-box';
 
   const title = document.createElement('h3');
   title.textContent = 'Settings';
@@ -2660,10 +2662,10 @@ function openSettingsDialog(opts = {}) {
 // the one field that actually matters here would just be confusing.
 function openRequiredSetupDialog() {
   const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay';
+  overlay.className = 'modal-overlay';
 
   const box = document.createElement('div');
-  box.className = 'drive-picker-box settings-box';
+  box.className = 'modal-box settings-box';
 
   const title = document.createElement('h3');
   title.textContent = 'Set Up Print Catalog';
@@ -2857,7 +2859,7 @@ document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {
   e.preventDefault();
   if (!editModeActive) return;
-  if (document.querySelector('.drive-picker-overlay')) return; // editor/settings open -- its own handlers own this drop
+  if (document.querySelector('.modal-overlay')) return; // editor/settings open -- its own handlers own this drop
   const files = e.dataTransfer.files;
   if (!files || files.length === 0) return;
   const sourceDir = window.catalogAPI.getPathForFile(files[0]);

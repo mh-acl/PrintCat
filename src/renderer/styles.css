@@ -596,8 +596,8 @@ settings-action-button {
   justify-content: center;
 }
 
-a.listing {
-  position: relative; /* anchors .item-trash-btn in edit mode */
+.item-card {
+  position: relative; /* anchors .item-trash-btn/.item-attention-icon in edit mode */
   display: inline-block;
   width: 12em;
   border: 1px solid var(--line);
@@ -610,12 +610,12 @@ a.listing {
   transition: border-color 0.12s ease, transform 0.12s ease;
 }
 
-a.listing:hover {
+.item-card:hover {
   border-color: var(--ink-faint);
   transform: translateY(-1px);
 }
 
-a.listing .thumb-slot {
+.item-card .thumb-slot {
   position: relative;
   width: 100%;
   height: 12em;
@@ -623,8 +623,7 @@ a.listing .thumb-slot {
   border-bottom: 1px solid var(--line-soft);
 }
 
-a.listing .thumb-slot img,
-a.listing .thumb-slot svg {
+.item-card-thumb {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -657,7 +656,7 @@ a.listing .thumb-slot svg {
   transition: opacity 0.12s ease, transform 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
 
-a.listing .thumb-slot:hover .thumb-zoom-btn,
+.item-card .thumb-slot:hover .thumb-zoom-btn,
 .file-thumb-wrap:hover .thumb-zoom-btn {
   opacity: 1;
   transform: translateY(0);
@@ -720,7 +719,7 @@ a.listing .thumb-slot:hover .thumb-zoom-btn,
   color: white;
 }
 
-a.listing span {
+.item-card-label {
   display: block;
   padding: 0.5em 0.6em;
   font-weight: 500;
@@ -835,7 +834,15 @@ a.listing span {
   border-color: var(--accent-hover);
 }
 
-.drive-picker-overlay {
+/* Generic modal overlay/box -- the shared shell for every dialog in
+   the app (drive picker, USB action/eject/message/confirm dialogs,
+   the origin-edit popup, the settings dialogs, and the unified item
+   modal). Each dialog adds its own class alongside this one (e.g.
+   .item-modal-box, .settings-box) for anything beyond this shared
+   shell; this used to all be named after the drive-picker dialog,
+   the first modal built in the app, even though it now backs nearly
+   every dialog -- renamed for what it actually is. */
+.modal-overlay {
   position: fixed;
   inset: 0;
   background: rgba(33, 30, 27, 0.45);
@@ -845,7 +852,7 @@ a.listing span {
   z-index: 1000;
 }
 
-.drive-picker-box {
+.modal-box {
   background: var(--paper-raised);
   padding: 1.5em;
   border-radius: var(--radius-card);
@@ -856,19 +863,19 @@ a.listing span {
   min-width: 18em;
 }
 
-.drive-picker-box h3 {
+.modal-box h3 {
   font-family: var(--font-display);
   margin: 0 0 0.5em;
   text-align: center;
 }
 
-.drive-picker-box p {
+.modal-box p {
   margin: 0 0 0.5em;
   text-align: center;
   color: var(--ink-soft);
 }
 
-.drive-picker-box button {
+button {
   padding: 0.75em;
   border-radius: var(--radius-control);
   border: 1px solid var(--line);
@@ -879,17 +886,17 @@ a.listing span {
   cursor: pointer;
 }
 
-.drive-picker-box button:hover {
+button:hover {
   border-color: var(--ink-faint);
 }
 
-.drive-picker-box button.cancel {
+.modal-box button.cancel {
   background: var(--paper);
   border-color: var(--line);
   color: var(--ink-soft);
 }
 
-.drive-picker-box button.eject {
+.modal-box button.eject {
   background: var(--status-edit-bg);
   border-color: var(--status-edit-line);
   color: var(--status-edit);
@@ -1005,20 +1012,20 @@ a.listing span {
   color: var(--status-delete);
 }
 
-a.listing.pending-add,
-a.listing.pending-edit {
+.item-card.pending-add,
+.item-card.pending-edit {
   border-width: 2px;
 }
 
-a.listing.pending-add {
+.item-card.pending-add {
   border-color: var(--status-add-line);
 }
 
-a.listing.pending-edit {
+.item-card.pending-edit {
   border-color: var(--status-edit-line);
 }
 
-a.listing.pending-delete {
+.item-card.pending-delete {
   opacity: 0.5;
 }
 
@@ -1052,14 +1059,8 @@ a.listing.pending-delete {
    circular top-corner treatment on the opposite side, so the two read
    as a matched pair of edit-mode-only overlays rather than one looking
    like an afterthought. Not a button (see renderItemCard) -- centers
-   the emoji glyph the same way .item-trash-btn centers its icon glyph.
-   Selector is `a.listing span.item-attention-icon`, not just the bare
-   class, because it's a <span> under `a.listing` -- the plain class
-   selector alone (specificity 0,1,0) loses to `a.listing span`'s
-   0.5em/0.6em padding (specificity 0,1,2) above, which off-centers the
-   glyph inside the circle; this selector's specificity (0,2,2) wins,
-   and the explicit padding: 0 clears that inherited padding outright. */
-a.listing span.item-attention-icon {
+   the emoji glyph the same way .item-trash-btn centers its icon glyph. */
+.item-attention-icon {
   position: absolute;
   top: 0.4em;
   right: 0.4em;
@@ -1156,8 +1157,8 @@ a.listing span.item-attention-icon {
 }
 
 /* Unified item view/edit modal (see openItemModal() in renderer.js) --
-   overlays the still-intact main grid, same .drive-picker-overlay
-   pattern as the item editor and drive-picker dialogs. Wider than
+   overlays the still-intact main grid, same .modal-overlay/.modal-box
+   pattern as every other dialog in the app. Wider than
    .editor-box since it needs to comfortably fit several 14em-wide
    .file-row cards side by side (see .item-detail). */
 .item-modal-box {
@@ -1416,7 +1417,7 @@ a.listing span.item-attention-icon {
   display: block;
 }
 
-.drive-picker-box button.item-modal-assign-btn {
+.modal-box button.item-modal-assign-btn {
   position: absolute;
   bottom: -0.4em;
   right: -0.4em;
@@ -1432,7 +1433,7 @@ a.listing span.item-attention-icon {
   cursor: pointer;
 }
 
-.drive-picker-box button.item-modal-assign-btn:disabled {
+.modal-box button.item-modal-assign-btn:disabled {
   border-color: var(--line);
   background: var(--paper);
   color: var(--ink-faint);
