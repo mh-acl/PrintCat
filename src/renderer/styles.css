@@ -1,4 +1,95 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+/* Local, bundled fonts -- no network fetch, so the app renders identically
+   offline. See fonts/LICENSES/ for each family's license (OFL for the three
+   text faces, Apache 2.0 for Material Symbols). Replaces the previous
+   fonts.googleapis.com @import. */
+
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('fonts/space-grotesk-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('fonts/space-grotesk-700.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/inter-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('fonts/inter-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('fonts/inter-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/ibm-plex-mono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('fonts/ibm-plex-mono-500.woff2') format('woff2');
+}
+
+/* Icon font -- custom subset of Material Symbols Outlined (FILL 0, GRAD 0,
+   opsz 24, wght 400), containing only the 11 glyphs Print Catalog uses:
+   search_off, zoom_in, delete, restore, warning, close, chevron_left,
+   arrow_back, edit, refresh, info. Regenerate from the full variable font
+   at github.com/google/material-design-icons if more icons are added. */
+@font-face {
+  font-family: 'PrintCat Icons';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('fonts/printcat-icons.woff2') format('woff2');
+}
+
+.icon {
+  font-family: 'PrintCat Icons';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+}
+.icon-search-off::before   { content: '\ea76'; }
+.icon-zoom-in::before      { content: '\e8ff'; }
+.icon-delete::before       { content: '\e92e'; }
+.icon-restore::before      { content: '\e8b3'; }
+.icon-warning::before      { content: '\f083'; }
+.icon-close::before        { content: '\e5cd'; }
+.icon-chevron-left::before { content: '\e5cb'; }
+.icon-arrow-back::before   { content: '\e5c4'; }
+.icon-edit::before         { content: '\f097'; }
+.icon-refresh::before      { content: '\e5d5'; }
+.icon-info::before         { content: '\e88e'; }
 
 :root {
   /* Palette -- warm paper + near-black ink + a single Prusa-orange accent,

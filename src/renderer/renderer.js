@@ -567,8 +567,7 @@ function renderEmptyState(message) {
   wrap.className = 'empty-state';
 
   const icon = document.createElement('div');
-  icon.className = 'empty-state-icon';
-  icon.textContent = '🔍';
+  icon.className = 'empty-state-icon icon icon-search-off';
   wrap.appendChild(icon);
 
   const title = document.createElement('p');
@@ -593,10 +592,9 @@ function renderEmptyState(message) {
 function makeZoomButton(getSrc, altText) {
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'thumb-zoom-btn';
+  btn.className = 'thumb-zoom-btn icon icon-zoom-in';
   btn.title = 'View full size';
   btn.setAttribute('aria-label', 'View full size image');
-  btn.textContent = '🔍';
   btn.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -621,9 +619,8 @@ function openImageLightbox(src, altText) {
 
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
-  closeBtn.className = 'image-lightbox-close';
+  closeBtn.className = 'image-lightbox-close icon icon-close';
   closeBtn.setAttribute('aria-label', 'Close');
-  closeBtn.textContent = '\u00d7';
   box.appendChild(closeBtn);
 
   const close = () => {
@@ -663,10 +660,9 @@ function renderItemCard(item) {
   if (editModeActive) {
     const trashBtn = document.createElement('button');
     trashBtn.type = 'button';
-    trashBtn.className = 'item-trash-btn';
+    trashBtn.className = `item-trash-btn icon ${isTrashed ? 'icon-restore' : 'icon-delete'}`;
     trashBtn.title = isTrashed ? 'Restore this item' : 'Delete this item';
     trashBtn.setAttribute('aria-label', isTrashed ? 'Restore this item' : 'Delete this item');
-    trashBtn.textContent = isTrashed ? '\u21a9\ufe0f' : '\ud83d\uddd1\ufe0f'; // \u21a9\ufe0f = Restore, \ud83d\uddd1\ufe0f = 🗑️
     trashBtn.onclick = async (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -689,8 +685,7 @@ function renderItemCard(item) {
     // tooltip.
     if (item.attentionFlags && item.attentionFlags.length > 0) {
       const attentionIcon = document.createElement('span');
-      attentionIcon.className = 'item-attention-icon';
-      attentionIcon.textContent = '\u26a0\ufe0f'; // ⚠️
+      attentionIcon.className = 'item-attention-icon icon icon-warning';
       attentionIcon.title = item.attentionFlags.map((f) => f.message).join('\n\n');
       card.appendChild(attentionIcon);
     }
@@ -1036,7 +1031,10 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       const closeBtn = document.createElement('button');
       closeBtn.type = 'button';
       closeBtn.className = 'item-modal-close';
-      closeBtn.textContent = '\u2039 Close';
+      const closeIcon = document.createElement('span');
+      closeIcon.className = 'icon icon-chevron-left';
+      closeBtn.appendChild(closeIcon);
+      closeBtn.appendChild(document.createTextNode(' Close'));
       closeBtn.onclick = close;
       topBar.appendChild(closeBtn);
     } else {
@@ -1187,8 +1185,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     if (draft.itemImageRef) {
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
-      removeBtn.className = 'item-modal-chip-remove';
-      removeBtn.textContent = '\u00d7';
+      removeBtn.className = 'item-modal-chip-remove icon icon-close';
       removeBtn.title = 'Remove item image';
       removeBtn.onclick = (e) => {
         e.stopPropagation();
@@ -1694,9 +1691,8 @@ function renderItemDetail(item) {
         const messages = line.messages.filter(Boolean);
         if (messages.length) {
           const icon = document.createElement('i');
-          icon.className = 'pause-tooltip-icon';
+          icon.className = 'pause-tooltip-icon icon icon-info';
           icon.title = messages.join('\n');
-          icon.textContent = '\u24d8'; // ⓘ
           lineEl.appendChild(icon);
         }
       }
