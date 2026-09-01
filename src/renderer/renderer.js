@@ -588,8 +588,12 @@ function renderEmptyState(message) {
 // .file-thumb-wrap is hovered). getSrc is a function rather than a
 // plain string so the click handler always reads whatever src the
 // <img> currently has, even though the button is created before the
-// thumbnail promise resolves.
-function makeZoomButton(getSrc, altText) {
+// thumbnail promise resolves. getCropRect is optional -- a function
+// returning the image's saved 'full' crop (or null), read lazily the
+// same way as getSrc; omit it entirely for a chip with no crop
+// concept (e.g. anything already showing a generated/embedded gcode
+// thumbnail rather than a photo).
+function makeZoomButton(getSrc, altText, getCropRect) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'thumb-zoom-btn icon icon-zoom-in';
@@ -598,14 +602,18 @@ function makeZoomButton(getSrc, altText) {
   btn.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    openImageLightbox(getSrc(), altText);
+    openImageLightbox(getSrc(), altText, getCropRect ? getCropRect() : null);
   };
   return btn;
 }
 
 // Full-size image viewer opened by the zoom button. Dismissed via its
-// close button, clicking the dimmed backdrop, or Escape.
-function openImageLightbox(src, altText) {
+// close button, clicking the dimmed backdrop, or Escape. cropRect is
+// the image's saved 'full' viewport (see itemMetadata.js's imageCrops
+// schema) -- null means "show the whole image", which is also what
+// happens if it's just omitted, so every existing call site (photos
+// with no full-view crop set yet) keeps behaving exactly as before.
+function openImageLightbox(src, altText, cropRect) {
   const overlay = document.createElement('div');
   overlay.className = 'image-lightbox-overlay';
 
@@ -616,6 +624,36 @@ function openImageLightbox(src, altText) {
   img.src = src;
   img.alt = altText || '';
   box.appendChild(img);
+
+  if (cropRect) {
+    // .image-lightbox-box normally auto-sizes to the photo itself (no
+    // fixed width/height -- see styles.css, just a max-width/max-height
+    // clamp) -- that doesn't work for applyImageCrop's technique, which
+    // needs a frame with a *known* size to scale/position against. When
+    // a full-view crop is set, size the box explicitly to the crop
+    // rect's own aspect ratio instead, clamped to the same 90vw/90vh
+    // the uncropped case already respects.
+    const aspect = cropRect.w / cropRect.h;
+    const maxW = window.innerWidth * 0.9;
+    const maxH = window.innerHeight * 0.9;
+    let boxW = maxW;
+    let boxH = boxW / aspect;
+    if (boxH > maxH) {
+      boxH = maxH;
+      boxW = boxH * aspect;
+    }
+    box.style.width = `${boxW}px`;
+    box.style.height = `${boxH}px`;
+    box.classList.add('crop-frame');
+    // .image-lightbox-box img's max-width/max-height (90vw/90vh) would
+    // clip applyImageCrop's deliberately-oversized <img> before its
+    // translate() ever gets a chance to do the actual cropping -- this
+    // class (see crop-modal.append.css) overrides both back to none for
+    // exactly this element, since the frame above is already the thing
+    // enforcing the 90vw/90vh clamp now.
+    img.classList.add('crop-frame-uncapped-img');
+    applyImageCrop(img, box, cropRect, { useDefault: false });
+  }
 
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
@@ -641,12 +679,29 @@ function openImageLightbox(src, altText) {
   document.body.appendChild(overlay);
 }
 
+// View-mode (read-only) crop lookup: item.imageCrops (see indexer.js)
+// is keyed by plain image filename, exactly like item.imageFiles --
+// this just picks the filename back out of whatever thumbnail path
+// getItemThumbnail/getFileThumbnail actually resolved to, so it works
+// the same regardless of which fallback in thumbnailResolver.js's
+// chain produced that path. Returns null (not just for a gcode-
+// embedded thumbnail, which was never a photo to crop in the first
+// place, but also for "no crop saved yet") -- applyImageCrop already
+// treats null as "use the default" (thumb) or "show the whole image"
+// (full) as appropriate.
+function cropRectFor(item, thumbPath, mode) {
+  if (!thumbPath || !item.imageCrops) return null;
+  const filename = thumbPath.split(/[\\/]/).pop();
+  const entry = item.imageCrops[filename];
+  return (entry && entry[mode]) || null;
+}
+
 function renderItemCard(item) {
   const change = pendingChanges[item.path];
   const isTrashed = change && change.type === 'delete';
 
   const card = document.createElement('a');
-  card.className = 'item-card' + (change ? ` pending-${change.type}` : '');
+  card.className = 'listing' + (change ? ` pending-${change.type}` : '');
   card.href = '#';
   card.title = item.displayName || item.name;
   card.onclick = (e) => {
@@ -692,11 +747,10 @@ function renderItemCard(item) {
   }
 
   const mediaSlot = document.createElement('div');
-  mediaSlot.className = 'thumb-slot';
+  mediaSlot.className = 'thumb-slot crop-frame';
   card.appendChild(mediaSlot);
 
   const img = document.createElement('img');
-  img.className = 'item-card-thumb';
   img.alt = item.displayName || item.name;
   mediaSlot.appendChild(img);
 
@@ -707,7 +761,10 @@ function renderItemCard(item) {
       // Only offer zoom when there's a real image -- not for the
       // generic "no thumbnail" placeholder graphic.
       if (thumb) {
-        mediaSlot.appendChild(makeZoomButton(() => img.src, img.alt));
+        applyImageCrop(img, mediaSlot, cropRectFor(item, thumb, 'thumb'), { useDefault: true });
+        mediaSlot.appendChild(
+          makeZoomButton(() => img.src, img.alt, () => cropRectFor(item, thumb, 'full'))
+        );
       }
     })
     // A rejected lookup (e.g. the file vanished mid-scan during a
@@ -718,7 +775,6 @@ function renderItemCard(item) {
     });
 
   const label = document.createElement('span');
-  label.className = 'item-card-label';
   label.textContent = item.displayName || item.name;
   if (change) {
     const badge = document.createElement('span');
@@ -850,6 +906,19 @@ function createDraftFromItem(item) {
       };
     }),
     poolImages: imageFiles.map((name) => ({ kind: 'existing', name })),
+    // { [refIdentity]: { thumb?: cropRect, full?: cropRect } } -- see
+    // itemMetadata.js's imageCrops schema and refIdentity above.
+    // item.imageCrops (from indexer.js) is keyed by plain filename,
+    // which is exactly what an 'existing:' identity wraps, so this is
+    // a straight re-keying, not a lookup -- every image already saved
+    // with a crop is, by definition, an 'existing' image in this item's
+    // folder.
+    imageCrops: Object.fromEntries(
+      Object.entries(item.imageCrops || {}).map(([filename, modes]) => [
+        `existing:${filename}`,
+        modes,
+      ])
+    ),
   };
 }
 
@@ -911,6 +980,9 @@ function createDraftFromPicked(picked) {
       };
     }),
     poolImages: imageFiles.map((name) => ({ kind: 'existing', name })),
+    // A freshly-scanned folder has no metadata.json yet -- see
+    // createDraftFromItem's identical field for the shape.
+    imageCrops: {},
   };
 }
 
@@ -923,10 +995,10 @@ function createDraftFromPicked(picked) {
 // still match what was last detected" heuristic.
 function openOriginEditPopup(prefill, onSave) {
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay origin-popup-overlay';
+  overlay.className = 'drive-picker-overlay origin-popup-overlay';
 
   const box = document.createElement('div');
-  box.className = 'modal-box settings-box';
+  box.className = 'drive-picker-box settings-box';
 
   const title = document.createElement('h3');
   title.textContent = 'Original location & creator';
@@ -996,10 +1068,10 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   let folderPath = item ? item.path : null; // raw fs path, not a URL -- see imageRefSrc/fileUrl
 
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay item-modal-overlay';
+  overlay.className = 'drive-picker-overlay item-modal-overlay';
 
   const box = document.createElement('div');
-  box.className = 'modal-box settings-box item-modal-box';
+  box.className = 'drive-picker-box settings-box item-modal-box';
   overlay.appendChild(box);
 
   const topBar = document.createElement('div');
@@ -1135,6 +1207,59 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     for (const targetId of selectedTargets) assignSingleTargetImage(targetId, ref);
   }
 
+  // --- Edit-mode crop helpers --------------------------------------------
+  // See itemMetadata.js's imageCrops schema and refIdentity above.
+
+  function getDraftCrop(ref, mode) {
+    const modes = draft.imageCrops[refIdentity(ref)];
+    return (modes && modes[mode]) || null;
+  }
+
+  function setDraftCrop(ref, mode, rectOrNull) {
+    const key = refIdentity(ref);
+    draft.imageCrops[key] = { ...(draft.imageCrops[key] || {}), [mode]: rectOrNull };
+    refreshEditFilesArea();
+  }
+
+  // Opens the crop tool for one assigned image chip. `frameEl`/`imgEl`
+  // are re-cropped in place immediately on save, ahead of the full
+  // refreshEditFilesArea() rebuild triggered by setDraftCrop, so the
+  // chip doesn't visibly flash back to uncropped before catching up.
+  function openCropperForRef(ref, mode, imgEl, frameEl) {
+    openImageCropper({
+      imageSrc: imageRefSrc(ref, folderPath),
+      mode,
+      existingRect: getDraftCrop(ref, mode),
+      onSave(rect) {
+        applyImageCrop(imgEl, frameEl, rect, { useDefault: mode === 'thumb' });
+        setDraftCrop(ref, mode, rect);
+      },
+    });
+  }
+
+  // Small corner badge, added to a chip's frame in edit mode only,
+  // that opens the crop tool for that specific image/mode. Mirrors
+  // the existing removeBtn corner-badge pattern used elsewhere in
+  // this file (e.g. buildItemThumbChip's remove button).
+  function makeCropAdjustButton(ref, mode, imgEl, frameEl) {
+    // Not using the .icon/.icon-* font here -- it's a hand-picked
+    // subset (see styles.css's icon-font comment) and doesn't include
+    // a crop glyph. A plain unicode character in a corner-badge button
+    // is the same fallback the origin-edit pencil button already uses.
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'image-crop-adjust-btn';
+    btn.textContent = '\u2921'; // "⤡" (expand/frame corners)
+    btn.title = mode === 'thumb' ? 'Adjust thumbnail crop' : 'Adjust framing';
+    btn.setAttribute('aria-label', mode === 'thumb' ? 'Adjust thumbnail crop' : 'Adjust framing');
+    btn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openCropperForRef(ref, mode, imgEl, frameEl);
+    };
+    return btn;
+  }
+
   function addExternalToPoolDraft(extPath, name) {
     const existing = draft.poolImages.find((r) => r.kind === 'external' && r.path === extPath);
     if (existing) return existing;
@@ -1179,12 +1304,18 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     };
     chip.appendChild(selectToggle);
 
+    const frame = document.createElement('div');
+    frame.className = 'crop-frame';
+    chip.appendChild(frame);
+
     const img = document.createElement('img');
     img.src = draft.itemImageRef ? imageRefSrc(draft.itemImageRef, folderPath) : 'nothumb.svg';
     img.alt = 'Item image';
-    chip.appendChild(img);
+    frame.appendChild(img);
 
     if (draft.itemImageRef) {
+      applyImageCrop(img, frame, getDraftCrop(draft.itemImageRef, 'thumb'), { useDefault: true });
+
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'item-modal-chip-remove icon icon-close';
@@ -1240,11 +1371,14 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     card.appendChild(selectToggle);
 
     const thumbWrap = document.createElement('div');
-    thumbWrap.className = 'file-thumb-wrap';
+    thumbWrap.className = 'file-thumb-wrap crop-frame';
     const img = document.createElement('img');
     img.alt = pf.displayName || pf.shortname;
     img.src = pf.images.length > 0 ? imageRefSrc(pf.images[0], folderPath) : 'nothumb.svg';
     thumbWrap.appendChild(img);
+    if (pf.images.length > 0) {
+      applyImageCrop(img, thumbWrap, getDraftCrop(pf.images[0], 'thumb'), { useDefault: true });
+    }
     card.appendChild(thumbWrap);
 
     const nameInput = document.createElement('input');
@@ -1342,13 +1476,25 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       const cell = document.createElement('div');
       cell.className = 'item-modal-gallery-item';
 
+      const frame = document.createElement('div');
+      frame.className = 'item-modal-gallery-thumb crop-frame';
+      cell.appendChild(frame);
+
       const thumb = document.createElement('img');
-      thumb.className = 'item-modal-gallery-thumb';
-      thumb.src = imageRefSrc(ref, folderPath);
       thumb.title = ref.name;
       thumb.draggable = true;
       thumb.ondragstart = (e) => e.dataTransfer.setData('text/plain', String(idx));
-      cell.appendChild(thumb);
+      thumb.src = imageRefSrc(ref, folderPath);
+      frame.appendChild(thumb);
+      applyImageCrop(thumb, frame, getDraftCrop(ref, 'thumb'), { useDefault: true });
+
+      // The one crop-adjust control for this image -- sets its default
+      // thumbnail crop, used everywhere this image is later assigned
+      // (item image, any print file), rather than a separate control
+      // per place it happens to be assigned. Bottom-left corner so it
+      // doesn't collide with the existing assign button (bottom-right,
+      // see .item-modal-assign-btn below).
+      frame.appendChild(makeCropAdjustButton(ref, 'thumb', thumb, frame));
 
       const assignBtn = document.createElement('button');
       assignBtn.type = 'button';
@@ -1524,6 +1670,14 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       printFileNames,
       origin: draft.origin,
       itemImage: draft.itemImageRef,
+      // Sent as-is, still keyed by refIdentity -- editSession.js
+      // resolves each identity to its final on-disk filename itself
+      // (see its _resolveImageCrops), using the same resolvedPathToName
+      // map the image assignments above just got resolved through, so
+      // an external image's crop always ends up filed under whatever
+      // name that image actually landed at, even after a collision
+      // rename.
+      imageCrops: draft.imageCrops,
     };
     try {
       const result =
@@ -1606,7 +1760,7 @@ function renderItemDetail(item) {
     row.className = 'file-row';
 
     const thumbWrap = document.createElement('div');
-    thumbWrap.className = 'file-thumb-wrap';
+    thumbWrap.className = 'file-thumb-wrap crop-frame';
 
     const img = document.createElement('img');
     img.alt = file.shortname;
@@ -1617,7 +1771,10 @@ function renderItemDetail(item) {
       .then((thumbPath) => {
         img.src = thumbPath ? fileUrl(thumbPath) : 'nothumb.svg';
         if (thumbPath) {
-          thumbWrap.appendChild(makeZoomButton(() => img.src, img.alt));
+          applyImageCrop(img, thumbWrap, cropRectFor(item, thumbPath, 'thumb'), { useDefault: true });
+          thumbWrap.appendChild(
+            makeZoomButton(() => img.src, img.alt, () => cropRectFor(item, thumbPath, 'full'))
+          );
         }
       })
       // Same reasoning as the item-card thumbnail above -- don't leave
@@ -1784,10 +1941,10 @@ function attachEscapeHandler(onEscape) {
 function pickDrive(drives) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.className = 'drive-picker-overlay';
 
     const box = document.createElement('div');
-    box.className = 'modal-box';
+    box.className = 'drive-picker-box';
 
     const title = document.createElement('h3');
     title.textContent = 'Choose a USB drive';
@@ -1828,10 +1985,10 @@ function pickDrive(drives) {
 function showActionDialog(message, actions, { escapeValue } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.className = 'drive-picker-overlay';
 
     const box = document.createElement('div');
-    box.className = 'modal-box';
+    box.className = 'drive-picker-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -1867,10 +2024,10 @@ function showActionDialog(message, actions, { escapeValue } = {}) {
 function showEjectSafeDialog(message, diskIdentifier) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.className = 'drive-picker-overlay';
 
     const box = document.createElement('div');
-    box.className = 'modal-box';
+    box.className = 'drive-picker-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -1907,10 +2064,10 @@ function showEjectSafeDialog(message, diskIdentifier) {
 function showMessageDialog(message, buttonLabel = 'OK') {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.className = 'drive-picker-overlay';
 
     const box = document.createElement('div');
-    box.className = 'modal-box';
+    box.className = 'drive-picker-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -1939,10 +2096,10 @@ function showMessageDialog(message, buttonLabel = 'OK') {
 function showConfirmDialog(message, { confirmLabel = 'OK', cancelLabel = 'Cancel' } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.className = 'drive-picker-overlay';
 
     const box = document.createElement('div');
-    box.className = 'modal-box';
+    box.className = 'drive-picker-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -2552,10 +2709,10 @@ function openSettingsDialog(opts = {}) {
   const allPrinters = Array.from(collectPrinters(allItems)).sort();
 
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'drive-picker-overlay';
 
   const box = document.createElement('div');
-  box.className = 'modal-box settings-box';
+  box.className = 'drive-picker-box settings-box';
 
   const title = document.createElement('h3');
   title.textContent = 'Settings';
@@ -2662,10 +2819,10 @@ function openSettingsDialog(opts = {}) {
 // the one field that actually matters here would just be confusing.
 function openRequiredSetupDialog() {
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'drive-picker-overlay';
 
   const box = document.createElement('div');
-  box.className = 'modal-box settings-box';
+  box.className = 'drive-picker-box settings-box';
 
   const title = document.createElement('h3');
   title.textContent = 'Set Up Print Catalog';
@@ -2849,6 +3006,20 @@ function imageRefEquals(a, b) {
   return a.kind === b.kind && (a.kind === 'existing' ? a.name === b.name : a.path === b.path);
 }
 
+// A stable string key for a draft's imageCrops map (see
+// createDraftFromItem below), distinct from the ref itself since an
+// 'external' ref's eventual filename in destDir isn't known client-side
+// until editSession.js actually copies it (uniqueDestName may rename
+// it on collision) -- so crops are staged against this identity and
+// resolved to a final filename server-side, in editSession.js's
+// _resolveImageCrops, using the exact same resolvedPathToName map the
+// image assignment itself goes through. An 'existing' ref's name is
+// already the final filename, so it needs no such resolution -- the
+// 'existing:' prefix is stripped back off directly.
+function refIdentity(ref) {
+  return ref.kind === 'existing' ? `existing:${ref.name}` : `external:${ref.path}`;
+}
+
 // Chromium's default behavior for an unhandled drop is to navigate the
 // window to the dropped file, which would break the app -- prevent
 // that unconditionally, everywhere, then separately opt in to the one
@@ -2859,7 +3030,7 @@ document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {
   e.preventDefault();
   if (!editModeActive) return;
-  if (document.querySelector('.modal-overlay')) return; // editor/settings open -- its own handlers own this drop
+  if (document.querySelector('.drive-picker-overlay')) return; // editor/settings open -- its own handlers own this drop
   const files = e.dataTransfer.files;
   if (!files || files.length === 0) return;
   const sourceDir = window.catalogAPI.getPathForFile(files[0]);

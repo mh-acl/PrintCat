@@ -176,6 +176,15 @@ class Indexer {
       // per-file metadataImages already has over filename matching.
       metadataItemImage: (metadata && metadata.itemImage) || null,
       imageFiles, // all images present in this folder, for per-file overrides
+      // { [imageFilename]: { thumb?: cropRect, full?: cropRect } } -- see
+      // itemMetadata.js. Exposed as the raw map rather than resolved
+      // per-file/per-item, since the same image filename can be the
+      // thumbnail source for the item itself *and* one or more print
+      // files (the many-to-many image pool); the renderer looks a crop
+      // up by whatever filename it actually resolved a thumbnail path
+      // to, rather than this indexer having to guess which usage a
+      // given crop lookup is for.
+      imageCrops: (metadata && metadata.imageCrops) || {},
       projectFiles: projectFiles.map((f) => path.join(dir, f.name)),
       files,
       // Edit-mode-only warning icon data -- see _computeAttentionFlags.

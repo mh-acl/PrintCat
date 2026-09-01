@@ -362,6 +362,37 @@ class EditSession {
     return resolvedPathToName.get(ref.path);
   }
 
+  // Renderer-side crop identities (see renderer.js's refIdentity) are
+  // 'existing:<name>' or 'external:<sourcePath>' -- the renderer can't
+  // know an external image's *final* filename in destDir until it's
+  // actually been copied (uniqueDestName may rename it on collision),
+  // so crops are staged against the same identity the image
+  // assignment itself was staged against, and resolved here using the
+  // very same resolvedPathToName map _resolveImages/_resolveSingleImageRef
+  // just populated -- one lookup, same source of truth, so a crop can
+  // never end up filed under a different name than the image it's
+  // for actually landed at.
+  //
+  // A crop whose external image was never actually assigned to any
+  // target this save (so resolvedPathToName has no entry for its
+  // source path) is silently dropped -- there's nothing in destDir
+  // for it to apply to, same as an unassigned pool image never being
+  // written into metadata.json at all.
+  _resolveImageCrops(imageCrops, resolvedPathToName) {
+    if (!imageCrops) return undefined;
+    const result = {};
+    for (const [identityKey, modes] of Object.entries(imageCrops)) {
+      let filename = null;
+      if (identityKey.startsWith('existing:')) {
+        filename = identityKey.slice('existing:'.length);
+      } else if (identityKey.startsWith('external:')) {
+        filename = resolvedPathToName.get(identityKey.slice('external:'.length)) || null;
+      }
+      if (filename) result[filename] = modes;
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  }
+
   // Folds a { [printFileBasename]: displayName } map into a
   // printFiles object already shaped for writeItemMetadata (e.g. the
   // result of _resolveImages above), merging per-file rather than
@@ -377,7 +408,7 @@ class EditSession {
     return merged;
   }
 
-  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage }) {
+  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops }) {
     const folderName = path.basename(sourceDir);
     const destDir = path.join(this.dataDir, folderName);
 
@@ -416,6 +447,7 @@ class EditSession {
       printFiles: resolvedPrintFiles,
       origin,
       itemImage: resolvedItemImage,
+      imageCrops: this._resolveImageCrops(imageCrops, resolvedPathToName),
     });
 
     // New items get today's protocol applied immediately: if origin is
@@ -429,7 +461,7 @@ class EditSession {
     return this.changes;
   }
 
-  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin, itemImage }) {
+  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops }) {
     // No category anymore, so nothing ever needs to move the item's
     // folder on an edit -- itemPath stays itemPath, only its
     // metadata.json changes.
@@ -459,6 +491,7 @@ class EditSession {
       printFiles: resolvedPrintFiles,
       origin,
       itemImage: resolvedItemImage,
+      imageCrops: this._resolveImageCrops(imageCrops, resolvedPathToName),
     });
 
     // Pre-existing items only get pruned the next time they're

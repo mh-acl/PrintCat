@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <title>Print Catalog</title>
   <link rel="stylesheet" href="styles.css" />
+  <!-- Vendored locally, no network fetch at runtime -- same offline-bundling
+       approach as the fonts above. See docs/image-crop-integration.md. -->
+  <link rel="stylesheet" href="vendor/cropper.min.css" />
 </head>
 <body>
   <div class="app-header">
@@ -33,6 +36,9 @@
       aria-label="Refresh now"
     >&#8635;</button>
   </div>
+  <script src="vendor/cropper.min.js"></script>
+  <script src="imageCropRender.js"></script>
+  <script src="imageCropperTool.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

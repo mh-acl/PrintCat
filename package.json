@@ -22,6 +22,7 @@
   "homepage": "https://github.com/mh-acl/PrintCat#readme",
   "dependencies": {
     "chokidar": "^5.0.0",
+    "cropperjs": "^1.6.3",
     "pdf-lib": "^1.17.1",
     "sudo-prompt": "^9.2.1"
   },

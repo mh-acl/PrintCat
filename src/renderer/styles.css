@@ -596,8 +596,8 @@ settings-action-button {
   justify-content: center;
 }
 
-.item-card {
-  position: relative; /* anchors .item-trash-btn/.item-attention-icon in edit mode */
+a.listing {
+  position: relative; /* anchors .item-trash-btn in edit mode */
   display: inline-block;
   width: 12em;
   border: 1px solid var(--line);
@@ -610,12 +610,12 @@ settings-action-button {
   transition: border-color 0.12s ease, transform 0.12s ease;
 }
 
-.item-card:hover {
+a.listing:hover {
   border-color: var(--ink-faint);
   transform: translateY(-1px);
 }
 
-.item-card .thumb-slot {
+a.listing .thumb-slot {
   position: relative;
   width: 100%;
   height: 12em;
@@ -623,7 +623,8 @@ settings-action-button {
   border-bottom: 1px solid var(--line-soft);
 }
 
-.item-card-thumb {
+a.listing .thumb-slot img,
+a.listing .thumb-slot svg {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -656,7 +657,7 @@ settings-action-button {
   transition: opacity 0.12s ease, transform 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
 
-.item-card .thumb-slot:hover .thumb-zoom-btn,
+a.listing .thumb-slot:hover .thumb-zoom-btn,
 .file-thumb-wrap:hover .thumb-zoom-btn {
   opacity: 1;
   transform: translateY(0);
@@ -719,7 +720,7 @@ settings-action-button {
   color: white;
 }
 
-.item-card-label {
+a.listing span {
   display: block;
   padding: 0.5em 0.6em;
   font-weight: 500;
@@ -766,12 +767,30 @@ settings-action-button {
   position: relative;
 }
 
+/* Height lives on the wrap (not the img) specifically so that when this
+   wrap also carries .crop-frame (see renderer.js/imageCropRender.js),
+   applyImageCrop's frameEl.clientHeight has a real, non-auto value to
+   compute against -- height:100% on a .crop-frame child is meaningless
+   against an auto-height parent. */
+.file-row .file-thumb-wrap {
+  /* Both dimensions fixed and equal -- not just height -- so this is
+     a genuinely square box, not a 190x160-ish rectangle with the
+     square crop centered and letterboxed inside it (which is what
+     "height only" produced: mathematically correct per applyImageCrop's
+     contain-mode centering, but visibly reads as padding/margin around
+     the photo rather than a clean square thumbnail). margin: auto
+     centers the now-narrower-than-the-row box horizontally -- .file-row
+     itself is wider (see .file-row's own width above). */
+  width: 10em;
+  height: 10em;
+  margin: 0 auto 0.5em;
+}
+
 .file-row img {
   width: 100%;
-  height: 10em;
+  height: 100%;
   object-fit: contain;
   display: block;
-  margin: 0 auto 0.5em;
 }
 
 .file-row a {
@@ -834,15 +853,7 @@ settings-action-button {
   border-color: var(--accent-hover);
 }
 
-/* Generic modal overlay/box -- the shared shell for every dialog in
-   the app (drive picker, USB action/eject/message/confirm dialogs,
-   the origin-edit popup, the settings dialogs, and the unified item
-   modal). Each dialog adds its own class alongside this one (e.g.
-   .item-modal-box, .settings-box) for anything beyond this shared
-   shell; this used to all be named after the drive-picker dialog,
-   the first modal built in the app, even though it now backs nearly
-   every dialog -- renamed for what it actually is. */
-.modal-overlay {
+.drive-picker-overlay {
   position: fixed;
   inset: 0;
   background: rgba(33, 30, 27, 0.45);
@@ -852,7 +863,7 @@ settings-action-button {
   z-index: 1000;
 }
 
-.modal-box {
+.drive-picker-box {
   background: var(--paper-raised);
   padding: 1.5em;
   border-radius: var(--radius-card);
@@ -863,19 +874,19 @@ settings-action-button {
   min-width: 18em;
 }
 
-.modal-box h3 {
+.drive-picker-box h3 {
   font-family: var(--font-display);
   margin: 0 0 0.5em;
   text-align: center;
 }
 
-.modal-box p {
+.drive-picker-box p {
   margin: 0 0 0.5em;
   text-align: center;
   color: var(--ink-soft);
 }
 
-button {
+.drive-picker-box button {
   padding: 0.75em;
   border-radius: var(--radius-control);
   border: 1px solid var(--line);
@@ -886,17 +897,17 @@ button {
   cursor: pointer;
 }
 
-button:hover {
+.drive-picker-box button:hover {
   border-color: var(--ink-faint);
 }
 
-.modal-box button.cancel {
+.drive-picker-box button.cancel {
   background: var(--paper);
   border-color: var(--line);
   color: var(--ink-soft);
 }
 
-.modal-box button.eject {
+.drive-picker-box button.eject {
   background: var(--status-edit-bg);
   border-color: var(--status-edit-line);
   color: var(--status-edit);
@@ -1012,20 +1023,20 @@ button:hover {
   color: var(--status-delete);
 }
 
-.item-card.pending-add,
-.item-card.pending-edit {
+a.listing.pending-add,
+a.listing.pending-edit {
   border-width: 2px;
 }
 
-.item-card.pending-add {
+a.listing.pending-add {
   border-color: var(--status-add-line);
 }
 
-.item-card.pending-edit {
+a.listing.pending-edit {
   border-color: var(--status-edit-line);
 }
 
-.item-card.pending-delete {
+a.listing.pending-delete {
   opacity: 0.5;
 }
 
@@ -1059,8 +1070,14 @@ button:hover {
    circular top-corner treatment on the opposite side, so the two read
    as a matched pair of edit-mode-only overlays rather than one looking
    like an afterthought. Not a button (see renderItemCard) -- centers
-   the emoji glyph the same way .item-trash-btn centers its icon glyph. */
-.item-attention-icon {
+   the emoji glyph the same way .item-trash-btn centers its icon glyph.
+   Selector is `a.listing span.item-attention-icon`, not just the bare
+   class, because it's a <span> under `a.listing` -- the plain class
+   selector alone (specificity 0,1,0) loses to `a.listing span`'s
+   0.5em/0.6em padding (specificity 0,1,2) above, which off-centers the
+   glyph inside the circle; this selector's specificity (0,2,2) wins,
+   and the explicit padding: 0 clears that inherited padding outright. */
+a.listing span.item-attention-icon {
   position: absolute;
   top: 0.4em;
   right: 0.4em;
@@ -1157,8 +1174,8 @@ button:hover {
 }
 
 /* Unified item view/edit modal (see openItemModal() in renderer.js) --
-   overlays the still-intact main grid, same .modal-overlay/.modal-box
-   pattern as every other dialog in the app. Wider than
+   overlays the still-intact main grid, same .drive-picker-overlay
+   pattern as the item editor and drive-picker dialogs. Wider than
    .editor-box since it needs to comfortably fit several 14em-wide
    .file-row cards side by side (see .item-detail). */
 .item-modal-box {
@@ -1362,12 +1379,21 @@ button:hover {
   background: var(--status-edit-bg);
 }
 
+/* Height on the wrap, not the img -- see the matching comment on
+   .file-row .file-thumb-wrap above; same reason. */
+.item-modal-file-card .file-thumb-wrap {
+  /* Same reasoning as .file-row .file-thumb-wrap above -- both
+     dimensions fixed and equal, not just height. */
+  width: 8em;
+  height: 8em;
+  margin: 0 auto 0.5em;
+}
+
 .item-modal-file-card .file-thumb-wrap img {
   width: 100%;
-  height: 8em;
+  height: 100%;
   object-fit: contain;
   display: block;
-  margin: 0 auto 0.5em;
 }
 
 .item-modal-file-name-input {
@@ -1417,7 +1443,7 @@ button:hover {
   display: block;
 }
 
-.modal-box button.item-modal-assign-btn {
+.drive-picker-box button.item-modal-assign-btn {
   position: absolute;
   bottom: -0.4em;
   right: -0.4em;
@@ -1433,7 +1459,7 @@ button:hover {
   cursor: pointer;
 }
 
-.modal-box button.item-modal-assign-btn:disabled {
+.drive-picker-box button.item-modal-assign-btn:disabled {
   border-color: var(--line);
   background: var(--paper);
   color: var(--ink-faint);
@@ -1472,4 +1498,164 @@ button:hover {
   background: var(--paper-raised);
   font-size: 0.75em;
   cursor: pointer;
+}
+/* --- Image cropper (imageCropperTool.js) ---------------------------------
+   This block was written earlier but only ever landed in a standalone
+   handoff file, never actually appended here -- that's the root cause
+   of the crop dialog rendering unstyled at the bottom of the page
+   instead of as an overlay. Composes with the real .drive-picker-overlay/
+   .drive-picker-box shell (see openItemModal, drive picker, etc. for
+   the same pattern) rather than the .modal-overlay/.modal-box names
+   used in the first draft, which don't exist anywhere in this file. */
+
+.crop-modal-overlay {
+  /* .drive-picker-overlay is already z-index: 1000, same as
+     .item-modal-overlay -- since the crop tool always opens *from*
+     the already-open item modal, DOM order alone would already stack
+     it on top, but matching the explicit lightbox precedent (1100,
+     see .image-lightbox-overlay) removes any ambiguity rather than
+     relying on that. */
+  z-index: 1100;
+}
+
+.crop-modal-box {
+  width: min(90vw, 640px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+}
+
+.crop-modal-title {
+  font-family: var(--font-display);
+  font-size: 1.1em;
+  margin: 0;
+  color: var(--ink);
+}
+
+.crop-modal-imgwrap {
+  width: 100%;
+  height: min(60vh, 480px);
+  background: var(--ink);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+/* Cropper.js sizes its own canvas to the wrapper -- just make sure the
+   source <img> doesn't render at native size before Cropper attaches. */
+.crop-modal-imgwrap img {
+  display: block;
+  max-width: 100%;
+}
+
+.crop-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.crop-modal-spacer {
+  flex: 1;
+}
+
+.crop-modal-reset,
+.crop-modal-cancel,
+.crop-modal-save {
+  font-family: var(--font-body);
+  font-size: 0.95em;
+  padding: 0.5em 1em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.crop-modal-reset {
+  color: var(--ink-soft);
+  border-color: var(--line-soft);
+  background: transparent;
+}
+
+.crop-modal-save {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper-raised);
+}
+.crop-modal-save:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* --- Crop-rendered thumbnail frame --- any container that will host an
+   <img> positioned by imageCropRender.js's applyImageCrop() needs this
+   so the translate/oversize technique is actually clipped. width/
+   height: 100% is meant for a .crop-frame that's a *dedicated* child of
+   an already explicitly-sized wrapper (.thumb-slot, the item-modal-
+   thumb-chip's inner frame div) -- it deliberately is NOT combined onto
+   an element that also needs to define its own fixed size itself
+   (.item-modal-gallery-thumb does that, self-contained, below), since
+   two same-specificity rules setting different values for the same
+   property is a source-order footgun, not a real fix. */
+.crop-frame {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+
+/* .image-lightbox-box img's default max-width/max-height (90vw/90vh,
+   see .image-lightbox-box img above) would clip applyImageCrop's
+   deliberately-oversized <img> before its translate() can do the
+   actual cropping -- the lightbox box itself is already sized
+   explicitly to the crop rect's aspect (see renderer.js's
+   openImageLightbox) and enforces the 90vw/90vh clamp at that level
+   instead, so this just gets the img's own separate clamp out of the
+   way for this one case. */
+.crop-frame-uncapped-img {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+/* --- Crop-adjust trigger --- one control per pool image (see "Available
+   images" in buildGalleryColumn), setting that image's default crop --
+   used everywhere the image is later assigned, rather than a separate
+   control per assignment. Bottom-left overhang mirrors the existing
+   .item-modal-assign-btn's bottom-right overhang on the same cell. */
+.image-crop-adjust-btn {
+  position: absolute;
+  bottom: -0.4em;
+  left: -0.4em;
+  width: 1.6em;
+  height: 1.6em;
+  line-height: 1;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.85em;
+}
+.image-crop-adjust-btn:hover {
+  background: var(--paper);
+}
+
+/* Sizing moved off .item-modal-gallery-thumb's <img> onto the element
+   itself (now the .crop-frame wrapper, not the img -- see
+   buildGalleryColumn) so applyImageCrop's frame has an actual size to
+   read. Scoped under .item-modal-gallery-item for specificity, same
+   reasoning as .file-row .file-thumb-wrap above: needs to reliably
+   beat .crop-frame's generic 100%/100% regardless of source order. */
+.item-modal-gallery-item .item-modal-gallery-thumb {
+  width: 4.5em;
+  height: 4.5em;
+  border-radius: 0.3em;
+  border: 1px solid var(--line);
+}
+
+.item-modal-gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
