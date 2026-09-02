@@ -1,0 +1,403 @@
+/* Unified item view/edit modal: item-detail layout, origin info,
+   print-file rows (.file-row, .print-button) in view mode, and all
+   .item-modal-* / .editor-image-chip* rules for edit mode. Depends on
+   the .drive-picker-overlay/.drive-picker-box shell in dialogs.css. */
+
+.item-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1em;
+  justify-content: center;
+  width: 100%;
+}
+.item-detail-header {
+  flex: 1 0 100%;
+}
+.item-origin-info {
+  display: block;
+  color: var(--ink-faint);
+  font-size: 0.85em;
+  margin-top: 0.15em;
+}
+.item-origin-info a {
+  color: var(--ink-faint);
+}
+.item-origin-info a:hover {
+  color: var(--accent);
+}
+.file-row {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--paper-raised);
+  padding: 1em;
+  width: 14em;
+  box-sizing: border-box;
+  text-align: center;
+}
+.file-thumb-wrap {
+  position: relative;
+}
+/* Height lives on the wrap (not the img) specifically so that when this
+   wrap also carries .crop-frame (see renderer.js/imageCropRender.js),
+   applyImageCrop's frameEl.clientHeight has a real, non-auto value to
+   compute against -- height:100% on a .crop-frame child is meaningless
+   against an auto-height parent. */
+.file-row .file-thumb-wrap {
+  /* Both dimensions fixed and equal -- not just height -- so this is
+     a genuinely square box, not a 190x160-ish rectangle with the
+     square crop centered and letterboxed inside it (which is what
+     "height only" produced: mathematically correct per applyImageCrop's
+     contain-mode centering, but visibly reads as padding/margin around
+     the photo rather than a clean square thumbnail). margin: auto
+     centers the now-narrower-than-the-row box horizontally -- .file-row
+     itself is wider (see .file-row's own width above). */
+  width: 10em;
+  height: 10em;
+  margin: 0 auto 0.5em;
+}
+.file-row img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.file-row a {
+  display: inline-block;
+  margin-top: 0.5em;
+  color: var(--accent);
+  font-weight: 500;
+}
+.file-name {
+  font-family: var(--font-display);
+  font-size: 1.05em;
+  font-weight: 700;
+  margin: 0;
+}
+/* Batch/color-change subtitle -- part of the file's identity, sits
+   right under its name, bold monospace so it reads as a second line
+   of the title rather than a metadata entry. */
+.file-subtitle {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.7em;
+  color: var(--ink-soft);
+  margin: 0.2em 0 0;
+}
+/* Print stats readout -- the signature "spec plate" element: monospace,
+   muted, tightly spaced, visually distinct from the item's own name */
+.file-meta {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 0.6em;
+  padding-top: 0.5em;
+}
+.file-meta div {
+  margin: 0.2em 0;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--ink-soft);
+  letter-spacing: 0.01em;
+}
+.print-button {
+  margin-top: 0.75em;
+  padding: 0.6em 1.3em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: white;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 1em;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.print-button:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+/* Unified item view/edit modal (see openItemModal() in renderer.js) --
+   overlays the still-intact main grid, same .drive-picker-overlay
+   pattern as the item editor and drive-picker dialogs. Wider than
+   .editor-box since it needs to comfortably fit several 14em-wide
+   .file-row cards side by side (see .item-detail). */
+.item-modal-box {
+  max-width: 52em;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+.item-modal-close {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 0;
+  margin-bottom: 0.5em;
+  color: var(--accent);
+  font-weight: 500;
+  font-family: var(--font-body);
+  font-size: 1em;
+  cursor: pointer;
+}
+.item-modal-close:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+.item-modal-topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75em;
+  margin-bottom: 0.75em;
+}
+/* Edit mode replaces the single Close link with Cancel/Save buttons --
+   styled like real buttons (unlike the plain-link Close above) since
+   there are two of them and Save is the primary action. */
+.item-modal-close.cancel,
+.item-modal-close.save {
+  padding: 0.5em 1em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  font-weight: 600;
+  text-decoration: none;
+}
+.item-modal-close.cancel {
+  background: var(--paper);
+  color: var(--ink-soft);
+}
+.item-modal-close.save {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  margin-left: auto;
+}
+.item-modal-close.save:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.item-modal-edit-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  margin-bottom: 0.5em;
+}
+.item-modal-add-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--ink-soft);
+  margin: 0 0 0.5em;
+}
+.item-modal-name-input {
+  flex: 1;
+  font-family: var(--font-display);
+  font-size: 1.3em;
+  font-weight: 700;
+  padding: 0.3em 0.5em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+}
+/* Item-level image chip, doubling as an image-assignment target (see
+   .item-modal-target-select) -- same visual language as the
+   per-print-file image chips below, just larger since it sits next to
+   the name field. */
+.item-modal-thumb-chip {
+  position: relative;
+  flex: none;
+  width: 3.5em;
+  height: 3.5em;
+}
+.item-modal-thumb-chip img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 0.3em;
+  border: 1px solid var(--line);
+  display: block;
+}
+.item-modal-thumb-chip.selected img {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+.item-modal-target-select {
+  position: absolute;
+  top: -0.4em;
+  left: -0.4em;
+  z-index: 1;
+}
+.item-modal-chip-remove {
+  position: absolute;
+  top: -0.4em;
+  right: -0.4em;
+  width: 1.2em;
+  height: 1.2em;
+  line-height: 1;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  font-size: 0.75em;
+  cursor: pointer;
+}
+.item-modal-origin-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin-bottom: 0.5em;
+}
+.item-modal-origin-summary {
+  flex: 1;
+  color: var(--ink-soft);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+.item-modal-origin-btn {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--paper);
+  padding: 0.3em 0.5em;
+  cursor: pointer;
+}
+.item-modal-origin-btn:hover {
+  border-color: var(--ink-faint);
+}
+.item-modal-tags-row {
+  margin-bottom: 1em;
+}
+.item-modal-edit-body {
+  display: flex;
+  gap: 1.5em;
+  align-items: flex-start;
+}
+.item-modal-edit-files {
+  flex: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1em;
+}
+/* Print-file card in edit mode -- same visual footprint as the
+   view-mode .file-row card, plus a selection checkbox (top-left) and
+   an editable name field in place of the plain <h3>. */
+.item-modal-file-card {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--paper-raised);
+  padding: 1em;
+  width: 13em;
+  box-sizing: border-box;
+  text-align: center;
+}
+.item-modal-file-card.selected {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+.item-modal-file-card.drop-target-active {
+  border-color: var(--accent);
+  background: var(--status-edit-bg);
+}
+/* Height on the wrap, not the img -- see the matching comment on
+   .file-row .file-thumb-wrap above; same reason. */
+.item-modal-file-card .file-thumb-wrap {
+  /* Same reasoning as .file-row .file-thumb-wrap above -- both
+     dimensions fixed and equal, not just height. */
+  width: 8em;
+  height: 8em;
+  margin: 0 auto 0.5em;
+}
+.item-modal-file-card .file-thumb-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.item-modal-file-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-display);
+  font-size: 0.95em;
+  font-weight: 700;
+  padding: 0.3em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  text-align: center;
+  margin-bottom: 0.3em;
+}
+.item-modal-edit-gallery {
+  flex: 1;
+  min-width: 12em;
+  border-left: 1px solid var(--line-soft);
+  padding-left: 1em;
+}
+.item-modal-gallery-heading {
+  font-weight: bold;
+  margin: 0 0 0.3em;
+}
+.item-modal-gallery-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75em;
+  margin-bottom: 0.75em;
+}
+.item-modal-gallery-item {
+  position: relative;
+}
+.item-modal-gallery-thumb {
+  width: 4.5em;
+  height: 4.5em;
+  object-fit: cover;
+  border-radius: 0.3em;
+  border: 1px solid var(--line);
+  display: block;
+}
+.drive-picker-box button.item-modal-assign-btn {
+  position: absolute;
+  bottom: -0.4em;
+  right: -0.4em;
+  width: 1.6em;
+  height: 1.6em;
+  line-height: 1;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: white;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.drive-picker-box button.item-modal-assign-btn:disabled {
+  border-color: var(--line);
+  background: var(--paper);
+  color: var(--ink-faint);
+  cursor: default;
+}
+.editor-image-chips {
+  display: flex;
+  gap: 0.3em;
+}
+.editor-image-chip {
+  position: relative;
+  display: inline-block;
+}
+.editor-image-chip img {
+  width: 2.5em;
+  height: 2.5em;
+  object-fit: cover;
+  border-radius: 0.3em;
+  border: 1px solid var(--line);
+  display: block;
+}
+.editor-image-chip button {
+  position: absolute;
+  top: -0.4em;
+  right: -0.4em;
+  width: 1.2em;
+  height: 1.2em;
+  line-height: 1;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  font-size: 0.75em;
+  cursor: pointer;
+}

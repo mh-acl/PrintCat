@@ -1,0 +1,59 @@
+/* Generic modal-dialog shell (.drive-picker-overlay/.drive-picker-box)
+   shared by ~9 different dialogs -- USB drive picker, USB action/
+   eject/message/confirm dialogs, origin-edit popup, both settings
+   dialogs, and the unified item modal. Load before any file whose
+   dialogs compose this shell with a modifier class. */
+
+.drive-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(33, 30, 27, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.drive-picker-box {
+  background: var(--paper-raised);
+  padding: 1.5em;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  min-width: 18em;
+}
+.drive-picker-box h3 {
+  font-family: var(--font-display);
+  margin: 0 0 0.5em;
+  text-align: center;
+}
+.drive-picker-box p {
+  margin: 0 0 0.5em;
+  text-align: center;
+  color: var(--ink-soft);
+}
+.drive-picker-box button:not(.thumb-zoom-btn)  {
+  padding: 0.75em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1em;
+  cursor: pointer;
+}
+.drive-picker-box button:hover {
+  border-color: var(--ink-faint);
+}
+.drive-picker-box button.cancel {
+  background: var(--paper);
+  border-color: var(--line);
+  color: var(--ink-soft);
+}
+.drive-picker-box button.eject {
+  background: var(--status-edit-bg);
+  border-color: var(--status-edit-line);
+  color: var(--status-edit);
+  font-weight: 600;
+}

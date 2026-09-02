@@ -1,0 +1,149 @@
+/* Image cropper (Cropper.js-based crop-adjust modal), the crop-
+   rendered thumbnail frame used wherever a soft-cropped image
+   displays, and the crop-adjust trigger button on pool image chips. */
+
+/* --- Image cropper (imageCropperTool.js) ---------------------------------
+   This block was written earlier but only ever landed in a standalone
+   handoff file, never actually appended here -- that's the root cause
+   of the crop dialog rendering unstyled at the bottom of the page
+   instead of as an overlay. Composes with the real .drive-picker-overlay/
+   .drive-picker-box shell (see openItemModal, drive picker, etc. for
+   the same pattern) rather than the .modal-overlay/.modal-box names
+   used in the first draft, which don't exist anywhere in this file. */
+.crop-modal-overlay {
+  /* .drive-picker-overlay is already z-index: 1000, same as
+     .item-modal-overlay -- since the crop tool always opens *from*
+     the already-open item modal, DOM order alone would already stack
+     it on top, but matching the explicit lightbox precedent (1100,
+     see .image-lightbox-overlay) removes any ambiguity rather than
+     relying on that. */
+  z-index: 1100;
+}
+.crop-modal-box {
+  width: min(90vw, 640px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+}
+.crop-modal-title {
+  font-family: var(--font-display);
+  font-size: 1.1em;
+  margin: 0;
+  color: var(--ink);
+}
+.crop-modal-imgwrap {
+  width: 100%;
+  height: min(60vh, 480px);
+  background: var(--ink);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+/* Cropper.js sizes its own canvas to the wrapper -- just make sure the
+   source <img> doesn't render at native size before Cropper attaches. */
+.crop-modal-imgwrap img {
+  display: block;
+  max-width: 100%;
+}
+.crop-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+.crop-modal-spacer {
+  flex: 1;
+}
+.crop-modal-reset,
+.crop-modal-cancel,
+.crop-modal-save {
+  font-family: var(--font-body);
+  font-size: 0.95em;
+  padding: 0.5em 1em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  cursor: pointer;
+}
+.crop-modal-reset {
+  color: var(--ink-soft);
+  border-color: var(--line-soft);
+  background: transparent;
+}
+.crop-modal-save {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper-raised);
+}
+.crop-modal-save:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+/* --- Crop-rendered thumbnail frame --- any container that will host an
+   <img> positioned by imageCropRender.js's applyImageCrop() needs this
+   so the translate/oversize technique is actually clipped. width/
+   height: 100% is meant for a .crop-frame that's a *dedicated* child of
+   an already explicitly-sized wrapper (.thumb-slot, the item-modal-
+   thumb-chip's inner frame div) -- it deliberately is NOT combined onto
+   an element that also needs to define its own fixed size itself
+   (.item-modal-gallery-thumb does that, self-contained, below), since
+   two same-specificity rules setting different values for the same
+   property is a source-order footgun, not a real fix. */
+.crop-frame {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+/* .image-lightbox-box img's default max-width/max-height (90vw/90vh,
+   see .image-lightbox-box img above) would clip applyImageCrop's
+   deliberately-oversized <img> before its translate() can do the
+   actual cropping -- the lightbox box itself is already sized
+   explicitly to the crop rect's aspect (see renderer.js's
+   openImageLightbox) and enforces the 90vw/90vh clamp at that level
+   instead, so this just gets the img's own separate clamp out of the
+   way for this one case. */
+.crop-frame-uncapped-img {
+  max-width: none !important;
+  max-height: none !important;
+}
+/* --- Crop-adjust trigger --- one control per pool image (see "Available
+   images" in buildGalleryColumn), setting that image's default crop --
+   used everywhere the image is later assigned, rather than a separate
+   control per assignment. Bottom-left overhang mirrors the existing
+   .item-modal-assign-btn's bottom-right overhang on the same cell. */
+.image-crop-adjust-btn {
+  position: absolute;
+  bottom: -0.4em;
+  left: -0.4em;
+  width: 1.6em;
+  height: 1.6em;
+  line-height: 1;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.85em;
+}
+.image-crop-adjust-btn:hover {
+  background: var(--paper);
+}
+/* Sizing moved off .item-modal-gallery-thumb's <img> onto the element
+   itself (now the .crop-frame wrapper, not the img -- see
+   buildGalleryColumn) so applyImageCrop's frame has an actual size to
+   read. Scoped under .item-modal-gallery-item for specificity, same
+   reasoning as .file-row .file-thumb-wrap above: needs to reliably
+   beat .crop-frame's generic 100%/100% regardless of source order. */
+.item-modal-gallery-item .item-modal-gallery-thumb {
+  width: 4.5em;
+  height: 4.5em;
+  border-radius: 0.3em;
+  border: 1px solid var(--line);
+}
+.item-modal-gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}

@@ -2,8 +2,18 @@
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' file: data:; font-src 'self'; connect-src 'self'" />
   <title>Print Catalog</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/dialogs.css" />
+  <link rel="stylesheet" href="css/filters.css" />
+  <link rel="stylesheet" href="css/grid.css" />
+  <link rel="stylesheet" href="css/lightbox.css" />
+  <link rel="stylesheet" href="css/settings.css" />
+  <link rel="stylesheet" href="css/editSession.css" />
+  <link rel="stylesheet" href="css/itemModal.css" />
+  <link rel="stylesheet" href="css/cropper.css" />
   <!-- Vendored locally, no network fetch at runtime -- same offline-bundling
        approach as the fonts above. See docs/image-crop-integration.md. -->
   <link rel="stylesheet" href="vendor/cropper.min.css" />
@@ -39,6 +49,22 @@
   <script src="vendor/cropper.min.js"></script>
   <script src="imageCropRender.js"></script>
   <script src="imageCropperTool.js"></script>
-  <script src="renderer.js"></script>
+  <!-- Split from the former single renderer.js. state.js must load first
+       (top-level shared state); renderer.js must load last (the only file
+       with top-level code -- init() and the drag/drop listeners -- that
+       runs immediately instead of being deferred to an event). Order among
+       the files in between doesn't matter: everything else is function
+       declarations, resolved at call time after all scripts have loaded. -->
+  <script src="js/state.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/dialogs.js"></script>
+  <script src="js/lightbox.js"></script>
+  <script src="js/filters.js"></script>
+  <script src="js/grid.js"></script>
+  <script src="js/usbFlow.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/itemModal.js"></script>
+  <script src="js/editSession-ui.js"></script>
+  <script src="js/renderer.js"></script>
 </body>
 </html>

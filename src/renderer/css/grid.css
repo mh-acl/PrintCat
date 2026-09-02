@@ -1,0 +1,122 @@
+/* Main catalog grid: empty state, #listing/.item-grid, item cards
+   (a.listing), and the sync-status footer. */
+
+.empty-state {
+  width: 100%;
+  text-align: center;
+  padding: 2.5em 1em;
+  color: var(--ink-soft);
+}
+.empty-state-icon {
+  font-size: 2.5em;
+}
+.empty-state-title {
+  font-family: var(--font-display);
+  font-size: 1.3em;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0.3em 0;
+}
+.empty-state-sub {
+  margin: 0;
+  color: var(--ink-soft);
+}
+#listing {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5em;
+}
+.item-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1em;
+  justify-content: center;
+}
+a.listing {
+  position: relative; /* anchors .item-trash-btn in edit mode */
+  display: inline-block;
+  width: 12em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--paper-raised);
+  text-align: center;
+  overflow: hidden;
+  text-decoration: none;
+  color: var(--ink);
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+a.listing:hover {
+  border-color: var(--ink-faint);
+  transform: translateY(-1px);
+}
+a.listing .thumb-slot {
+  position: relative;
+  width: 100%;
+  height: 12em;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line-soft);
+}
+a.listing .thumb-slot img,
+a.listing .thumb-slot svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+a.listing span {
+  display: block;
+  padding: 0.5em 0.6em;
+  font-weight: 500;
+}
+.sync-footer {
+  /* display:none by default (before renderSyncStatus() has run, e.g.
+     required-setup mode where sync is never configured) -- toggled to
+     'flex' by renderSyncStatus() once a repo is configured. */
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  padding-block-start: 2em;
+}
+.sync-status {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  color: var(--ink-faint);
+}
+.refresh-now-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8em;
+  height: 1.8em;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 0.9em;
+  line-height: 1;
+  cursor: pointer;
+}
+.refresh-now-button:hover:not(:disabled) {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+.refresh-now-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.refresh-now-button.spinning {
+  animation: refresh-spin 1s linear infinite;
+}
+@keyframes refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.pause-tooltip-icon {
+  cursor: help;
+  color: var(--ink-faint);
+  font-style: normal;
+  margin-left: 0.25em;
+}

@@ -1,0 +1,301 @@
+/* Admin settings dialog (tabs, fields, buttons) and the first-run
+   required-setup dialog, plus the chip-based tag input component
+   (also reused by the item modal's tag editor -- see createTagInput
+   in settings.js). */
+
+.settings-box {
+  min-width: 26em;
+  text-align: left;
+}
+.settings-tabs {
+  display: flex;
+  gap: 1.25em;
+  border-bottom: 1px solid var(--line);
+  margin: 0.75em 0 1em;
+}
+.settings-tabs button.settings-tab {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.settings-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.5em 0.1em;
+  margin-bottom: -1px; /* sit flush on top of .settings-tabs' border */
+  color: var(--ink-soft);
+  font-family: var(--font-body);
+  font-size: 0.95em;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.settings-tab:hover {
+  color: var(--ink);
+}
+.settings-tab.active {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+.settings-tab-panel .settings-intro:first-child {
+  margin-top: 0;
+}
+.settings-intro {
+  color: var(--ink-soft);
+  margin: 0 0 0.75em;
+  text-align: left;
+}
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.3em 0;
+  cursor: pointer;
+}
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+  margin: 0.6em 0;
+}
+.settings-field-line {
+  display: flex;
+  flex-direction: row;
+  gap: 0.25em;
+  margin: 0.6em 0;
+}
+.settings-field-label {
+  font-size: 0.85em;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+/* Export/Import tab reuses .settings-field-label as a bare section
+   heading (not inside .settings-field, which already handles its own
+   spacing) -- needs its own top margin so "Import" doesn't crowd the
+   <hr> above it. */
+.settings-tab-panel > .settings-field-label {
+  margin: 1em 0 0.4em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+settings-action-button {
+  display: block;
+  padding: 0.5em 1.1em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-family: var(--font-body);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.settings-action-button:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+.settings-export-import-status {
+  min-height: 1.2em;
+  font-size: 0.85em;
+}
+.settings-text-input {
+  padding: 0.5em 0.7em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 1em;
+  font-family: var(--font-body);
+  box-sizing: border-box;
+  width: 100%;
+}
+.settings-text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+/* Chip-based tag input (item editor's "Tags" field) -- see
+   createTagInput() in renderer.js.
+
+   Two color families, reusing tones already established elsewhere in
+   the app rather than the orange --accent (which reads as an alert/
+   warning color in this context, not a neutral "selected" one):
+   --tag-existing* is a calm blue for a tag that already exists in the
+   catalog; --tag-new* reuses the app's existing amber "edit/pending"
+   status tone, since a new tag is exactly that -- a change that
+   hasn't been saved yet. */
+.tag-input-field {
+  --tag-existing: #2B5F7A;
+  --tag-existing-bg: #DCEAF2;
+  --tag-new: var(--status-edit);
+  --tag-new-bg: var(--status-edit-bg);
+  position: relative;
+}
+.tag-input-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.4em 0.5em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+}
+.tag-input-box:focus-within {
+  border-color: var(--ink-faint);
+}
+.tag-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35em;
+}
+.tag-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.25em 0.3em 0.25em 0.7em;
+  border-radius: var(--radius-pill);
+  font-size: 0.85em;
+  font-weight: 500;
+}
+.tag-chip-existing {
+  background: var(--tag-existing-bg);
+  color: var(--tag-existing);
+}
+.tag-chip-new {
+  background: var(--tag-new-bg);
+  color: var(--tag-new);
+}
+.tag-chip-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3em;
+  height: 1.3em;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 1em;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.tag-chip-remove:hover {
+  background: rgba(0, 0, 0, 0.12);
+  opacity: 1;
+}
+/* Wraps just the input + its dropdown, so the dropdown can anchor to
+   the input's own (dynamic, content-sized) box instead of the whole
+   field -- it "dangles" directly under whatever you're typing rather
+   than spanning the full width of the tags area and obscuring the
+   chips already there. */
+.tag-input-inline {
+  position: relative;
+  display: inline-flex;
+}
+.tag-input-text {
+  width: 4ch; /* JS (growInputToContent) grows this to match typed content */
+  max-width: 100%;
+  padding: 0.25em 0.7em;
+  border: 1px dashed var(--ink-faint);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.85em;
+  font-family: var(--font-body);
+  box-sizing: content-box;
+}
+.tag-input-text:focus {
+  outline: none;
+  border-style: solid;
+  border-color: var(--ink-soft);
+  background: var(--paper);
+}
+.tag-suggestion-dropdown {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  margin-top: 0.25em;
+  width: max-content;
+  max-width: 16em;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  box-shadow: 0 3px 10px rgba(33, 30, 27, 0.14);
+  max-height: 10em;
+  overflow-y: auto;
+}
+.tag-suggestion {
+  padding: 0.3em 0.6em;
+  font-size: 0.8em;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tag-suggestion.active {
+  background: var(--tag-existing-bg);
+  color: var(--tag-existing);
+}
+.tag-suggestion-create {
+  color: var(--ink-soft);
+  font-style: italic;
+  border-top: 1px solid var(--line-soft);
+  white-space: normal;
+}
+.tag-suggestion-create.active {
+  background: var(--tag-new-bg);
+  color: var(--tag-new);
+}
+/* Shown when the typed text exactly matches a tag already on this
+   item -- purely informational (selecting it just clears the draft,
+   nothing gets created or added twice), so it gets a neutral treatment
+   rather than the create row's caution color. */
+.tag-suggestion-info {
+  color: var(--ink-faint);
+  font-style: italic;
+  border-top: 1px solid var(--line-soft);
+}
+.tag-suggestion-info.active {
+  background: var(--line-soft);
+  color: var(--ink-soft);
+}
+.settings-auto-refresh-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 0 0 0 0.4em; /* lines up with checkbox label */
+}
+.settings-number-input {
+  width: 4em;
+  padding: 0.4em 0.5em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 1em;
+  font-family: var(--font-body);
+  box-sizing: border-box;
+}
+.settings-unit-select {
+  padding: 0.4em 0.5em;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 1em;
+  font-family: var(--font-body);
+}
+.settings-number-input:disabled,
+.settings-unit-select:disabled {
+  opacity: 0.5;
+}
+.settings-buttons {
+  display: flex;
+  gap: 0.5em;
+  margin-top: 1em;
+}
+.settings-buttons button {
+  flex: 1;
+}
