@@ -44,6 +44,20 @@
   display: block;
   max-width: 100%;
 }
+/* Second, slider-based zoom method alongside trackpad pinch/scroll --
+   see imageCropperTool.js's 'zoom' event wiring for how the two stay
+   in sync. Full-width under the image, own row above the action bar. */
+.crop-modal-zoomrow {
+  display: flex;
+  align-items: center;
+}
+.crop-modal-zoom-slider {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.crop-modal-zoom-slider:disabled {
+  opacity: 0.5;
+}
 .crop-modal-actions {
   display: flex;
   align-items: center;

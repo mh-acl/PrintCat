@@ -523,11 +523,11 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     chip.appendChild(frame);
 
     const img = document.createElement('img');
-    img.src = draft.itemImageRef ? imageRefSrc(draft.itemImageRef, folderPath) : 'nothumb.svg';
     img.alt = 'Item image';
     frame.appendChild(img);
 
     if (draft.itemImageRef) {
+      img.src = imageRefSrc(draft.itemImageRef, folderPath);
       applyImageCrop(img, frame, getDraftCrop(draft.itemImageRef, 'thumb'), { useDefault: true });
 
       const removeBtn = document.createElement('button');
@@ -540,6 +540,38 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
         refreshEditFilesArea();
       };
       chip.appendChild(removeBtn);
+    } else if (mode === 'edit' && item) {
+      // No explicit item-level assignment in the draft (no
+      // metadataItemImage, no thumb.* convention match) -- but that
+      // doesn't mean the item has no thumbnail: resolveItemThumbnail
+      // (thumbnailResolver.js, via this same getItemThumbnail IPC)
+      // has a third fallback tier below those two -- the first print
+      // file that resolves to a real thumbnail, including an embedded
+      // gcode thumbnail generated/cached in the main process. That's
+      // exactly what the grid card already shows for this same item
+      // (see grid.js's identical getItemThumbnail call), so without
+      // this the editor showed the "no thumbnail" placeholder for the
+      // common case of an item with no *explicit* image, even though
+      // one is clearly visible everywhere else. This tier can't be
+      // computed client-side the way the other two are (it depends on
+      // gcode parsing and the on-disk thumbnail cache), so it's
+      // resolved async via IPC, same as grid.js's card thumbnail.
+      // Deliberately no crop/remove controls here -- there's no real
+      // assignment in the draft to act on, only a borrowed preview.
+      window.catalogAPI
+        .getItemThumbnail(item)
+        .then((thumb) => {
+          img.src = thumb ? fileUrl(thumb) : 'nothumb.svg';
+        })
+        .catch(() => {
+          img.src = 'nothumb.svg';
+        });
+    } else {
+      // Add-mode: no catalog entry exists yet for this folder, so
+      // there's no IPC-resolvable fallback to ask for -- this mirrors
+      // createDraftFromPicked's two-tier (explicitThumb + per-file
+      // filename match) client-side-only resolution.
+      img.src = 'nothumb.svg';
     }
 
     return chip;
@@ -705,10 +737,15 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       // The one crop-adjust control for this image -- sets its default
       // thumbnail crop, used everywhere this image is later assigned
       // (item image, any print file), rather than a separate control
-      // per place it happens to be assigned. Bottom-left corner so it
-      // doesn't collide with the existing assign button (bottom-right,
-      // see .item-modal-assign-btn below).
-      frame.appendChild(makeCropAdjustButton(ref, 'thumb', thumb, frame));
+      // per place it happens to be assigned. Appended to the cell
+      // (not the frame) so it sits outside the image wrapper, next to
+      // the assign button -- appending it inside .crop-frame put it
+      // under that element's overflow:hidden (needed for the crop
+      // translate itself), which clipped its negative-offset overhang
+      // instead of showing it as a clean corner badge. Bottom-left
+      // corner mirrors the existing assign button (bottom-right, see
+      // .item-modal-assign-btn below), so the two sit side by side.
+      cell.appendChild(makeCropAdjustButton(ref, 'thumb', thumb, frame));
 
       const assignBtn = document.createElement('button');
       assignBtn.type = 'button';

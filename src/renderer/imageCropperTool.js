@@ -63,6 +63,22 @@ function openImageCropper({ imageSrc, mode, existingRect, onSave, onCancel }) {
   img.src = imageSrc;
   imgWrap.appendChild(img);
 
+  const zoomRow = document.createElement('div');
+  zoomRow.className = 'crop-modal-zoomrow';
+  box.appendChild(zoomRow);
+
+  const zoomSlider = document.createElement('input');
+  zoomSlider.type = 'range';
+  zoomSlider.className = 'crop-modal-zoom-slider';
+  zoomSlider.min = '0';
+  zoomSlider.max = '1';
+  zoomSlider.step = '0.001';
+  zoomSlider.value = '0';
+  // Disabled until the cropper is ready and we know the real zoom
+  // range for this image -- see img 'load' handler below.
+  zoomSlider.disabled = true;
+  zoomRow.appendChild(zoomSlider);
+
   const actions = document.createElement('div');
   actions.className = 'crop-modal-actions';
   box.appendChild(actions);
@@ -139,9 +155,34 @@ function openImageCropper({ imageSrc, mode, existingRect, onSave, onCancel }) {
     close();
   });
 
+  // Trackpad pinch/scroll zoom (zoomOnWheel/zoomOnTouch, both default
+  // true) and the slider drive the same underlying canvas ratio, kept
+  // in sync via Cropper's 'zoom' event. We deliberately do NOT enforce
+  // our own zoom-out floor here (an earlier version did, based on the
+  // canvas's initial "whole image visible" ratio) -- Cropper already
+  // enforces its own floor internally (viewMode: 1 means the canvas
+  // can't shrink smaller than the current crop box), and for an image
+  // that was previously zoomed in before saving, that real floor sits
+  // BELOW the "whole image visible" ratio, since the saved crop box is
+  // smaller than the full canvas. Our own stricter floor was cutting
+  // the slider off before it reached that real, more permissive limit
+  // -- exactly the room needed to zoom back out and expand the crop.
+  // So: let Cropper do the clamping, and just reflect wherever it
+  // actually lands.
+  let syncingFromSlider = false;
+  // Hoisted out of the img 'load' closure below -- the zoomSlider
+  // 'input' listener also needs these, and it's a sibling of that
+  // closure, not nested inside it.
+  let naturalW = 0;
+  let naturalH = 0;
+
+  function readActualRatio() {
+    return cropper.getCanvasData().width / naturalW;
+  }
+
   img.addEventListener('load', () => {
-    const naturalW = img.naturalWidth;
-    const naturalH = img.naturalHeight;
+    naturalW = img.naturalWidth;
+    naturalH = img.naturalHeight;
 
     // eslint-disable-next-line no-undef -- Cropper is a global from the
     // vendored vendor/cropper.min.js script tag, see index.html
@@ -166,7 +207,43 @@ function openImageCropper({ imageSrc, mode, existingRect, onSave, onCancel }) {
         }
         // else: autoCropArea above already gives a sensible starting
         // box (centered square for thumb, near-full-image for full).
+
+        // setData() above only touches the crop box, never the canvas
+        // (confirmed against Cropper's source) -- so the canvas is
+        // still exactly at whatever ratio autoCropArea/viewMode landed
+        // it at, i.e. "whole image visible". That's a sensible anchor
+        // for the slider's *displayed* range, but not an enforced
+        // limit -- see the 'zoom' handler below for why.
+        const fitRatio = readActualRatio();
+        zoomSlider.min = String(fitRatio * 0.1);
+        zoomSlider.max = String(fitRatio * 4);
+        zoomSlider.step = String((fitRatio * 4 - fitRatio * 0.1) / 300);
+        zoomSlider.value = String(fitRatio);
+        zoomSlider.disabled = false;
+      },
+      zoom(e) {
+        if (syncingFromSlider) return;
+        // This fires synchronously BEFORE Cropper applies its own
+        // clamping (canvasData.width is set and renderCanvas() runs
+        // right after this listener returns, back inside zoomTo()) --
+        // so e.detail.ratio here is only the requested ratio, not
+        // necessarily where it'll land. Defer one microtask so the
+        // current zoomTo() call has finished by the time we read it.
+        queueMicrotask(() => {
+          zoomSlider.value = String(readActualRatio());
+        });
       },
     });
+  });
+
+  zoomSlider.addEventListener('input', () => {
+    if (!cropper) return;
+    syncingFromSlider = true;
+    cropper.zoomTo(parseFloat(zoomSlider.value));
+    syncingFromSlider = false;
+    // zoomTo() is synchronous and has already been clamped by the time
+    // it returns -- reflect wherever it actually landed, which may
+    // differ from the value the slider was just dragged to.
+    zoomSlider.value = String(readActualRatio());
   });
 }

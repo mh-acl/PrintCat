@@ -33,7 +33,12 @@
   text-align: center;
   color: var(--ink-soft);
 }
-.drive-picker-box button:not(.thumb-zoom-btn)  {
+/* :where() scopes this to .drive-picker-box without contributing to
+   specificity, so the rule sits at plain-element weight (0,0,1) --
+   any icon/badge button styling itself with even one class (see
+   .thumb-zoom-btn, .image-crop-adjust-btn) naturally wins, no
+   :not() exclusion list to keep maintaining as new ones are added. */
+:where(.drive-picker-box) button {
   padding: 0.75em;
   border-radius: var(--radius-control);
   border: 1px solid var(--line);
@@ -43,7 +48,7 @@
   font-size: 1em;
   cursor: pointer;
 }
-.drive-picker-box button:hover {
+:where(.drive-picker-box) button:hover {
   border-color: var(--ink-faint);
 }
 .drive-picker-box button.cancel {
