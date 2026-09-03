@@ -111,8 +111,7 @@ function createTagInput(labelText, initialTags, getAllTags) {
 
       const remove = document.createElement('button');
       remove.type = 'button';
-      remove.className = 'tag-chip-remove';
-      remove.textContent = '\u00d7';
+      remove.className = 'tag-chip-remove icon icon-close';
       remove.title = `Remove tag "${tag.value}"`;
       remove.setAttribute('aria-label', `Remove tag ${tag.value}`);
       remove.onclick = () => {
@@ -579,10 +578,10 @@ function openSettingsDialog(opts = {}) {
   const allPrinters = Array.from(collectPrinters(allItems)).sort();
 
   const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay';
+  overlay.className = 'modal-overlay';
 
   const box = document.createElement('div');
-  box.className = 'drive-picker-box settings-box';
+  box.className = 'modal-box modal-wide';
 
   const title = document.createElement('h3');
   title.textContent = 'Settings';
@@ -688,10 +687,10 @@ function openSettingsDialog(opts = {}) {
 // the one field that actually matters here would just be confusing.
 function openRequiredSetupDialog() {
   const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay';
+  overlay.className = 'modal-overlay';
 
   const box = document.createElement('div');
-  box.className = 'drive-picker-box settings-box';
+  box.className = 'modal-box modal-wide';
 
   const title = document.createElement('h3');
   title.textContent = 'Set Up Print Catalog';

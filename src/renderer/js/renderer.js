@@ -91,7 +91,7 @@ document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {
   e.preventDefault();
   if (!editModeActive) return;
-  if (document.querySelector('.drive-picker-overlay')) return; // editor/settings open -- its own handlers own this drop
+  if (document.querySelector('.modal-overlay')) return; // editor/settings open -- its own handlers own this drop
   const files = e.dataTransfer.files;
   if (!files || files.length === 0) return;
   const sourceDir = window.catalogAPI.getPathForFile(files[0]);

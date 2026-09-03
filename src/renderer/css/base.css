@@ -56,10 +56,10 @@
   src: url('../fonts/ibm-plex-mono-500.woff2') format('woff2');
 }
 /* Icon font -- custom subset of Material Symbols Outlined (FILL 0, GRAD 0,
-   opsz 24, wght 400), containing only the 11 glyphs Print Catalog uses:
+   opsz 24, wght 400), containing only the 12 glyphs Print Catalog uses:
    search_off, zoom_in, delete, restore, warning, close, chevron_left,
-   arrow_back, edit, refresh, info. Regenerate from the full variable font
-   at github.com/google/material-design-icons if more icons are added. */
+   arrow_back, edit, refresh, info, crop. Regenerate from the full variable
+   font at github.com/google/material-design-icons if more icons are added. */
 @font-face {
   font-family: 'PrintCat Icons';
   font-style: normal;
@@ -91,6 +91,7 @@
 .icon-edit::before         { content: '\f097'; }
 .icon-refresh::before      { content: '\e5d5'; }
 .icon-info::before         { content: '\e88e'; }
+.icon-crop::before         { content: '\e3be'; }
 :root {
   /* Palette -- warm paper + near-black ink + a single Prusa-orange accent,
      used only for primary actions and active state. Everything else stays

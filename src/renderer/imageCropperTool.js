@@ -16,9 +16,9 @@
 //              cropping, so it defaults to nearly the whole image
 //              rather than starting zoomed in.
 //
-// Reuses the app's real .drive-picker-overlay/.drive-picker-box shell
-// (composed with crop-modal-specific modifier classes, see styles.css
-// and how openItemModal itself composes 'drive-picker-overlay
+// Reuses the app's real .modal-overlay/.modal-box shell
+// (composed with crop-modal-specific modifier classes, see dialogs.css
+// and how openItemModal itself composes 'modal-overlay
 // item-modal-overlay') and follows the established dismissal
 // convention for "consequential" modals: explicit Cancel/Save buttons
 // and Escape, no click-outside-to-close (this is an edit action, same
@@ -39,15 +39,14 @@
 //   });
 
 function openImageCropper({ imageSrc, mode, existingRect, onSave, onCancel }) {
-  // Reuses the app's real overlay/box shell classes (.drive-picker-overlay
-  // / .drive-picker-box, composed with modifier classes -- see how
-  // openItemModal itself does 'drive-picker-overlay item-modal-overlay'),
-  // not invented .modal-overlay/.modal-box names.
+  // Reuses the app's real overlay/box shell classes (.modal-overlay
+  // / .modal-box, composed with modifier classes -- see how
+  // openItemModal itself does 'modal-overlay item-modal-overlay').
   const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay crop-modal-overlay';
+  overlay.className = 'modal-overlay crop-modal-overlay';
 
   const box = document.createElement('div');
-  box.className = 'drive-picker-box crop-modal-box';
+  box.className = 'modal-box crop-modal-box';
   overlay.appendChild(box);
 
   const title = document.createElement('h2');

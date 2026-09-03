@@ -1,7 +1,7 @@
 /* Unified item view/edit modal: item-detail layout, origin info,
    print-file rows (.file-row, .print-button) in view mode, and all
    .item-modal-* / .editor-image-chip* rules for edit mode. Depends on
-   the .drive-picker-overlay/.drive-picker-box shell in dialogs.css. */
+   the .modal-overlay/.modal-box shell in dialogs.css. */
 
 .item-detail {
   display: flex;
@@ -115,7 +115,7 @@
   border-color: var(--accent-hover);
 }
 /* Unified item view/edit modal (see openItemModal() in renderer.js) --
-   overlays the still-intact main grid, same .drive-picker-overlay
+   overlays the still-intact main grid, same .modal-overlay
    pattern as the item editor and drive-picker dialogs. Wider than
    .editor-box since it needs to comfortably fit several 14em-wide
    .file-row cards side by side (see .item-detail). */
@@ -350,7 +350,7 @@
   border: 1px solid var(--line);
   display: block;
 }
-.drive-picker-box button.item-modal-assign-btn {
+.modal-box button.item-modal-assign-btn {
   position: absolute;
   bottom: -0.4em;
   right: -0.4em;
@@ -365,7 +365,7 @@
   font-size: 0.9em;
   cursor: pointer;
 }
-.drive-picker-box button.item-modal-assign-btn:disabled {
+.modal-box button.item-modal-assign-btn:disabled {
   border-color: var(--line);
   background: var(--paper);
   color: var(--ink-faint);

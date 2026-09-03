@@ -1,7 +1,7 @@
 'use strict';
 
-// Generic modal-dialog helpers built on the shared .drive-picker-overlay/
-// .drive-picker-box shell (see styles.css) -- Escape-to-close wiring,
+// Generic modal-dialog helpers built on the shared .modal-overlay/
+// .modal-box shell (see styles.css) -- Escape-to-close wiring,
 // the USB drive picker, and the message/confirm/action/eject dialogs
 // reused across the USB flow and elsewhere.
 // Depends on: nothing else in renderer/ (self-contained).
@@ -27,10 +27,10 @@ function attachEscapeHandler(onEscape) {
 function pickDrive(drives) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const title = document.createElement('h3');
     title.textContent = 'Choose a USB drive';
@@ -70,10 +70,10 @@ function pickDrive(drives) {
 function showActionDialog(message, actions, { escapeValue } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -108,10 +108,10 @@ function showActionDialog(message, actions, { escapeValue } = {}) {
 function showEjectSafeDialog(message, diskIdentifier) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -147,10 +147,10 @@ function showEjectSafeDialog(message, diskIdentifier) {
 function showMessageDialog(message, buttonLabel = 'OK') {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const text = document.createElement('p');
     text.textContent = message;
@@ -178,10 +178,10 @@ function showMessageDialog(message, buttonLabel = 'OK') {
 function showConfirmDialog(message, { confirmLabel = 'OK', cancelLabel = 'Cancel' } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'drive-picker-overlay';
+    overlay.className = 'modal-overlay';
 
     const box = document.createElement('div');
-    box.className = 'drive-picker-box';
+    box.className = 'modal-box';
 
     const text = document.createElement('p');
     text.textContent = message;

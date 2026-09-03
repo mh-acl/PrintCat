@@ -6,12 +6,16 @@
    This block was written earlier but only ever landed in a standalone
    handoff file, never actually appended here -- that's the root cause
    of the crop dialog rendering unstyled at the bottom of the page
-   instead of as an overlay. Composes with the real .drive-picker-overlay/
-   .drive-picker-box shell (see openItemModal, drive picker, etc. for
-   the same pattern) rather than the .modal-overlay/.modal-box names
-   used in the first draft, which don't exist anywhere in this file. */
+   instead of as an overlay. Composes with the shared .modal-overlay/
+   .modal-box shell (see openItemModal, drive picker, etc. for the
+   same pattern). NOTE: an earlier version of this comment referenced
+   these same class names as if they didn't exist yet -- they were
+   renamed to .modal-overlay/.modal-box from .drive-picker-overlay/
+   .drive-picker-box as part of the CSS semantics refactor; this
+   comment no longer describes a naming mismatch, just the shell it
+   composes with. */
 .crop-modal-overlay {
-  /* .drive-picker-overlay is already z-index: 1000, same as
+  /* .modal-overlay is already z-index: 1000, same as
      .item-modal-overlay -- since the crop tool always opens *from*
      the already-open item modal, DOM order alone would already stack
      it on top, but matching the explicit lightbox precedent (1100,

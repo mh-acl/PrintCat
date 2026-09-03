@@ -3,7 +3,7 @@
    (also reused by the item modal's tag editor -- see createTagInput
    in settings.js). */
 
-.settings-box {
+.modal-wide {
   min-width: 26em;
   text-align: left;
 }

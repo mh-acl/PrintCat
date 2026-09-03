@@ -210,10 +210,10 @@ function createDraftFromPicked(picked) {
 // still match what was last detected" heuristic.
 function openOriginEditPopup(prefill, onSave) {
   const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay origin-popup-overlay';
+  overlay.className = 'modal-overlay origin-popup-overlay';
 
   const box = document.createElement('div');
-  box.className = 'drive-picker-box settings-box';
+  box.className = 'modal-box modal-wide';
 
   const title = document.createElement('h3');
   title.textContent = 'Original location & creator';
@@ -282,10 +282,10 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   let folderPath = item ? item.path : null; // raw fs path, not a URL -- see imageRefSrc/fileUrl
 
   const overlay = document.createElement('div');
-  overlay.className = 'drive-picker-overlay item-modal-overlay';
+  overlay.className = 'modal-overlay item-modal-overlay';
 
   const box = document.createElement('div');
-  box.className = 'drive-picker-box settings-box item-modal-box';
+  box.className = 'modal-box modal-wide item-modal-box';
   overlay.appendChild(box);
 
   const topBar = document.createElement('div');
@@ -456,14 +456,9 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   // the existing removeBtn corner-badge pattern used elsewhere in
   // this file (e.g. buildItemThumbChip's remove button).
   function makeCropAdjustButton(ref, mode, imgEl, frameEl) {
-    // Not using the .icon/.icon-* font here -- it's a hand-picked
-    // subset (see styles.css's icon-font comment) and doesn't include
-    // a crop glyph. A plain unicode character in a corner-badge button
-    // is the same fallback the origin-edit pencil button already uses.
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'image-crop-adjust-btn';
-    btn.textContent = '\u2921'; // "⤡" (expand/frame corners)
+    btn.className = 'image-crop-adjust-btn icon icon-crop';
     btn.title = mode === 'thumb' ? 'Adjust thumbnail crop' : 'Adjust framing';
     btn.setAttribute('aria-label', mode === 'thumb' ? 'Adjust thumbnail crop' : 'Adjust framing');
     btn.onclick = (e) => {
@@ -661,7 +656,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       chip.appendChild(chipImg);
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
-      removeBtn.textContent = '\u00d7';
+      removeBtn.className = 'icon icon-close';
       removeBtn.title = 'Remove';
       removeBtn.onclick = (e) => {
         e.stopPropagation();
@@ -704,10 +699,10 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     hint.className = 'settings-intro';
     hint.textContent =
       selectedTargets.size > 0
-        ? `Click \u2190 on an image to assign it to ${selectedTargets.size} selected target${
+        ? `Click the assign icon on an image to assign it to ${selectedTargets.size} selected target${
             selectedTargets.size === 1 ? '' : 's'
           }.`
-        : 'Select the item image and/or one or more print files, then click \u2190 on an image to assign it. Drag-and-drop also works.';
+        : 'Select the item image and/or one or more print files, then click the assign icon on an image to assign it. Drag-and-drop also works.';
     col.appendChild(hint);
 
     const grid = document.createElement('div');
@@ -749,10 +744,9 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 
       const assignBtn = document.createElement('button');
       assignBtn.type = 'button';
-      assignBtn.className = 'item-modal-assign-btn';
+      assignBtn.className = 'item-modal-assign-btn icon icon-arrow-back';
       assignBtn.title = 'Assign to selected target(s)';
       assignBtn.setAttribute('aria-label', 'Assign to selected targets');
-      assignBtn.textContent = '\u2190';
       assignBtn.disabled = selectedTargets.size === 0;
       assignBtn.onclick = () => assignImageToTargets(ref);
       cell.appendChild(assignBtn);
@@ -792,10 +786,9 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 
     const pencilBtn = document.createElement('button');
     pencilBtn.type = 'button';
-    pencilBtn.className = 'item-modal-origin-btn';
+    pencilBtn.className = 'item-modal-origin-btn icon icon-edit';
     pencilBtn.title = 'Edit original-location info';
     pencilBtn.setAttribute('aria-label', 'Edit original-location info');
-    pencilBtn.textContent = '\u270e';
     pencilBtn.onclick = () => {
       openOriginEditPopup(
         {
@@ -813,10 +806,9 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 
     const refreshBtn = document.createElement('button');
     refreshBtn.type = 'button';
-    refreshBtn.className = 'item-modal-origin-btn';
+    refreshBtn.className = 'item-modal-origin-btn icon icon-refresh';
     refreshBtn.title = 'Reparse from folder';
     refreshBtn.setAttribute('aria-label', 'Reparse original-location info from folder');
-    refreshBtn.textContent = '\u27f3';
     refreshBtn.onclick = async () => {
       refreshBtn.disabled = true;
       try {
