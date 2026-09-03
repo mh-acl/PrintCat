@@ -701,6 +701,74 @@ function openRequiredSetupDialog() {
   intro.textContent = "Enter the git repository this makerspace's catalog data lives in to get started.";
   box.appendChild(intro);
 
+  // Setting up a new laptop for a makerspace that already has one
+  // configured is the common case -- offer to import a settings file
+  // (exported from the Data Repository > Export/Import tab on an
+  // existing laptop) instead of re-typing everything by hand. Uses
+  // the same settings:import/settings:confirmImportToken IPC calls as
+  // the tabbed dialog's import button (see buildExportImportTabPanel
+  // above), so token handling follows the identical never-touches-
+  // other-renderer-code path.
+  const importIntro = document.createElement('p');
+  importIntro.className = 'settings-intro';
+  importIntro.textContent = 'Already have a settings file from another laptop?';
+  box.appendChild(importIntro);
+
+  const importStatus = document.createElement('p');
+  importStatus.className = 'settings-intro settings-export-import-status';
+
+  const importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.className = 'settings-action-button';
+  importBtn.textContent = 'Import Settings…';
+  importBtn.onclick = async () => {
+    importStatus.textContent = '';
+    if (!confirm('Import settings from a file? This replaces the values below with values from the chosen file.')) return;
+
+    try {
+      const result = await window.catalogAPI.importSettings();
+      if (result.cancelled) return;
+
+      settings = result.settings;
+
+      // Reflect the imported values in the fields below immediately,
+      // whether or not we end up relaunching right away.
+      repoField.input.value = settings.gitRepoUrl || '';
+      branchField.input.value = settings.gitBranch || '';
+      autoRefreshField.checkbox.checked = settings.autoRefreshEnabled;
+      autoRefreshField.numberInput.value = settings.autoRefreshValue || 2;
+      autoRefreshField.unitSelect.value = settings.autoRefreshUnit;
+
+      let tokenImported = false;
+      if (result.hasToken) {
+        const wantsToken = confirm(
+          "This file includes a GitHub sync token. Import it too?\n\nThis overwrites this laptop's current sync token and requires admin authorization."
+        );
+        const tokenResult = await window.catalogAPI.confirmImportToken(wantsToken);
+        tokenImported = Boolean(tokenResult && tokenResult.ok);
+      }
+
+      importStatus.textContent = tokenImported ? 'Settings and sync token imported.' : 'Settings imported.';
+
+      // settings:import already persists via settingsStore.save (same
+      // as a normal Save), so a usable repo URL means there's nothing
+      // left to do here -- relaunch straight away, same as this
+      // dialog's own Save button does unconditionally (see its
+      // comment below for why no "keep browsing" option is offered).
+      // If the import didn't include a repo URL, leave the admin to
+      // review/complete the fields below and press Save themselves.
+      if (settings.gitRepoUrl) {
+        window.catalogAPI.relaunch();
+      }
+    } catch (err) {
+      importStatus.textContent = `Import failed: ${err.message}`;
+    }
+  };
+  box.appendChild(importBtn);
+  box.appendChild(importStatus);
+
+  box.appendChild(document.createElement('hr'));
+
   const repoField = createSettingsTextField(
     'Git Repository:',
     settings.gitRepoUrl,
