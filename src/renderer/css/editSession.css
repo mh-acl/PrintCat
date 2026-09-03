@@ -148,12 +148,14 @@ a.listing span.item-attention-icon {
   /* Without an explicit z-index this defaults to auto (~0), which
      loses to the item cards' .item-trash-btn/.item-attention-icon
      (z-index: 2) -- those corner overlays would scroll past on top of
-     this bar instead of going underneath it. 10 clears those (and any
-     other in-grid z-index: 1/2 usage) with room to spare, while
-     staying well below the modal/lightbox overlays (z-index: 1000/1100)
-     so opening an item still correctly covers this bar rather than the
-     reverse. */
-  z-index: 10;
+     this bar instead of going underneath it. Also needs to clear the
+     item modal/lightbox overlays (z-index: 1000/1100): this bar shows
+     pending-change counts and the Confirm/Discard actions, which stay
+     relevant while editing an item, so it deliberately floats above
+     the modal rather than being covered by it. #listing and the modal
+     overlay are both direct children of <body> with no intervening
+     stacking context, so a z-index above 1100 is enough to win here. */
+  z-index: 1200;
   background: var(--paper-raised);
   border-top: 1px solid var(--line);
   padding: 0.75em 1em;

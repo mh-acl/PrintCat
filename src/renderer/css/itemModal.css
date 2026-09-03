@@ -262,6 +262,32 @@
 .item-modal-tags-row {
   margin-bottom: 1em;
 }
+/* View mode's read-only tags row sits right under the origin line in
+   the header -- .item-detail-tags is the view-mode-only spacing
+   modifier, kept separate from the shared .item-modal-tags-row base
+   so edit mode's margin isn't affected by tweaking this. */
+.item-detail-tags {
+  margin-top: 0.5em;
+}
+.item-detail-tags-none {
+  font-size: 0.85em;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+/* Transition hook: only one of view mode's/edit mode's tags row is
+   ever in the DOM at a time (renderContent replaces content wholesale
+   on mode switch -- see itemModal.js), so giving both the same
+   view-transition-name is safe and lets a future
+   document.startViewTransition() wrapped around that swap animate
+   this element continuously instead of a hard cut, with no other
+   wiring needed here. No-op until something actually calls
+   startViewTransition; @supports keeps this inert on engines that
+   don't implement the API rather than erroring. */
+@supports (view-transition-name: none) {
+  .item-modal-box .item-modal-tags-row .tag-chip-list {
+    view-transition-name: item-modal-tags;
+  }
+}
 .item-modal-edit-body {
   display: flex;
   gap: 1.5em;

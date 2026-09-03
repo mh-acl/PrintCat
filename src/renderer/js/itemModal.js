@@ -954,6 +954,38 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     renderContent();
   }
 
+  // The symmetric counterpart to enterEditMode() -- called by the
+  // global edit-session bar (see editSession-ui.js) when edit mode
+  // ends (Discard All Changes or a successful Confirm) while this
+  // modal is still open in edit mode, so it doesn't get stranded
+  // showing a draft that no longer corresponds to anything staged.
+  // Any in-progress unsaved draft is simply dropped -- consistent
+  // with Discard All Changes, and harmless after Confirm since a
+  // draft only ever affects pendingChanges via saveDraft(), which if
+  // called already landed before Confirm was clicked.
+  //
+  // Re-reads the item from the now-current allItems (post-cancel/
+  // confirm) rather than reusing the stale closured item, since the
+  // underlying data may have changed. If the item is gone entirely --
+  // e.g. this was a staged delete that just got confirmed -- there's
+  // nothing left to view, so close the modal instead.
+  function exitEditMode() {
+    if (mode !== 'edit') return;
+    const freshItem = allItems.find((i) => i.path === item.path);
+    if (!freshItem) {
+      close();
+      return;
+    }
+    item = freshItem;
+    folderPath = item.path;
+    sourceDir = item.path;
+    draft = null;
+    selectedTargets = new Set();
+    mode = 'view';
+    renderTopBar();
+    renderContent();
+  }
+
   if (mode === 'add') {
     // Mirrors openItemEditor's old add-mode flow: the folder has to be
     // known before there's anything to name/tag, so pick/prepare it
@@ -975,7 +1007,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     return;
   }
 
-  openModalHandle = { itemPath: item.path, switchToEdit: enterEditMode };
+  openModalHandle = { itemPath: item.path, switchToEdit: enterEditMode, switchToView: exitEditMode };
 
   if (mode === 'edit') draft = createDraftFromItem(item);
 

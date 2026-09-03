@@ -33,13 +33,18 @@ function renderEditBar() {
   const buttons = document.createElement('div');
 
   const cancelBtn = document.createElement('button');
-  cancelBtn.textContent = 'Cancel changes';
+  cancelBtn.textContent = 'Discard All Changes';
   cancelBtn.onclick = async () => {
     if (total > 0 && !confirm('Discard all pending changes?')) return;
     allItems = await window.catalogAPI.editSessionCancel();
     editModeActive = false;
     pendingChanges = {};
     selectedSmartTags = new Set();
+    // If an item's modal is open in edit mode, switch it back to
+    // view mode in place rather than leaving it stranded in edit mode
+    // showing a now-discarded draft -- the symmetric counterpart to
+    // onEditSessionEntered's switchToEdit() call in renderer.js.
+    if (openModalHandle) openModalHandle.switchToView();
     renderPrinterFilter();
     renderTagFilter();
     render();
@@ -65,6 +70,9 @@ function renderEditBar() {
       editModeActive = false;
       pendingChanges = {};
       selectedSmartTags = new Set();
+      // Same as Discard All Changes above -- an open item modal should
+      // drop back to view mode, not stay stranded in edit mode.
+      if (openModalHandle) openModalHandle.switchToView();
       renderPrinterFilter();
       renderTagFilter();
       render();
