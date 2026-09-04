@@ -78,6 +78,22 @@ function renderOriginInfo(origin) {
 // discussion, entering edit mode while viewing an item should behave
 // exactly as if they'd been in the main view and clicked to edit it.
 let openModalHandle = null; // { itemPath, switchToEdit() } or null while nothing's open
+// Wraps a synchronous DOM-mutating callback in document.startViewTransition
+// when the engine supports it (Electron's Chromium does), so any element
+// present in both the before/after DOM with a matching view-transition-name
+// (currently just .item-modal-tags-row .tag-chip-list -- see the
+// @supports block in itemModal.css) animates smoothly across the mutation
+// instead of hard-cutting. Falls back to calling fn() directly with no
+// animation on engines without the API. Kept generic/reusable rather than
+// tied to any one mode-switch caller, since more elements are expected to
+// pick up view-transition-name over time as this effort continues.
+function withViewTransition(fn) {
+  if (typeof document.startViewTransition === 'function') {
+    document.startViewTransition(fn);
+  } else {
+    fn();
+  }
+}
 // Builds the in-memory edit draft for an existing catalog item -- the
 // shape mirrors what editSessionCommitEdit/editItem() already expect
 // (see editSession.js), so saving is close to a direct passthrough.
@@ -315,6 +331,19 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 
   function renderTopBar() {
     topBar.innerHTML = '';
+
+    const left = document.createElement('div');
+    left.className = 'item-modal-topbar-side item-modal-topbar-left';
+    topBar.appendChild(left);
+
+    const title = document.createElement('div');
+    title.className = 'item-modal-topbar-title';
+    topBar.appendChild(title);
+
+    const right = document.createElement('div');
+    right.className = 'item-modal-topbar-side item-modal-topbar-right';
+    topBar.appendChild(right);
+
     if (mode === 'view') {
       const closeBtn = document.createElement('button');
       closeBtn.type = 'button';
@@ -324,21 +353,43 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       closeBtn.appendChild(closeIcon);
       closeBtn.appendChild(document.createTextNode(' Close'));
       closeBtn.onclick = close;
-      topBar.appendChild(closeBtn);
+      left.appendChild(closeBtn);
+
+      const heading = document.createElement('h2');
+      heading.className = 'item-modal-title-text';
+      heading.textContent = item.displayName || item.name;
+      title.appendChild(heading);
     } else {
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.className = 'item-modal-close cancel';
       cancelBtn.textContent = 'Cancel';
       cancelBtn.onclick = close;
-      topBar.appendChild(cancelBtn);
+      left.appendChild(cancelBtn);
+
+      // Same field draft.displayName was always bound to (previously
+      // lived in buildEditRoot's item-modal-edit-header row, alongside
+      // the thumb chip) -- moved here so the title sits centered on
+      // the same row as Cancel/Save instead of its own row below,
+      // and so it's one persistent element (topBar is never torn
+      // down by renderContent) rather than being rebuilt every time
+      // content is.
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'item-modal-name-input item-modal-title-input';
+      nameInput.value = draft.displayName;
+      nameInput.placeholder = 'Item name';
+      nameInput.oninput = () => {
+        draft.displayName = nameInput.value;
+      };
+      title.appendChild(nameInput);
 
       const saveBtn = document.createElement('button');
       saveBtn.type = 'button';
       saveBtn.className = 'item-modal-close save';
       saveBtn.textContent = 'Save to pending';
       saveBtn.onclick = saveDraft;
-      topBar.appendChild(saveBtn);
+      right.appendChild(saveBtn);
     }
   }
 
@@ -855,16 +906,8 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     const thumbChipHolder = document.createElement('div');
     thumbChipHolder.className = 'item-modal-thumb-chip-holder';
     header.appendChild(thumbChipHolder);
-
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.className = 'item-modal-name-input';
-    nameInput.value = draft.displayName;
-    nameInput.placeholder = 'Item name';
-    nameInput.oninput = () => {
-      draft.displayName = nameInput.value;
-    };
-    header.appendChild(nameInput);
+    // Name field now lives in the topbar (see renderTopBar), centered
+    // on the same row as Cancel/Save -- not rebuilt here anymore.
 
     const originRow = document.createElement('div');
     originRow.className = 'item-modal-origin-row';
@@ -947,11 +990,13 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   // Never relevant for 'add' -- that always starts in edit mode.
   function enterEditMode() {
     if (mode === 'edit') return;
-    mode = 'edit';
-    draft = createDraftFromItem(item);
-    selectedTargets = new Set();
-    renderTopBar();
-    renderContent();
+    withViewTransition(() => {
+      mode = 'edit';
+      draft = createDraftFromItem(item);
+      selectedTargets = new Set();
+      renderTopBar();
+      renderContent();
+    });
   }
 
   // The symmetric counterpart to enterEditMode() -- called by the
@@ -976,14 +1021,16 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       close();
       return;
     }
-    item = freshItem;
-    folderPath = item.path;
-    sourceDir = item.path;
-    draft = null;
-    selectedTargets = new Set();
-    mode = 'view';
-    renderTopBar();
-    renderContent();
+    withViewTransition(() => {
+      item = freshItem;
+      folderPath = item.path;
+      sourceDir = item.path;
+      draft = null;
+      selectedTargets = new Set();
+      mode = 'view';
+      renderTopBar();
+      renderContent();
+    });
   }
 
   if (mode === 'add') {
@@ -1031,17 +1078,55 @@ function renderTagsRow(tags) {
   label.textContent = 'Tagged';
   row.appendChild(label);
 
+  // Reuses .tag-input-box (settings.css) -- the same bordered shell
+  // edit mode's chip list sits inside (see createTagInput,
+  // settings.js) -- rather than a bare wrapper, so the container's
+  // padding/border/background already match edit mode before the
+  // transition even starts. That leaves the input field itself (only
+  // present in edit mode) as the one real shape difference the morph
+  // has to show, instead of also resizing/redecorating the box around
+  // it every time.
+  const box = document.createElement('div');
+  box.className = 'tag-input-box item-detail-tags-box';
+  row.appendChild(box);
+
   const chipList = document.createElement('div');
   chipList.className = 'tag-chip-list';
-  row.appendChild(chipList);
+  box.appendChild(chipList);
 
   if (tags && tags.length) {
-    for (const tag of tags) {
+    tags.forEach((tag, index) => {
       const chip = document.createElement('span');
       chip.className = 'tag-chip tag-chip-existing';
-      chip.textContent = tag;
+
+      const text = document.createElement('span');
+      text.textContent = tag;
+      chip.appendChild(text);
+
+      // Invisible, non-interactive placeholder -- exists purely so
+      // this position has a real element on BOTH sides of the
+      // view<->edit transition, sharing the same
+      // item-modal-chip-remove-<index> view-transition-name as edit
+      // mode's actual clickable button (renderChips(), settings.js).
+      // With a genuine match on both sides, the browser interpolates
+      // size/opacity between the two real states on its own -- the
+      // same native morph already working cleanly for the row itself
+      // -- rather than treating the button as a synthetic enter/exit,
+      // which needs its own hand-written keyframes (see the
+      // :only-child rules in itemModal.css) and turned out to fly in
+      // from an unrelated spot on the page. Those rules are kept as a
+      // fallback for when this doesn't apply -- if the tag count/
+      // order actually changed during editing (a tag added/removed
+      // before Cancel/Save), some indices genuinely won't have a
+      // counterpart on one side.
+      const removePlaceholder = document.createElement('span');
+      removePlaceholder.className = 'tag-chip-remove tag-chip-remove-placeholder icon icon-close';
+      removePlaceholder.setAttribute('aria-hidden', 'true');
+      removePlaceholder.style.viewTransitionName = `item-modal-chip-remove-${index}`;
+      chip.appendChild(removePlaceholder);
+
       chipList.appendChild(chip);
-    }
+    });
   } else {
     const none = document.createElement('span');
     none.className = 'item-detail-tags-none';
@@ -1058,9 +1143,8 @@ function renderItemDetail(item) {
 
   const header = document.createElement('div');
   header.className = 'item-detail-header';
-  const heading = document.createElement('h2');
-  heading.textContent = item.displayName || item.name;
-  header.appendChild(heading);
+  // Name itself now renders in the topbar (see renderTopBar), centered
+  // on the same row as the Close button -- not duplicated here anymore.
   if (item.origin && item.origin.url) {
     header.appendChild(renderOriginInfo(item.origin));
   }

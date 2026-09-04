@@ -117,16 +117,30 @@ settings-action-button {
 /* Chip-based tag input (item editor's "Tags" field) -- see
    createTagInput() in renderer.js.
 
-   Two color families, reusing tones already established elsewhere in
-   the app rather than the orange --accent (which reads as an alert/
-   warning color in this context, not a neutral "selected" one):
-   --tag-existing* is a calm blue for a tag that already exists in the
-   catalog; --tag-new* reuses the app's existing amber "edit/pending"
-   status tone, since a new tag is exactly that -- a change that
-   hasn't been saved yet. */
+   .tag-chip-existing now mimics .filter-pill's neutral/inactive look
+   (var(--line) border, var(--paper-raised) bg, var(--ink-soft) text)
+   instead of its old standalone blue, specifically so a saved tag
+   reads as "the same kind of pill as the tag filter row" wherever
+   it's shown -- view mode's read-only row, and edit mode's chip list,
+   which is what most of an item's chips are (tag.isNew from
+   collectTags is genuinely rare: it only flags a string that doesn't
+   exist anywhere else in the catalog yet). Declared on .tag-chip-list
+   itself (not .tag-input-field) so both view mode's bare row and edit
+   mode's input-wrapped one pick it up the same way.
+   --tag-new* keeps its own distinct amber "edit/pending" tone
+   (reusing --status-edit, same as elsewhere in the app) since that
+   distinction -- a tag that doesn't exist anywhere in the catalog
+   yet -- is still worth flagging and only ever shows up in edit mode
+   to begin with, so it doesn't need to match anything outside it. */
+.tag-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35em;
+  --tag-existing: var(--ink-soft);
+  --tag-existing-bg: var(--paper-raised);
+  --tag-existing-border: var(--line);
+}
 .tag-input-field {
-  --tag-existing: #2B5F7A;
-  --tag-existing-bg: #DCEAF2;
   --tag-new: var(--status-edit);
   --tag-new-bg: var(--status-edit-bg);
   position: relative;
@@ -144,27 +158,26 @@ settings-action-button {
 .tag-input-box:focus-within {
   border-color: var(--ink-faint);
 }
-.tag-chip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35em;
-}
 .tag-chip {
   display: flex;
   align-items: center;
   gap: 0.35em;
   padding: 0.25em 0.3em 0.25em 0.7em;
   border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  box-sizing: border-box;
   font-size: 0.85em;
   font-weight: 500;
 }
 .tag-chip-existing {
   background: var(--tag-existing-bg);
   color: var(--tag-existing);
+  border-color: var(--tag-existing-border);
 }
 .tag-chip-new {
   background: var(--tag-new-bg);
   color: var(--tag-new);
+  border-color: var(--tag-new);
 }
 .tag-chip-remove {
   display: flex;
@@ -180,6 +193,22 @@ settings-action-button {
   line-height: 1;
   cursor: pointer;
   opacity: 0.75;
+}
+/* View mode's invisible transition-anchor twin (renderTagsRow,
+   itemModal.js) -- collapsed to true zero footprint (not just
+   opacity: 0) so it doesn't visually or spatially affect the
+   read-only chip: width/height zeroed, and margin-left cancels out
+   the chip's own `gap: 0.35em` (.tag-chip below) so a zero-size
+   element doesn't still reserve that gap next to nothing. Combined
+   selector (not just the class alone) guarantees this wins over the
+   base .tag-chip-remove sizing above regardless of source order. */
+.tag-chip-remove.tag-chip-remove-placeholder {
+  width: 0;
+  height: 0;
+  margin-left: -0.35em;
+  opacity: 0;
+  pointer-events: none;
+  cursor: default;
 }
 .tag-chip-remove:hover {
   background: rgba(0, 0, 0, 0.12);
@@ -235,8 +264,14 @@ settings-action-button {
   white-space: nowrap;
 }
 .tag-suggestion.active {
-  background: var(--tag-existing-bg);
-  color: var(--tag-existing);
+  /* Was --tag-existing-bg/--tag-existing before those were repointed
+     to var(--paper-raised)/var(--ink-soft) to match the filter pills
+     -- reusing them here now would be invisible, since this dropdown
+     sits on var(--paper-raised) itself. --accent-soft (the same tint
+     used for input focus rings, e.g. .keyword-filter:focus) gives a
+     real highlight independent of the chip color scheme. */
+  background: var(--accent-soft);
+  color: var(--ink);
 }
 .tag-suggestion-create {
   color: var(--ink-soft);

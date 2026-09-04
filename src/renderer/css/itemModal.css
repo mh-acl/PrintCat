@@ -140,11 +140,88 @@
   color: var(--accent-hover);
   text-decoration: underline;
 }
+/* 3-column title-bar grid: left/right are equal 1fr tracks holding
+   whatever buttons that mode has (Close alone in view; Cancel+Save in
+   edit/add, split across the two sides), and the title sits in the
+   auto-sized center track -- grid-template-columns: 1fr auto 1fr
+   (rather than flex + margin tricks) is what keeps the title visually
+   centered on the row even though the left button group (Close) and
+   right button group (Save, view mode has none) are different widths.
+   No divider/border-bottom -- the row reads as a title bar purely
+   through this alignment, not a separating line. Negative margins on
+   the top and sides tighten the layout there, strengthening the effect. */
 .item-modal-topbar {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   gap: 0.75em;
-  margin-bottom: 0.75em;
+  margin: -1em -1em 0.75em -1em; 
+}
+.item-modal-topbar-side {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  /* No min-width: 0 here (unlike the title column below) -- these
+     hold the actual buttons, and should keep their natural
+     min-content size as a floor rather than ever being squeezed by
+     the title's width. That floor is exactly what lets the title
+     column's own min-width: 0 work correctly: with a guaranteed
+     minimum on both sides, the grid only has to shrink the title
+     track when the name genuinely doesn't fit the space left over,
+     never as an arbitrary fraction of the bar. */
+}
+.item-modal-topbar-left {
+  justify-self: start;
+}
+.item-modal-topbar-right {
+  justify-self: end;
+}
+.item-modal-topbar-title {
+  justify-self: center;
+  /* Allows this track to shrink below its content's natural width --
+     the two 1fr side columns can't (see .item-modal-topbar-side
+     above), so this is what actually makes the title the one that
+     gives way. No max-width here: a percentage on a grid item sized
+     against an `auto` track doesn't resolve reliably before the
+     track's own size is settled, which was clipping even short names
+     -- min-width: 0 alone is the correct/sufficient constraint, since
+     it only kicks in once the side columns' floors are satisfied. */
+  min-width: 0;
+}
+.item-modal-title-text {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.3em;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Edit/add mode's title-row name field -- same font treatment as the
+   read-only .item-modal-title-text above (so nothing visually jumps
+   when a mode switch swaps one for the other), but as an input rather
+   than static text: centered text, transparent/borderless at rest so
+   it reads as a title first and an editable field second, with the
+   border/background only appearing on focus as the edit affordance.
+   Overrides a few base .item-modal-name-input properties (flex/width)
+   that made sense in its old full-width row but not in this centered
+   title-bar column. */
+.item-modal-title-input {
+  width: 100%;
+  flex: none;
+  text-align: center;
+  border-color: transparent;
+  background: transparent;
+}
+.item-modal-title-input:focus {
+  border-color: var(--line);
+  background: var(--paper);
+  outline: none;
+}
+.item-modal-topbar .item-modal-close {
+  margin-bottom: 0;
 }
 /* Edit mode replaces the single Close link with Cancel/Save buttons --
    styled like real buttons (unlike the plain-link Close above) since
@@ -274,20 +351,135 @@
   font-style: italic;
   color: var(--ink-faint);
 }
+/* View mode's box reuses .tag-input-box for matching padding/
+   background/radius, but drops the border specifically -- an empty
+   (non-interactive) bordered box read as an odd, slightly "boxed-in"
+   look for plain display, and turned out to transition worse than
+   having no border at all. border-color (not `border: none`) keeps
+   the same border-width reserved in the box model, so this doesn't
+   change the box's size relative to edit mode's -- just makes the
+   line invisible. */
+.item-detail-tags-box {
+  border-color: transparent;
+}
 /* Transition hook: only one of view mode's/edit mode's tags row is
    ever in the DOM at a time (renderContent replaces content wholesale
    on mode switch -- see itemModal.js), so giving both the same
-   view-transition-name is safe and lets a future
-   document.startViewTransition() wrapped around that swap animate
-   this element continuously instead of a hard cut, with no other
-   wiring needed here. No-op until something actually calls
-   startViewTransition; @supports keeps this inert on engines that
-   don't implement the API rather than erroring. */
+   view-transition-name is safe. withViewTransition() (itemModal.js)
+   wraps the enterEditMode/exitEditMode DOM mutation in
+   document.startViewTransition(), so the browser captures this
+   element's before/after position+size+appearance and animates
+   between them as one unit -- a real morph, not a manual
+   position/opacity animation we'd have to compute ourselves.
+   Named on the whole .item-modal-tags-row, not just the inner
+   .tag-chip-list -- naming only the chip list left the "Tagged" label
+   outside the animated group, so it hard-cut to its new position on
+   frame one while the chip list was still animating into place,
+   reading as the label "teleporting" mid-transition. Naming the row
+   means the label travels with the chips as one coherent unit.
+   @supports keeps this inert on engines without the API (falls back
+   to withViewTransition's plain-call path, i.e. a hard cut). */
 @supports (view-transition-name: none) {
-  .item-modal-box .item-modal-tags-row .tag-chip-list {
+  .item-modal-box .item-modal-tags-row {
     view-transition-name: item-modal-tags;
   }
 }
+/* document.startViewTransition() animates the *entire page* by
+   default (a root cross-fade), not just elements we've explicitly
+   named above -- without this, every mode switch would also fade the
+   file cards, gallery, etc. even though nothing about them is meant
+   to animate yet. This app is the only thing on the page calling
+   startViewTransition, so disabling the root's default animation
+   here is safe globally: it just means only explicitly-named groups
+   (item-modal-tags today, more as this effort continues) ever
+   animate; everything else still hard-cuts exactly as before.
+   ::view-transition-group(item-modal-tags) is left at the browser's
+   default animation (a combined resize + cross-fade) -- only its
+   duration/easing are tuned here, to match the 0.12s-ish snappy feel
+   used for hover transitions elsewhere in this app (see filters.css,
+   grid.css, lightbox.css, settings.css); left slightly longer than
+   those since this is a bigger, one-off content change rather than a
+   hover micro-interaction. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+::view-transition-group(item-modal-tags) {
+  /* TEMP, for testing: 1.8s = 0.18s / 0.1 (10% speed), slow enough to
+     watch frame-by-frame. Change back to 0.18s (the intended
+     real-world speed) once the shape/color match-up looks right at
+     full speed -- the target duration is normally tuned relative to
+     this app's 0.12s hover transitions (see filters.css, grid.css,
+     lightbox.css, settings.css), not to this slowed-down testing
+     value. */
+  animation-duration: 1.8s;
+  animation-timing-function: ease;
+}
+/* Fallback grow/shrink for a chip-remove button that genuinely has no
+   counterpart on the other side -- normally every button now has a
+   real (if invisible) twin on both sides (view mode's placeholder
+   spans, renderTagsRow in itemModal.js; edit mode's real buttons,
+   renderChips() in settings.js), so the common case is an ordinary
+   matched-element morph the browser handles natively, same as the row
+   itself. This only kicks in when tag count/order actually changed
+   during editing (a tag added/removed before Cancel/Save) and some
+   index has no match: the browser then treats that one as purely
+   entering (view->edit) or purely exiting (edit->view), generating
+   only a ::view-transition-new() or only a ::view-transition-old()
+   for it, with no sibling -- :only-child is what catches exactly that
+   case via the `*` wildcard without enumerating indices, while
+   leaving item-modal-tags/root (which always have both sides, hence a
+   sibling pair in their image-pair) untouched.
+   An earlier attempt animated these with a plain CSS transition
+   instead (triggered via a class toggle in JS) and it silently did
+   nothing: ::view-transition-old()/::view-transition-new() are both
+   static screenshots for the duration of the transition, not a live
+   view of the DOM, so a transition running on a descendant trapped in
+   one either finishes invisibly before the screenshot is taken or
+   never paints at all. Custom keyframes on the pseudo-elements
+   themselves (below) are the actual supported way to animate an
+   entering/exiting named element. */
+@keyframes item-modal-chip-remove-grow-in {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+@keyframes item-modal-chip-remove-grow-out {
+  from {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  to {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+}
+::view-transition-new(*):only-child {
+  animation: item-modal-chip-remove-grow-in 1.8s ease;
+}
+::view-transition-old(*):only-child {
+  animation: item-modal-chip-remove-grow-out 1.8s ease;
+}
+/* Known limitation, left as-is rather than risking the fix above: a
+   pure enter/exit element (the fallback case, only reached when tag
+   count/order changed during editing) may still get some default
+   browser-decided group-level position/size behavior alongside the
+   scale/opacity keyframes here, since view-transition-group()
+   pseudo-elements don't expose an :only-child-equivalent selector the
+   way ::view-transition-old/new(*):only-child do above (that
+   structure lives one level deeper, in ::view-transition-image-pair).
+   A blanket ::view-transition-group(*) { animation: none; } would
+   also disable the *matched* case's group-level size/position
+   interpolation -- the actual mechanism doing the "grow from the
+   view-mode placeholder to the edit-mode button" morph, i.e. the
+   normal case now that every button has a same-index counterpart on
+   both sides -- so it's not worth the regression risk for what should
+   be a rare edge case. */
 .item-modal-edit-body {
   display: flex;
   gap: 1.5em;

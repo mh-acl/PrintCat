@@ -100,7 +100,7 @@ function createTagInput(labelText, initialTags, getAllTags) {
 
   function renderChips() {
     chipList.innerHTML = '';
-    for (const tag of tags) {
+    tags.forEach((tag, index) => {
       const chip = document.createElement('span');
       chip.className = 'tag-chip' + (tag.isNew ? ' tag-chip-new' : ' tag-chip-existing');
       if (tag.isNew) chip.title = 'New tag -- will be created when you save';
@@ -114,6 +114,22 @@ function createTagInput(labelText, initialTags, getAllTags) {
       remove.className = 'tag-chip-remove icon icon-close';
       remove.title = `Remove tag "${tag.value}"`;
       remove.setAttribute('aria-label', `Remove tag ${tag.value}`);
+      // Unique per-position view-transition-name -- harmless outside
+      // an active document.startViewTransition() (see itemModal.js's
+      // withViewTransition), since the property has no effect unless
+      // one is in progress, so setting it on every render (not just
+      // the view->edit one) is safe. This is what lets
+      // enterEditMode()/exitEditMode()'s transition treat each button
+      // as its own purely-entering or purely-exiting element -- view
+      // mode never has these buttons at all, so there's never an old+
+      // new pair to morph between, always one side or the other --
+      // which is what triggers the custom grow/shrink keyframes on
+      // ::view-transition-new(*)/::view-transition-old(*):only-child
+      // in itemModal.css. Reassigned on every render so whatever's
+      // actually live in the DOM at the moment exitEditMode() fires
+      // -- however many add/removes happened first -- is already
+      // correctly named for its own exit.
+      remove.style.viewTransitionName = `item-modal-chip-remove-${index}`;
       remove.onclick = () => {
         tags = tags.filter((t) => t !== tag);
         renderChips();
@@ -122,7 +138,7 @@ function createTagInput(labelText, initialTags, getAllTags) {
       chip.appendChild(remove);
 
       chipList.appendChild(chip);
-    }
+    });
   }
 
   function closeDropdown() {
