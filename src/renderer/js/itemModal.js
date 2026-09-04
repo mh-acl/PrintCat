@@ -1015,6 +1015,43 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   renderContent();
   document.body.appendChild(overlay);
 }
+// Read-only "Tagged" row for view mode -- same label class
+// (.settings-field-label) and chip classes (.tag-chip.tag-chip-existing,
+// no remove button) as the editable tag-chip-list edit mode already
+// uses, so the two only differ by the interactive bits, not by
+// structure. Always renders the row (even with zero tags) so the
+// transition anchor point exists in both modes regardless of the
+// item's tag count.
+function renderTagsRow(tags) {
+  const row = document.createElement('div');
+  row.className = 'item-modal-tags-row item-detail-tags';
+
+  const label = document.createElement('span');
+  label.className = 'settings-field-label';
+  label.textContent = 'Tagged';
+  row.appendChild(label);
+
+  const chipList = document.createElement('div');
+  chipList.className = 'tag-chip-list';
+  row.appendChild(chipList);
+
+  if (tags && tags.length) {
+    for (const tag of tags) {
+      const chip = document.createElement('span');
+      chip.className = 'tag-chip tag-chip-existing';
+      chip.textContent = tag;
+      chipList.appendChild(chip);
+    }
+  } else {
+    const none = document.createElement('span');
+    none.className = 'item-detail-tags-none';
+    none.textContent = 'No tags';
+    chipList.appendChild(none);
+  }
+
+  return row;
+}
+
 function renderItemDetail(item) {
   const wrap = document.createElement('div');
   wrap.className = 'item-detail';
@@ -1027,6 +1064,14 @@ function renderItemDetail(item) {
   if (item.origin && item.origin.url) {
     header.appendChild(renderOriginInfo(item.origin));
   }
+  // Shares .item-modal-tags-row/.tag-chip-list with edit mode's tag
+  // input (createTagInput, settings.js) on purpose, even though this
+  // is read-only -- keeping the same wrapper/label/chip-list shape in
+  // both trees is what lets a future transition (manual FLIP, or the
+  // View Transitions API, which Electron's Chromium supports) treat
+  // this as one continuous element across the mode switch instead of
+  // two unrelated ones. See view-transition-name hook in itemModal.css.
+  header.appendChild(renderTagsRow(item.tags));
   wrap.appendChild(header);
 
   for (const file of item.files) {
