@@ -58,7 +58,12 @@ function renderSyncStatus() {
 // and -- in edit mode -- the Pending/Edited/Trashed smart-tag filter)
 // individually to see which one(s) are actually responsible for the
 // empty grid, rather than always blaming the same one.
-function buildGridEmptyMessage(effectivePrinters) {
+// In edit mode, search/tag/printer are never actually the reason
+// the grid is empty anymore -- render() no longer filters by them
+// there, only sorts/marks (see below) -- so their entries are skipped
+// as "active" restrictions there; only the smart-tag filter, or a
+// genuinely empty catalog, can produce an empty grid in edit mode.
+function buildGridEmptyMessage(effectivePrinters, editMode) {
   const wouldMatchWithout = (overrides) =>
     allItems.some(
       (item) =>
@@ -71,17 +76,17 @@ function buildGridEmptyMessage(effectivePrinters) {
   return buildFilterMessage(
     [
       {
-        active: Boolean(keywordQuery),
+        active: !editMode && Boolean(keywordQuery),
         wouldHelp: () => wouldMatchWithout({ keyword: '' }),
         suggestion: 'try a different search term, or clear the search box',
       },
       {
-        active: selectedTags.size > 0,
+        active: !editMode && selectedTags.size > 0,
         wouldHelp: () => wouldMatchWithout({ tags: new Set() }),
         suggestion: 'choose "All Tags"',
       },
       {
-        active: effectivePrinters.size > 0,
+        active: !editMode && effectivePrinters.size > 0,
         wouldHelp: () => wouldMatchWithout({ printers: new Set() }),
         suggestion: 'choose "All Printers"',
       },
@@ -95,21 +100,44 @@ function buildGridEmptyMessage(effectivePrinters) {
     'Nothing matches the current search and filters together. Try loosening more than one at a time.'
   );
 }
+// True if this item would actually appear under plain (non-edit-mode)
+// browsing rules -- printer/tag/keyword, but deliberately not the
+// Pending/Edited/Trashed smart-tag filter, which is an edit-mode tool
+// for finding changes rather than a "would a visitor see this" check
+// and stays a strict filter regardless (see render() below).
+function itemWouldShowInBrowsing(item, effective) {
+  return itemMatchesPrinter(item, effective) && itemMatchesTags(item, selectedTags) && itemMatchesKeyword(item, keywordQuery);
+}
 function render() {
   const effective = effectivePrinterFilter();
   const listing = document.getElementById('listing');
   listing.innerHTML = '';
 
-  const visibleItems = allItems.filter(
-    (item) =>
-      itemMatchesPrinter(item, effective) &&
-      itemMatchesTags(item, selectedTags) &&
-      itemMatchesSmartTags(item, selectedSmartTags) &&
-      itemMatchesKeyword(item, keywordQuery)
-  );
+  let visibleItems;
+  if (editModeActive) {
+    // Edit mode never hides an item just because of the ambient
+    // browsing filter -- someone managing the catalog shouldn't lose
+    // sight of (or accidentally be unable to reach) an item just
+    // because a printer/tag/search filter happens to be set from
+    // earlier browsing. Still filtered by the smart-tag filter (an
+    // explicit edit-mode tool, not a browsing concern) same as
+    // before; the rest just get sorted after the ones that do match
+    // and marked (.listing-filtered-out below), rather than removed.
+    // Same treatment as an item's own file list within its edit view
+    // (buildEditRoot/refreshEditFilesArea, itemModal.js).
+    visibleItems = allItems.filter((item) => itemMatchesSmartTags(item, selectedSmartTags)).sort((a, b) => {
+      const aShows = itemWouldShowInBrowsing(a, effective);
+      const bShows = itemWouldShowInBrowsing(b, effective);
+      return aShows === bShows ? 0 : aShows ? -1 : 1;
+    });
+  } else {
+    visibleItems = allItems.filter(
+      (item) => itemWouldShowInBrowsing(item, effective) && itemMatchesSmartTags(item, selectedSmartTags)
+    );
+  }
 
   if (visibleItems.length === 0) {
-    listing.appendChild(renderEmptyState(buildGridEmptyMessage(effective)));
+    listing.appendChild(renderEmptyState(buildGridEmptyMessage(effective, editModeActive)));
     renderEditBar();
     return;
   }
@@ -117,7 +145,12 @@ function render() {
   const itemGrid = document.createElement('div');
   itemGrid.className = 'item-grid';
   for (const item of visibleItems) {
-    itemGrid.appendChild(renderItemCard(item));
+    const card = renderItemCard(item);
+    if (editModeActive && !itemWouldShowInBrowsing(item, effective)) {
+      card.classList.add('listing-filtered-out');
+      card.title = "Wouldn't be shown right now under the current search/printer/tag filter";
+    }
+    itemGrid.appendChild(card);
   }
   listing.appendChild(itemGrid);
   renderEditBar();

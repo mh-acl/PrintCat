@@ -27,38 +27,44 @@ function originPlatformLabel(url) {
     return null;
   }
 }
-// Item-level "where this came from" line, shown above the file list
-// only when an origin URL is known (metadata.json's origin.url --
-// see itemMetadata.js/originLocation.js). Also displays
-// creatorName/creatorUrl when present, even though nothing in this
-// app populates them yet (planned: a future pass scrapes the origin
-// page for the creator's username + profile URL) -- built this way
-// now so that once that data exists, it shows up here with no further
-// display-side changes needed.
-function renderOriginInfo(origin) {
+// Item-level "where this came from" line, shown above the file list in
+// both modes now (metadata.json's origin.url -- see
+// itemMetadata.js/originLocation.js), falling back to "No original
+// location set." when there isn't one, rather than omitting the row.
+// Also displays creatorName/creatorUrl when present, even though
+// nothing in this app populates them yet (planned: a future pass
+// scrapes the origin page for the creator's username + profile URL)
+// -- built this way now so that once that data exists, it shows up
+// here with no further display-side changes needed.
+// Builds just the "Created by X, from Y" (or "From Y") node sequence --
+// shared by view mode's renderItemDetail and edit mode's renderOriginRow
+// (both via buildOriginRowContents below), so the wording/links are
+// identical in both rather than edit mode having its own plainer
+// "By X — url" text. Assumes origin.url is present; buildOriginRowContents
+// handles the "no origin set yet" case itself (falls back to "No
+// original location set." in both modes now).
+function buildOriginSummaryNodes(origin) {
   const label = originPlatformLabel(origin.url);
-  const line = document.createElement('small');
-  line.className = 'item-origin-info';
-
+  const nodes = [];
 
   if (origin.creatorName) {
-    line.appendChild(document.createTextNode('Created by '));
+    nodes.push(document.createTextNode('Created by '));
     if (origin.creatorUrl) {
       const creatorLink = document.createElement('a');
       creatorLink.href = origin.creatorUrl;
       creatorLink.target = '_blank';
       creatorLink.rel = 'noopener noreferrer';
       creatorLink.textContent = origin.creatorName;
-      line.appendChild(creatorLink);
+      nodes.push(creatorLink);
     } else {
-      line.appendChild(document.createTextNode(origin.creatorName));
+      nodes.push(document.createTextNode(origin.creatorName));
     }
-    line.appendChild(document.createTextNode(', from '));
-  }
-  // When there's no creator to credit, this stands alone as the whole
-  // line rather than a trailing clause -- still needs its own lead-in.
-  if (!origin.creatorName) {
-    line.appendChild(document.createTextNode('From '));
+    nodes.push(document.createTextNode(', from '));
+  } else {
+    // When there's no creator to credit, this stands alone as the
+    // whole line rather than a trailing clause -- still needs its own
+    // lead-in.
+    nodes.push(document.createTextNode('From '));
   }
 
   const siteLink = document.createElement('a');
@@ -66,9 +72,222 @@ function renderOriginInfo(origin) {
   siteLink.target = '_blank';
   siteLink.rel = 'noopener noreferrer';
   siteLink.textContent = label || 'the original site';
-  line.appendChild(siteLink);
+  nodes.push(siteLink);
 
-  return line;
+  return nodes;
+}
+// Shared by view mode's renderItemDetail and edit mode's
+// renderOriginRow (openItemModal) -- builds the full row contents
+// (info line + pencil + refresh buttons) identically in both, so the
+// two only differ in whether the buttons are real or an inert, hidden
+// twin (see .item-modal-origin-btn-inert, itemModal.css). Always
+// shows something (falls back to "No original location set." when
+// there's no origin.url), in both modes now, rather than view mode
+// omitting the row entirely -- same reasoning as the tags row already
+// showing "No tags": a plain factual statement, not an instruction,
+// so it's fine for a read-only viewer to see too.
+function buildOriginRowContents(container, { origin, editable, onPencilClick, onRefreshClick }) {
+  container.innerHTML = '';
+
+  const info = document.createElement('small');
+  info.className = 'item-origin-info item-modal-origin-summary';
+  if (origin && origin.url) {
+    for (const node of buildOriginSummaryNodes(origin)) info.appendChild(node);
+  } else {
+    info.textContent = 'No original location set.';
+  }
+  container.appendChild(info);
+
+  const pencilBtn = document.createElement('button');
+  pencilBtn.type = 'button';
+  pencilBtn.className = 'item-modal-origin-btn icon icon-edit' + (editable ? '' : ' item-modal-origin-btn-inert');
+  pencilBtn.title = 'Edit original-location info';
+  pencilBtn.setAttribute('aria-label', 'Edit original-location info');
+  pencilBtn.disabled = !editable;
+  pencilBtn.tabIndex = editable ? 0 : -1;
+  if (editable && onPencilClick) pencilBtn.onclick = onPencilClick;
+  container.appendChild(pencilBtn);
+
+  const refreshBtn = document.createElement('button');
+  refreshBtn.type = 'button';
+  refreshBtn.className = 'item-modal-origin-btn icon icon-refresh' + (editable ? '' : ' item-modal-origin-btn-inert');
+  refreshBtn.title = 'Reparse from folder';
+  refreshBtn.setAttribute('aria-label', 'Reparse original-location info from folder');
+  refreshBtn.disabled = !editable;
+  refreshBtn.tabIndex = editable ? 0 : -1;
+  if (editable && onRefreshClick) refreshBtn.onclick = onRefreshClick;
+  container.appendChild(refreshBtn);
+}
+// Shared by view mode's renderItemDetail and edit mode's
+// buildPrintFileCard -- same read-only fields exist on both a plain
+// item.files entry (view) and a draft print-file object (edit; see
+// createDraftFromItem/createDraftFromPicked's pass-through fields),
+// so one pair of builders can generate identical subtitle/meta
+// content for both instead of edit mode quietly showing less (it
+// used to show none of print time/filament/pauses at all, and folded
+// printer model into the subtitle instead of .file-meta).
+function buildFileSubtitleText(f) {
+  const parts = [
+    f.copies && f.copies > 1 ? `batch of ${f.copies}` : null,
+    f.colorChangeCount ? `${f.colorChangeCount} color change${f.colorChangeCount === 1 ? '' : 's'}` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+}
+function buildFileMetaLines(f) {
+  return [
+    // Always the full model+variant label (not just the model) --
+    // otherwise two files sliced for different variants of the same
+    // printer model (e.g. different nozzles) would show identically
+    // here with nothing to tell them apart.
+    f.printerModel ? `Printer: ${printerLabel(f)}` : null,
+    f.printTime ? `Print time: ${f.printTime}` : null,
+    // filamentUsedG can be null independently of filamentType (see
+    // indexer.js) -- drop the weight clause entirely rather than
+    // showing a literal "null" when it didn't parse.
+    f.filamentType
+      ? `Filament: ${formatFilamentTypes(f.filamentType)}${f.filamentUsedG != null ? `, ${f.filamentUsedG}g` : ''}`
+      : null,
+    // Rendered specially by renderMetaLines below (needs a tooltip
+    // icon for pause messages, not just plain text).
+    f.pauseCount ? { pause: true, count: f.pauseCount, messages: f.pauseMessages || [] } : null,
+  ].filter(Boolean);
+}
+function renderMetaLines(container, metaLines) {
+  for (const line of metaLines) {
+    const lineEl = document.createElement('div');
+    if (typeof line === 'string') {
+      lineEl.textContent = line;
+    } else {
+      // Pause line: "N pause(s)" as text, plus a tooltip icon carrying
+      // the M117 message(s) that preceded each M601 -- only when at
+      // least one pause actually had one. Built with DOM methods
+      // (textContent/title), not innerHTML, so a message containing
+      // HTML-ish characters can't break the markup.
+      lineEl.appendChild(document.createTextNode(`${line.count} pause${line.count === 1 ? '' : 's'} `));
+      const messages = line.messages.filter(Boolean);
+      if (messages.length) {
+        const icon = document.createElement('i');
+        icon.className = 'pause-tooltip-icon icon icon-info';
+        icon.title = messages.join('\n');
+        lineEl.appendChild(icon);
+      }
+    }
+    container.appendChild(lineEl);
+  }
+}
+// Shared by view mode's renderItemDetail and edit mode's
+// buildPrintFileCard -- builds one print-file row/card with the same
+// DOM shape and child order in both, so the two only differ in which
+// pieces are the real, interactive version and which are an inert,
+// hidden twin (.print-file-action-hidden, .item-modal-target-select-
+// inert -- itemModal.css). Same approach as the tags row's per-chip
+// remove-button placeholders and the collapsed gallery column: full
+// DOM shape parity, real behavior only where the mode actually needs
+// it. The one exception left is the name element itself (nameEl
+// below) -- a static heading and a text input can't be the same
+// element, so that's the one piece allowed to differ in tag/class.
+// The card itself no longer has a mode-specific class at all
+// (.file-row/.item-modal-file-card both dropped once nothing --
+// visual styling included -- depended on telling them apart; see
+// .print-file-entry in itemModal.css).
+// Stable, unique-per-file view-transition-name -- derived from the
+// file's own path basename (the same value a draft print-file's own
+// .key already is; view mode's raw file objects don't have .key but
+// do have the same .path to derive it from), not array index. Naming
+// by index (the way the tags row's per-chip-remove buttons do,
+// see makeThumbCycleButtons/withViewTransition) would be unsafe here:
+// the new filter-relevance sort (refreshEditFilesArea/render()) can
+// put the same file at different positions in view vs edit mode, so
+// an index-based name could morph the wrong two cards into each
+// other. Sanitized to a valid CSS custom-ident (letters/digits/-/_
+// only) -- two very differently-named files that happen to sanitize
+// to the same string would collide, but that's a low-risk edge case
+// given actual filenames in this catalog, not worth a heavier hashing
+// scheme.
+function printFileTransitionName(fileOrPf) {
+  const key = fileOrPf.key || fileOrPf.path.split(/[\\/]/).pop();
+  return 'print-file-' + key.replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+function buildFileEntry(opts) {
+  const {
+    editable,
+    selected,
+    onToggleSelect,
+    thumbWrap,
+    nameEl,
+    subtitleText,
+    metaLines,
+    chips, // array of { src, onRemove }
+    onPrintClick,
+  } = opts;
+
+  const card = document.createElement('div');
+  card.className = `print-file-entry${selected ? ' selected' : ''}`;
+
+  const selectToggle = document.createElement('input');
+  selectToggle.type = 'checkbox';
+  selectToggle.className = 'item-modal-target-select' + (editable ? '' : ' item-modal-target-select-inert');
+  selectToggle.title = 'Select as an image-assignment target';
+  selectToggle.checked = Boolean(selected);
+  selectToggle.disabled = !editable;
+  selectToggle.tabIndex = editable ? 0 : -1;
+  if (editable && onToggleSelect) {
+    selectToggle.onchange = () => onToggleSelect(selectToggle.checked);
+  }
+  card.appendChild(selectToggle);
+
+  card.appendChild(thumbWrap);
+  card.appendChild(nameEl);
+
+  if (subtitleText) {
+    const subtitle = document.createElement('p');
+    subtitle.className = 'file-subtitle';
+    subtitle.textContent = subtitleText;
+    card.appendChild(subtitle);
+  }
+
+  const meta = document.createElement('div');
+  meta.className = 'file-meta';
+  renderMetaLines(meta, metaLines);
+  card.appendChild(meta);
+
+  // Action area: the print button and the assigned-image chip list
+  // both exist in both modes now, one real and one an inert/hidden
+  // twin, rather than only whichever one the mode actually uses.
+  const printButton = document.createElement('button');
+  printButton.className = 'print-button' + (editable ? ' print-file-action-hidden' : '');
+  printButton.textContent = 'Print This';
+  printButton.disabled = editable;
+  printButton.tabIndex = editable ? -1 : 0;
+  if (!editable && onPrintClick) printButton.onclick = onPrintClick;
+  card.appendChild(printButton);
+
+  const chipsEl = document.createElement('div');
+  chipsEl.className = 'print-file-image-chips' + (editable ? '' : ' print-file-image-chips-hidden');
+  (chips || []).forEach((chipData) => {
+    const chip = document.createElement('span');
+    chip.className = 'print-file-image-chip';
+    const chipImg = document.createElement('img');
+    chipImg.src = chipData.src;
+    chip.appendChild(chipImg);
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'icon icon-close';
+    removeBtn.title = 'Remove';
+    removeBtn.disabled = !editable;
+    removeBtn.tabIndex = editable ? 0 : -1;
+    if (editable && chipData.onRemove) {
+      removeBtn.onclick = (e) => {
+        e.stopPropagation();
+        chipData.onRemove();
+      };
+    }
+    chip.appendChild(removeBtn);
+    chipsEl.appendChild(chip);
+  });
+  card.appendChild(chipsEl);
+
+  return card;
 }
 
 // Tracks the currently open item modal (see openItemModal below), so
@@ -81,9 +300,9 @@ let openModalHandle = null; // { itemPath, switchToEdit() } or null while nothin
 // Wraps a synchronous DOM-mutating callback in document.startViewTransition
 // when the engine supports it (Electron's Chromium does), so any element
 // present in both the before/after DOM with a matching view-transition-name
-// (currently just .item-modal-tags-row .tag-chip-list -- see the
-// @supports block in itemModal.css) animates smoothly across the mutation
-// instead of hard-cutting. Falls back to calling fn() directly with no
+// (currently just .item-detail-tags -- see the @supports block in
+// itemModal.css) animates smoothly across the mutation instead of
+// hard-cutting. Falls back to calling fn() directly with no
 // animation on engines without the API. Kept generic/reusable rather than
 // tied to any one mode-switch caller, since more elements are expected to
 // pick up view-transition-name over time as this effort continues.
@@ -136,11 +355,28 @@ function createDraftFromItem(item) {
       return {
         key,
         shortname: f.shortname,
+        // Read-only pass-through -- nothing edits this, it's only here
+        // so fileMatchesKeywordInItem (filters.js) can search it the
+        // same way it does for view mode's real file objects, via
+        // fileSearchText's [shortname, longname, ...tags] -- without
+        // it, edit mode's "would this be filtered out" check
+        // (refreshEditFilesArea) would silently ignore longname
+        // matches that view mode's equivalent check would catch.
+        longname: f.longname,
         displayName: f.metadataDisplayName || null,
         printerModel: f.printerModel,
         printerVariant: f.printerVariant,
         colorChangeCount: f.colorChangeCount,
         copies: f.copies,
+        // Read-only pass-through -- nothing in edit mode edits these,
+        // they're only here so the shared .file-meta block (see
+        // buildFileEntry) has the same data to show in both modes,
+        // not just view mode.
+        printTime: f.printTime,
+        filamentType: f.filamentType,
+        filamentUsedG: f.filamentUsedG,
+        pauseCount: f.pauseCount,
+        pauseMessages: f.pauseMessages,
         images,
       };
     }),
@@ -208,6 +444,12 @@ function createDraftFromPicked(picked) {
         printerVariant: f.printerVariant,
         colorChangeCount: f.colorChangeCount,
         copies: f.copies,
+        // Same read-only pass-through as createDraftFromItem above.
+        printTime: f.printTime,
+        filamentType: f.filamentType,
+        filamentUsedG: f.filamentUsedG,
+        pauseCount: f.pauseCount,
+        pauseMessages: f.pauseMessages,
         images: matched ? [{ kind: 'existing', name: matched }] : [],
       };
     }),
@@ -294,6 +536,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   let selectedTargets = new Set(); // 'item', or a print-file key -- edit/add mode only
   let editTagsField = null; // the edit-mode tag chip input, so Save can read its current tags
   let refreshEditFilesArea = () => {}; // rebuilds just the file cards + gallery, set by buildEditRoot()
+  let thumbChipHolder = null; // set fresh by renderTopBar() each render; refreshEditFilesArea() (buildEditRoot) targets whatever this currently points to
   let sourceDir = item ? item.path : null; // becomes known for 'add' once the folder's picked, below
   let folderPath = item ? item.path : null; // raw fs path, not a URL -- see imageRefSrc/fileUrl
 
@@ -355,6 +598,64 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       closeBtn.onclick = close;
       left.appendChild(closeBtn);
 
+      thumbChipHolder = document.createElement('div');
+      thumbChipHolder.className = 'item-modal-topbar-thumb';
+      title.appendChild(thumbChipHolder);
+      // Mirrors buildItemThumbChip's shape below (chip > checkbox +
+      // .crop-frame > img [+ remove button]) rather than just a bare
+      // img -- the checkbox and remove button are inert twins, same
+      // pattern as everywhere else in this modal (per-file checkbox,
+      // print button, image chips). The remove button specifically
+      // only appears when item.metadataItemImage is set, mirroring
+      // buildItemThumbChip's own condition (draft.itemImageRef, which
+      // is just this same field wrapped into draft form) exactly --
+      // edit mode never shows a real remove button for a "borrowed
+      // preview" thumbnail (no explicit assignment, just the first-
+      // print-file/embedded-gcode fallback), so this placeholder
+      // shouldn't exist for that case either.
+      const chip = document.createElement('div');
+      chip.className = 'item-modal-thumb-chip';
+      thumbChipHolder.appendChild(chip);
+
+      const itemSelectToggle = document.createElement('input');
+      itemSelectToggle.type = 'checkbox';
+      itemSelectToggle.className = 'item-modal-target-select item-modal-target-select-inert';
+      itemSelectToggle.title = 'Select as an image-assignment target';
+      itemSelectToggle.disabled = true;
+      itemSelectToggle.tabIndex = -1;
+      chip.appendChild(itemSelectToggle);
+
+      const frame = document.createElement('div');
+      frame.className = 'crop-frame';
+      chip.appendChild(frame);
+
+      // View mode has no draft to read an explicit assignment off of,
+      // so just ask for the same fully-resolved thumbnail the grid
+      // card already shows for this item (explicit assignment ->
+      // thumb.* convention -> first-print-file/embedded-gcode
+      // fallback, all handled server-side by resolveItemThumbnail) --
+      // no need to reimplement those tiers client-side here.
+      const img = document.createElement('img');
+      img.alt = 'Item image'; // matches buildItemThumbChip's wording
+      img.src = 'nothumb.svg';
+      frame.appendChild(img);
+      window.catalogAPI
+        .getItemThumbnail(item)
+        .then((thumb) => {
+          if (thumb) img.src = fileUrl(thumb);
+        })
+        .catch(() => {});
+
+      if (item.metadataItemImage) {
+        const removePlaceholder = document.createElement('button');
+        removePlaceholder.type = 'button';
+        removePlaceholder.className = 'item-modal-chip-remove icon icon-close print-file-action-hidden';
+        removePlaceholder.title = 'Remove item image';
+        removePlaceholder.disabled = true;
+        removePlaceholder.tabIndex = -1;
+        chip.appendChild(removePlaceholder);
+      }
+
       const heading = document.createElement('h2');
       heading.className = 'item-modal-title-text';
       heading.textContent = item.displayName || item.name;
@@ -366,6 +667,19 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       cancelBtn.textContent = 'Cancel';
       cancelBtn.onclick = close;
       left.appendChild(cancelBtn);
+
+      // Same interactive chip as before (target-select checkbox,
+      // drag-drop assignment, remove button -- see buildItemThumbChip)
+      // just mounted here instead of buildEditRoot's own header row,
+      // and sized down via .item-modal-topbar-thumb (itemModal.css) to
+      // sit icon-sized next to the name rather than as its own row.
+      // refreshEditFilesArea (buildEditRoot) re-renders whatever
+      // thumbChipHolder currently points to whenever the assigned
+      // image changes, same as before the move.
+      thumbChipHolder = document.createElement('div');
+      thumbChipHolder.className = 'item-modal-topbar-thumb';
+      thumbChipHolder.appendChild(buildItemThumbChip());
+      title.appendChild(thumbChipHolder);
 
       // Same field draft.displayName was always bound to (previously
       // lived in buildEditRoot's item-modal-edit-header row, alongside
@@ -624,8 +938,87 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   }
 
   function buildPrintFileCard(pf) {
-    const card = document.createElement('div');
-    card.className = 'item-modal-file-card' + (selectedTargets.has(pf.key) ? ' selected' : '');
+    const thumbWrap = document.createElement('div');
+    thumbWrap.className = 'file-thumb-wrap crop-frame';
+    const img = document.createElement('img');
+    img.alt = pf.displayName || pf.shortname;
+    img.src = pf.images.length > 0 ? imageRefSrc(pf.images[0], folderPath) : 'nothumb.svg';
+    thumbWrap.appendChild(img);
+    if (pf.images.length > 0) {
+      applyImageCrop(img, thumbWrap, getDraftCrop(pf.images[0], 'thumb'), { useDefault: true });
+    }
+    // Inert placeholders -- real and functional only in view mode (see
+    // renderItemDetail's file-row loop, makeZoomButton/
+    // makeThumbCycleButtons in lightbox.js). Kept here, disabled and
+    // hidden, purely so .file-thumb-wrap's shape matches in both
+    // modes; wiring these up for real in edit mode too (a working
+    // zoom/cycle here would need its own crop-lookup path, since edit
+    // mode resolves crops via getDraftCrop against draft.imageCrops,
+    // not cropRectFor against the saved item) is a separate,
+    // not-yet-requested feature, not a DOM-shape concern.
+    const zoomPlaceholder = document.createElement('button');
+    zoomPlaceholder.type = 'button';
+    zoomPlaceholder.className = 'thumb-zoom-btn icon icon-zoom-in print-file-action-hidden';
+    zoomPlaceholder.disabled = true;
+    zoomPlaceholder.tabIndex = -1;
+    thumbWrap.appendChild(zoomPlaceholder);
+    const prevPlaceholder = document.createElement('button');
+    prevPlaceholder.type = 'button';
+    prevPlaceholder.className = 'file-thumb-cycle-btn file-thumb-cycle-prev print-file-action-hidden';
+    prevPlaceholder.disabled = true;
+    prevPlaceholder.tabIndex = -1;
+    thumbWrap.appendChild(prevPlaceholder);
+    const nextPlaceholder = document.createElement('button');
+    nextPlaceholder.type = 'button';
+    nextPlaceholder.className = 'file-thumb-cycle-btn file-thumb-cycle-next print-file-action-hidden';
+    nextPlaceholder.disabled = true;
+    nextPlaceholder.tabIndex = -1;
+    thumbWrap.appendChild(nextPlaceholder);
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'item-modal-file-name-input';
+    nameInput.value = pf.displayName || pf.shortname;
+    nameInput.title = pf.key;
+    nameInput.oninput = () => {
+      pf.displayName = nameInput.value;
+    };
+
+    const card = buildFileEntry({
+      editable: true,
+      selected: selectedTargets.has(pf.key),
+      onToggleSelect: (checked) => {
+        if (checked) selectedTargets.add(pf.key);
+        else selectedTargets.delete(pf.key);
+        refreshEditFilesArea();
+      },
+      thumbWrap,
+      nameEl: nameInput,
+      // Printer model moved out of the subtitle and into .file-meta,
+      // to match view mode exactly -- see buildFileSubtitleText/
+      // buildFileMetaLines (top of file). This card used to fold
+      // printer model into the subtitle and show no meta block at
+      // all (no print time, filament, or pauses); now both modes
+      // build the exact same two pieces from the exact same fields.
+      subtitleText: buildFileSubtitleText(pf),
+      metaLines: buildFileMetaLines(pf),
+      chips: pf.images.map((ref, idx) => ({
+        src: imageRefSrc(ref, folderPath),
+        onRemove: () => {
+          pf.images.splice(idx, 1);
+          refreshEditFilesArea();
+        },
+      })),
+    });
+    // Same view-transition-name a matching file's card gets in view
+    // mode (printFileTransitionName) -- lets the browser morph this
+    // specific card smoothly across the mode switch instead of a hard
+    // cut, same mechanism as the tags row and its chip-remove buttons.
+    card.style.viewTransitionName = printFileTransitionName(pf);
+
+    // Card-level drag/drop -- pure event wiring, not a DOM-shape
+    // concern, so this stays here rather than in buildFileEntry; view
+    // mode's row simply never gets these handlers.
     card.ondragover = (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -650,75 +1043,6 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       }
     };
 
-    const selectToggle = document.createElement('input');
-    selectToggle.type = 'checkbox';
-    selectToggle.className = 'item-modal-target-select';
-    selectToggle.title = 'Select as an image-assignment target';
-    selectToggle.checked = selectedTargets.has(pf.key);
-    selectToggle.onchange = () => {
-      if (selectToggle.checked) selectedTargets.add(pf.key);
-      else selectedTargets.delete(pf.key);
-      refreshEditFilesArea();
-    };
-    card.appendChild(selectToggle);
-
-    const thumbWrap = document.createElement('div');
-    thumbWrap.className = 'file-thumb-wrap crop-frame';
-    const img = document.createElement('img');
-    img.alt = pf.displayName || pf.shortname;
-    img.src = pf.images.length > 0 ? imageRefSrc(pf.images[0], folderPath) : 'nothumb.svg';
-    thumbWrap.appendChild(img);
-    if (pf.images.length > 0) {
-      applyImageCrop(img, thumbWrap, getDraftCrop(pf.images[0], 'thumb'), { useDefault: true });
-    }
-    card.appendChild(thumbWrap);
-
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.className = 'item-modal-file-name-input';
-    nameInput.value = pf.displayName || pf.shortname;
-    nameInput.title = pf.key;
-    nameInput.oninput = () => {
-      pf.displayName = nameInput.value;
-    };
-    card.appendChild(nameInput);
-
-    const subtitleParts = [
-      pf.copies && pf.copies > 1 ? `batch of ${pf.copies}` : null,
-      pf.colorChangeCount
-        ? `${pf.colorChangeCount} color change${pf.colorChangeCount === 1 ? '' : 's'}`
-        : null,
-      pf.printerModel ? [pf.printerModel, pf.printerVariant].filter(Boolean).join(' ') : null,
-    ].filter(Boolean);
-    if (subtitleParts.length) {
-      const subtitle = document.createElement('p');
-      subtitle.className = 'file-subtitle';
-      subtitle.textContent = subtitleParts.join(', ');
-      card.appendChild(subtitle);
-    }
-
-    const chips = document.createElement('div');
-    chips.className = 'editor-image-chips';
-    pf.images.forEach((ref, idx) => {
-      const chip = document.createElement('span');
-      chip.className = 'editor-image-chip';
-      const chipImg = document.createElement('img');
-      chipImg.src = imageRefSrc(ref, folderPath);
-      chip.appendChild(chipImg);
-      const removeBtn = document.createElement('button');
-      removeBtn.type = 'button';
-      removeBtn.className = 'icon icon-close';
-      removeBtn.title = 'Remove';
-      removeBtn.onclick = (e) => {
-        e.stopPropagation();
-        pf.images.splice(idx, 1);
-        refreshEditFilesArea();
-      };
-      chip.appendChild(removeBtn);
-      chips.appendChild(chip);
-    });
-    card.appendChild(chips);
-
     return card;
   }
 
@@ -741,29 +1065,27 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       refreshEditFilesArea();
     };
 
-    const heading = document.createElement('p');
-    heading.className = 'item-modal-gallery-heading';
-    heading.textContent = 'Available images';
-    col.appendChild(heading);
-
-    const hint = document.createElement('p');
-    hint.className = 'settings-intro';
-    hint.textContent =
+    // Condensed from a heading + explanatory paragraph into a single
+    // help icon carrying the same instructions as a tooltip (title
+    // attribute) -- now that the column is a single narrow list
+    // rather than a grid, a full paragraph took up disproportionate
+    // space. No aria-label needed beyond title; not disabled/no
+    // onclick, so it stays focusable/hoverable for the native tooltip
+    // via mouse or keyboard, purely informational otherwise.
+    const helpIcon = document.createElement('button');
+    helpIcon.type = 'button';
+    helpIcon.className = 'item-modal-gallery-help';
+    helpIcon.textContent = '?';
+    helpIcon.title =
       selectedTargets.size > 0
         ? `Click the assign icon on an image to assign it to ${selectedTargets.size} selected target${
             selectedTargets.size === 1 ? '' : 's'
           }.`
         : 'Select the item image and/or one or more print files, then click the assign icon on an image to assign it. Drag-and-drop also works.';
-    col.appendChild(hint);
+    col.appendChild(helpIcon);
 
     const grid = document.createElement('div');
     grid.className = 'item-modal-gallery-grid';
-    if (draft.poolImages.length === 0) {
-      const none = document.createElement('p');
-      none.className = 'settings-intro';
-      none.textContent = 'No images yet -- use "Add image" below, or drag images in.';
-      grid.appendChild(none);
-    }
     draft.poolImages.forEach((ref, idx) => {
       const cell = document.createElement('div');
       cell.className = 'item-modal-gallery-item';
@@ -808,8 +1130,15 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
-    addBtn.className = 'settings-action-button';
-    addBtn.textContent = 'Add image\u2026';
+    addBtn.className = 'item-modal-gallery-add-btn';
+    // TEMP: plain "+" text, not the icon font -- same situation as the
+    // thumbnail-cycle arrows (lightbox.js, makeThumbCycleButtons):
+    // no glyph for this in the current subset (printcat-icons.woff2)
+    // yet. Flagged for the same future re-subsetting pass as those
+    // arrows, not blocking on it now.
+    addBtn.textContent = '+';
+    addBtn.title = 'Add image\u2026';
+    addBtn.setAttribute('aria-label', 'Add image');
     addBtn.onclick = async () => {
       const picked = await window.catalogAPI.editSessionBrowseImages();
       for (const p of picked) addExternalToPoolDraft(p.path, p.name);
@@ -824,73 +1153,70 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   // so hand-editing/reparsing origin info doesn't rebuild the name
   // field or tag input and lose their focus/in-progress text.
   function renderOriginRow(container) {
-    container.innerHTML = '';
-
-    const info = document.createElement('span');
-    info.className = 'item-modal-origin-summary';
-    info.textContent = draft.origin.url
-      ? draft.origin.creatorName
-        ? `By ${draft.origin.creatorName} \u2014 ${draft.origin.url}`
-        : draft.origin.url
-      : 'No original location set.';
-    container.appendChild(info);
-
-    const pencilBtn = document.createElement('button');
-    pencilBtn.type = 'button';
-    pencilBtn.className = 'item-modal-origin-btn icon icon-edit';
-    pencilBtn.title = 'Edit original-location info';
-    pencilBtn.setAttribute('aria-label', 'Edit original-location info');
-    pencilBtn.onclick = () => {
-      openOriginEditPopup(
-        {
-          url: draft.origin.url || '',
-          creatorName: draft.origin.creatorName || '',
-          creatorUrl: draft.origin.creatorUrl || '',
-        },
-        (result) => {
-          draft.origin = result;
-          renderOriginRow(container);
+    buildOriginRowContents(container, {
+      origin: draft.origin,
+      editable: true,
+      onPencilClick: () => {
+        openOriginEditPopup(
+          {
+            url: draft.origin.url || '',
+            creatorName: draft.origin.creatorName || '',
+            creatorUrl: draft.origin.creatorUrl || '',
+          },
+          (result) => {
+            draft.origin = result;
+            renderOriginRow(container);
+          }
+        );
+      },
+      onRefreshClick: async (e) => {
+        const refreshBtn = e.currentTarget;
+        refreshBtn.disabled = true;
+        try {
+          const detected = await window.catalogAPI.detectItemOrigin(sourceDir);
+          if (detected && detected.url) {
+            openOriginEditPopup(
+              {
+                url: detected.url || '',
+                creatorName: detected.creatorName || '',
+                creatorUrl: detected.creatorUrl || '',
+              },
+              (result) => {
+                draft.origin = result;
+                renderOriginRow(container);
+              }
+            );
+          } else {
+            alert("Couldn't detect anything from this item's folder.");
+          }
+        } catch (err) {
+          alert(`Reparse failed: ${err.message}`);
+        } finally {
+          refreshBtn.disabled = false;
         }
-      );
-    };
-    container.appendChild(pencilBtn);
+      },
+    });
+  }
 
-    const refreshBtn = document.createElement('button');
-    refreshBtn.type = 'button';
-    refreshBtn.className = 'item-modal-origin-btn icon icon-refresh';
-    refreshBtn.title = 'Reparse from folder';
-    refreshBtn.setAttribute('aria-label', 'Reparse original-location info from folder');
-    refreshBtn.onclick = async () => {
-      refreshBtn.disabled = true;
-      try {
-        const detected = await window.catalogAPI.detectItemOrigin(sourceDir);
-        if (detected && detected.url) {
-          openOriginEditPopup(
-            {
-              url: detected.url || '',
-              creatorName: detected.creatorName || '',
-              creatorUrl: detected.creatorUrl || '',
-            },
-            (result) => {
-              draft.origin = result;
-              renderOriginRow(container);
-            }
-          );
-        } else {
-          alert("Couldn't detect anything from this item's folder.");
-        }
-      } catch (err) {
-        alert(`Reparse failed: ${err.message}`);
-      } finally {
-        refreshBtn.disabled = false;
-      }
-    };
-    container.appendChild(refreshBtn);
+  // Same predicate view mode's own file list uses to decide what's
+  // shown at all (renderContent's matchesPrinterOnly/matchingFiles) --
+  // reused here so edit mode's sort/mark treatment (refreshEditFilesArea)
+  // classifies files exactly the way switching to view mode actually
+  // would, not a separately-maintained approximation of it.
+  function fileWouldShowInBrowsing(pf) {
+    const effective = effectivePrinterFilter();
+    if (effective && effective.size > 0 && !effective.has(printerLabel(pf))) return false;
+    return fileMatchesKeywordInItem(item, pf, keywordQuery);
   }
 
   function buildEditRoot() {
     const root = document.createElement('div');
-    root.className = 'item-modal-edit';
+    // Same class as view mode's root (renderItemDetail's wrap) --
+    // neither .item-modal-edit nor .item-detail was ever an actual
+    // CSS selector or a JS mode-detection check, just an inert marker
+    // each mode happened to name differently; no reason for two names
+    // when both do (and always did) nothing.
+    root.className = 'item-detail';
 
     if (mode === 'add') {
       const addLabel = document.createElement('p');
@@ -899,39 +1225,73 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       root.appendChild(addLabel);
     }
 
-    const header = document.createElement('div');
-    header.className = 'item-modal-edit-header';
-    root.appendChild(header);
+    // Thumbnail and name both now live in the topbar (see
+    // renderTopBar) -- item-modal-edit-header used to hold them here,
+    // but with both hoisted out it had nothing left in it, so it's
+    // gone rather than kept as an empty wrapper.
 
-    const thumbChipHolder = document.createElement('div');
-    thumbChipHolder.className = 'item-modal-thumb-chip-holder';
-    header.appendChild(thumbChipHolder);
-    // Name field now lives in the topbar (see renderTopBar), centered
-    // on the same row as Cancel/Save -- not rebuilt here anymore.
+    // Mirrors view mode's .item-detail-header exactly (same class),
+    // enclosing origin info + tags the same way there -- .item-detail
+    // isn't a flex container here the way view mode's wrap is, so
+    // .item-detail-header's flex: 1 0 100% is simply inert, not
+    // conflicting with anything.
+    const header = document.createElement('div');
+    header.className = 'item-detail-header';
+    root.appendChild(header);
 
     const originRow = document.createElement('div');
     originRow.className = 'item-modal-origin-row';
-    root.appendChild(originRow);
+    header.appendChild(originRow);
     renderOriginRow(originRow);
 
     const tagsWrapLabel = document.createElement('div');
-    tagsWrapLabel.className = 'item-modal-tags-row';
+    tagsWrapLabel.className = 'item-detail-tags';
     editTagsField = createTagInput('Tagged', draft.tags, () => Array.from(collectTags(allItems)).sort());
     tagsWrapLabel.appendChild(editTagsField.wrap);
-    root.appendChild(tagsWrapLabel);
+    header.appendChild(tagsWrapLabel);
 
     const filesArea = document.createElement('div');
-    filesArea.className = 'item-modal-edit-body';
+    filesArea.className = 'item-detail-body';
     root.appendChild(filesArea);
 
     refreshEditFilesArea = () => {
       filesArea.innerHTML = '';
+      // thumbChipHolder is now built by renderTopBar(), not here (see
+      // the outer-scope declaration near `mode`/`draft` above) --
+      // still refreshed from this same spot since an image
+      // assignment change needs it updated regardless of where the
+      // element physically lives.
       thumbChipHolder.innerHTML = '';
       thumbChipHolder.appendChild(buildItemThumbChip());
 
       const filesCol = document.createElement('div');
-      filesCol.className = 'item-modal-edit-files';
-      for (const pf of draft.printFiles) filesCol.appendChild(buildPrintFileCard(pf));
+      filesCol.className = 'item-detail-files';
+      // Edit mode never hides a file the way view mode's printer/
+      // search filter does (see renderContent's matchingFiles) -- but
+      // rather than showing everything in a flat, undifferentiated
+      // list with no relationship to whatever filter happens to be
+      // active, files that WOULD be filtered out under view mode's own
+      // rules are sorted after the ones that wouldn't, and marked
+      // (.print-file-filtered-out) rather than looking identical to a
+      // real match. mode === 'edit' only -- add mode has no existing
+      // item/browsing context for "current filter relevance" to mean
+      // anything against.
+      const files =
+        mode === 'edit'
+          ? [...draft.printFiles].sort((a, b) => {
+              const aShows = fileWouldShowInBrowsing(a);
+              const bShows = fileWouldShowInBrowsing(b);
+              return aShows === bShows ? 0 : aShows ? -1 : 1;
+            })
+          : draft.printFiles;
+      for (const pf of files) {
+        const card = buildPrintFileCard(pf);
+        if (mode === 'edit' && !fileWouldShowInBrowsing(pf)) {
+          card.classList.add('print-file-filtered-out');
+          card.title = "Wouldn't be shown right now under the current search/printer filter";
+        }
+        filesCol.appendChild(card);
+      }
       filesArea.appendChild(filesCol);
 
       filesArea.appendChild(buildGalleryColumn());
@@ -1071,12 +1431,23 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 // item's tag count.
 function renderTagsRow(tags) {
   const row = document.createElement('div');
-  row.className = 'item-modal-tags-row item-detail-tags';
+  row.className = 'item-detail-tags';
 
-  const label = document.createElement('span');
+  // Matches edit mode's own wrapper (editTagsField.wrap from
+  // createTagInput, settings.js -- '.settings-field.tag-input-field')
+  // exactly, tag and class both, even though nothing here needs
+  // tag-input-field's position: relative (that's for anchoring the
+  // suggestion dropdown, which doesn't exist in this read-only
+  // version) -- full structural parity was the point, and an unused
+  // position: relative is harmless.
+  const field = document.createElement('div');
+  field.className = 'settings-field tag-input-field';
+  row.appendChild(field);
+
+  const label = document.createElement('label');
   label.className = 'settings-field-label';
   label.textContent = 'Tagged';
-  row.appendChild(label);
+  field.appendChild(label);
 
   // Reuses .tag-input-box (settings.css) -- the same bordered shell
   // edit mode's chip list sits inside (see createTagInput,
@@ -1088,7 +1459,7 @@ function renderTagsRow(tags) {
   // it every time.
   const box = document.createElement('div');
   box.className = 'tag-input-box item-detail-tags-box';
-  row.appendChild(box);
+  field.appendChild(box);
 
   const chipList = document.createElement('div');
   chipList.className = 'tag-chip-list';
@@ -1145,10 +1516,19 @@ function renderItemDetail(item) {
   header.className = 'item-detail-header';
   // Name itself now renders in the topbar (see renderTopBar), centered
   // on the same row as the Close button -- not duplicated here anymore.
-  if (item.origin && item.origin.url) {
-    header.appendChild(renderOriginInfo(item.origin));
-  }
-  // Shares .item-modal-tags-row/.tag-chip-list with edit mode's tag
+
+  // Always present now, matching edit mode's origin row exactly (see
+  // buildOriginRowContents) -- including the pencil/refresh buttons,
+  // just inert here. Previously this whole element was omitted when
+  // there was no origin; now it always renders, falling back to "No
+  // original location set." like edit mode does, for full structural
+  // parity between the two modes.
+  const originRow = document.createElement('div');
+  originRow.className = 'item-modal-origin-row';
+  header.appendChild(originRow);
+  buildOriginRowContents(originRow, { origin: item.origin, editable: false });
+
+  // Shares .item-detail-tags/.tag-chip-list with edit mode's tag
   // input (createTagInput, settings.js) on purpose, even though this
   // is read-only -- keeping the same wrapper/label/chip-list shape in
   // both trees is what lets a future transition (manual FLIP, or the
@@ -1158,34 +1538,37 @@ function renderItemDetail(item) {
   header.appendChild(renderTagsRow(item.tags));
   wrap.appendChild(header);
 
-  for (const file of item.files) {
-    const row = document.createElement('div');
-    row.className = 'file-row';
+  // Shared shape with edit mode's own body row now (see
+  // buildEditRoot): .item-detail-body > .item-detail-files
+  // (the actual wrapping file-card grid) + the gallery column. Files
+  // used to be flat children of .item-detail itself, which did its
+  // own flex-wrap/justify-content -- both moved down to
+  // .item-detail-files (itemModal.css) now that it's the real
+  // shared file-list container instead of edit-mode-only.
+  const body = document.createElement('div');
+  // item-detail-body-reserve (itemModal.css, view-mode only -- not
+  // applied in buildEditRoot) pads this out by the same amount the
+  // real gallery column takes up in edit mode, so the file cards below
+  // never have to rewrap when switching modes.
+  body.className = 'item-detail-body item-detail-body-reserve';
+  wrap.appendChild(body);
 
+  const filesCol = document.createElement('div');
+  filesCol.className = 'item-detail-files';
+  body.appendChild(filesCol);
+
+  for (const file of item.files) {
     const thumbWrap = document.createElement('div');
     thumbWrap.className = 'file-thumb-wrap crop-frame';
 
     const img = document.createElement('img');
-    img.alt = file.shortname;
+    // Matches edit mode's alt text logic exactly now (pf.displayName
+    // || pf.shortname, in buildPrintFileCard) -- previously this used
+    // shortname only, so a file with a custom display name set would
+    // get different alt text depending on which mode you were in for
+    // what's visually the same thumbnail.
+    img.alt = file.metadataDisplayName || file.shortname;
     thumbWrap.appendChild(img);
-
-    window.catalogAPI
-      .getFileThumbnail(file, item.imageFiles)
-      .then((thumbPath) => {
-        img.src = thumbPath ? fileUrl(thumbPath) : 'nothumb.svg';
-        if (thumbPath) {
-          applyImageCrop(img, thumbWrap, cropRectFor(item, thumbPath, 'thumb'), { useDefault: true });
-          thumbWrap.appendChild(
-            makeZoomButton(() => img.src, img.alt, () => cropRectFor(item, thumbPath, 'full'))
-          );
-        }
-      })
-      // Same reasoning as the item-card thumbnail above -- don't leave
-      // the image blank on a rejected lookup.
-      .catch(() => {
-        img.src = 'nothumb.svg';
-      });
-    row.appendChild(thumbWrap);
 
     const name = document.createElement('h3');
     name.className = 'file-name';
@@ -1194,82 +1577,120 @@ function renderItemDetail(item) {
     // this view has no rename UI of its own -- that's editor-modal
     // only, per prior correction.
     name.textContent = file.metadataDisplayName || file.shortname;
-    row.appendChild(name);
 
-    // Batch/color-change info moved out of the metadata block into a
-    // subtitle right under the file name -- these two are the "which
-    // variant is this" signal, so they read as part of the file's
-    // identity rather than a metadata line among printer/print-time.
-    const subtitleParts = [
-      file.copies && file.copies > 1 ? `batch of ${file.copies}` : null,
-      file.colorChangeCount
-        ? `${file.colorChangeCount} color change${file.colorChangeCount === 1 ? '' : 's'}`
-        : null,
-    ].filter(Boolean);
-    if (subtitleParts.length) {
-      const subtitle = document.createElement('p');
-      subtitle.className = 'file-subtitle';
-      subtitle.textContent = subtitleParts.join(', ');
-      row.appendChild(subtitle);
-    }
+    const row = buildFileEntry({
+      editable: false,
+      thumbWrap,
+      nameEl: name,
+      // Printer model lives in metaLines below, not the subtitle --
+      // matches buildFileSubtitleText/buildFileMetaLines exactly, the
+      // same pair edit mode's card now builds from too.
+      subtitleText: buildFileSubtitleText(file),
+      metaLines: buildFileMetaLines(file),
+      // Read-only twins of edit mode's real, removable chips -- same
+      // count/images as file.metadataImages, no onRemove since
+      // there's nothing to remove here; inert and hidden either way
+      // (see buildFileEntry), just present for shape parity.
+      chips: (file.metadataImages || []).map((imgName) => ({
+        src: fileUrl(`${item.path}/${imgName}`),
+      })),
+      onPrintClick: () => handlePrintClick(file),
+    });
+    // Same view-transition-name buildPrintFileCard gives the matching
+    // draft print-file, derived the same way (path basename) so it's
+    // stable regardless of which mode's sort order put this file at a
+    // different position -- see printFileTransitionName.
+    row.style.viewTransitionName = printFileTransitionName(file);
+    filesCol.appendChild(row);
 
-    const meta = document.createElement('div');
-    meta.className = 'file-meta';
-    const metaLines = [
-      // Always the full model+variant label (not just the model) --
-      // otherwise two files sliced for different variants of the same
-      // printer model (e.g. different nozzles) would show identically
-      // here with nothing to tell them apart.
-      file.printerModel ? `Printer: ${printerLabel(file)}` : null,
-      file.printTime ? `Print time: ${file.printTime}` : null,
-      // filamentUsedG can be null independently of filamentType (see
-      // indexer.js) -- drop the weight clause entirely rather than
-      // showing a literal "null" when it didn't parse.
-      file.filamentType
-        ? `Filament: ${formatFilamentTypes(file.filamentType)}${
-            file.filamentUsedG != null ? `, ${file.filamentUsedG}g` : ''
-          }`
-        : null,
-      // colorChangeCount/copies are now shown in the subtitle above,
-      // not here -- see subtitleParts.
-      // Rendered specially below (needs a tooltip icon for pause
-      // messages, not just plain text) -- see the loop.
-      file.pauseCount ? { pause: true, count: file.pauseCount, messages: file.pauseMessages || [] } : null,
-    ].filter(Boolean);
-    for (const line of metaLines) {
-      const lineEl = document.createElement('div');
-      if (typeof line === 'string') {
-        lineEl.textContent = line;
-      } else {
-        // Pause line: "N pause(s)" as text, plus a tooltip icon
-        // carrying the M117 message(s) that preceded each M601 --
-        // only when at least one pause actually had one. Built with
-        // DOM methods (textContent/title), not innerHTML, so a
-        // message containing HTML-ish characters can't break the
-        // markup.
-        lineEl.appendChild(
-          document.createTextNode(`${line.count} pause${line.count === 1 ? '' : 's'} `)
-        );
-        const messages = line.messages.filter(Boolean);
-        if (messages.length) {
-          const icon = document.createElement('i');
-          icon.className = 'pause-tooltip-icon icon icon-info';
-          icon.title = messages.join('\n');
-          lineEl.appendChild(icon);
+    // Thumbnail resolution is unchanged -- async, via
+    // getFileThumbnail's full fallback chain -- and just mutates
+    // thumbWrap/img in place once it resolves. thumbWrap is already
+    // part of the row appended above; building the row synchronously
+    // doesn't need to wait for this.
+    window.catalogAPI
+      .getFileThumbnail(file, item.imageFiles)
+      .then((thumbPath) => {
+        img.src = thumbPath ? fileUrl(thumbPath) : 'nothumb.svg';
+        if (thumbPath) {
+          // Tracked separately from thumbPath (which stays fixed to
+          // whatever was first resolved) so the zoom button below
+          // always reads the crop for whichever image cycling has
+          // currently put on screen, not just the first one.
+          let currentPath = thumbPath;
+          applyImageCrop(img, thumbWrap, cropRectFor(item, currentPath, 'thumb'), { useDefault: true });
+          thumbWrap.appendChild(
+            makeZoomButton(() => img.src, img.alt, () => cropRectFor(item, currentPath, 'full'))
+          );
+          // metadataImages[0] is guaranteed to be the thumbPath we just
+          // resolved above whenever this list is non-empty (see
+          // thumbnailResolver.js's resolveFileThumbnail -- it's the
+          // first, unconditional check in the chain), so waiting until
+          // here to attach these means makeThumbCycleButtons never has
+          // to reconcile a mismatch between the two -- index 0 always
+          // matches what's already on screen.
+          const imagePaths = (file.metadataImages || []).map((imgName) => `${item.path}/${imgName}`);
+          for (const btn of makeThumbCycleButtons(imagePaths, img, thumbWrap, item, (path) => {
+            currentPath = path;
+          })) {
+            thumbWrap.appendChild(btn);
+          }
         }
-      }
-      meta.appendChild(lineEl);
-    }
-    row.appendChild(meta);
-
-    const printButton = document.createElement('button');
-    printButton.className = 'print-button';
-    printButton.textContent = 'Print This';
-    printButton.onclick = () => handlePrintClick(file);
-    row.appendChild(printButton);
-
-    wrap.appendChild(row);
+      })
+      // Same reasoning as the item-card thumbnail above -- don't leave
+      // the image blank on a rejected lookup.
+      .catch(() => {
+        img.src = 'nothumb.svg';
+      });
   }
 
+  // Present but collapsed -- see renderHiddenGalleryColumn below for
+  // why this exists at all in a mode that can't use it. Sibling of
+  // filesCol within body now, matching edit mode's own
+  // .item-modal-edit-gallery placement inside .item-detail-body.
+  body.appendChild(renderHiddenGalleryColumn());
+
   return wrap;
+}
+// View mode's structural counterpart to buildGalleryColumn (edit mode
+// only, openItemModal) -- part of an ongoing effort to keep the two
+// modes' DOM shapes close, not just their behavior. Can't reuse
+// buildGalleryColumn itself: it's a closure over draft/selectedTargets/
+// folderPath, all edit-mode-only state that's null here, and it
+// renders real, interactive pool-image cells with no read-only
+// equivalent for a viewer to make sense of anyway. So this only
+// mirrors the outer shell (column > help icon > empty grid > add
+// button) using the same classes -- enough for the structure to
+// match -- rather than
+// reproducing populated content nobody would ever see, since
+// .item-detail-gallery-collapsed (itemModal.css) hides the whole
+// thing regardless of what's inside it.
+function renderHiddenGalleryColumn() {
+  const col = document.createElement('div');
+  col.className = 'item-modal-edit-gallery item-detail-gallery-collapsed';
+
+  // Mirrors buildGalleryColumn's current shape (help icon + chip grid
+  // + add button), not the old heading -- kept in sync since this
+  // only exists for structural parity in the first place.
+  const helpIcon = document.createElement('button');
+  helpIcon.type = 'button';
+  helpIcon.className = 'item-modal-gallery-help';
+  helpIcon.textContent = '?';
+  helpIcon.disabled = true;
+  helpIcon.tabIndex = -1;
+  col.appendChild(helpIcon);
+
+  const grid = document.createElement('div');
+  grid.className = 'item-modal-gallery-grid';
+  col.appendChild(grid);
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'item-modal-gallery-add-btn';
+  addBtn.textContent = '+';
+  addBtn.disabled = true;
+  addBtn.tabIndex = -1;
+  col.appendChild(addBtn);
+
+  return col;
 }

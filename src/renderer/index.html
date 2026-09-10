@@ -46,25 +46,27 @@
       aria-label="Refresh now"
     >&#8635;</button>
   </div>
-  <script src="vendor/cropper.min.js"></script>
-  <script src="imageCropRender.js"></script>
-  <script src="imageCropperTool.js"></script>
-  <!-- Split from the former single renderer.js. state.js must load first
-       (top-level shared state); renderer.js must load last (the only file
-       with top-level code -- init() and the drag/drop listeners -- that
-       runs immediately instead of being deferred to an event). Order among
-       the files in between doesn't matter: everything else is function
-       declarations, resolved at call time after all scripts have loaded. -->
-  <script src="js/state.js"></script>
-  <script src="js/utils.js"></script>
-  <script src="js/dialogs.js"></script>
-  <script src="js/lightbox.js"></script>
-  <script src="js/filters.js"></script>
-  <script src="js/grid.js"></script>
-  <script src="js/usbFlow.js"></script>
-  <script src="js/settings.js"></script>
-  <script src="js/itemModal.js"></script>
-  <script src="js/editSession-ui.js"></script>
-  <script src="js/renderer.js"></script>
+  <script-section style="display:none;">
+    <script src="vendor/cropper.min.js"></script>
+    <script src="imageCropRender.js"></script>
+    <script src="imageCropperTool.js"></script>
+    <!-- Split from the former single renderer.js. state.js must load first
+         (top-level shared state); renderer.js must load last (the only file
+         with top-level code -- init() and the drag/drop listeners -- that
+         runs immediately instead of being deferred to an event). Order among
+         the files in between doesn't matter: everything else is function
+         declarations, resolved at call time after all scripts have loaded. -->
+    <script src="js/state.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/dialogs.js"></script>
+    <script src="js/lightbox.js"></script>
+    <script src="js/filters.js"></script>
+    <script src="js/grid.js"></script>
+    <script src="js/usbFlow.js"></script>
+    <script src="js/settings.js"></script>
+    <script src="js/itemModal.js"></script>
+    <script src="js/editSession-ui.js"></script>
+    <script src="js/renderer.js"></script>
+  </script-section>
 </body>
 </html>

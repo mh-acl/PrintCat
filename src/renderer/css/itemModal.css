@@ -1,17 +1,101 @@
-/* Unified item view/edit modal: item-detail layout, origin info,
-   print-file rows (.file-row, .print-button) in view mode, and all
-   .item-modal-* / .editor-image-chip* rules for edit mode. Depends on
-   the .modal-overlay/.modal-box shell in dialogs.css. */
+/* Unified item view/edit modal: item-detail layout, origin info, and
+   the print-file card (.print-file-entry, shared by both modes -- see
+   buildFileEntry, itemModal.js), its assigned-image chip list
+   (.print-file-image-chip*, also shared -- real and removable in edit
+   mode, read-only in view), plus the remaining .item-modal-* rules
+   for pieces that are genuinely edit-mode-specific (the gallery
+   column, origin/tag editing controls, and so on). Depends on the
+   .modal-overlay/.modal-box shell in dialogs.css. */
 
-.item-detail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1em;
-  justify-content: center;
-  width: 100%;
-}
+/* .item-detail is the root class for BOTH modes now (buildEditRoot
+   used to use .item-modal-edit for its own root -- dropped once it
+   turned out neither name was ever an actual CSS selector or a JS
+   mode-detection check, just an inert marker). Has no layout rule of
+   its own -- just a plain stacking container: .item-detail-header,
+   then the .item-detail-body row (shared class -- see
+   renderItemDetail, itemModal.js) holding the file list + gallery
+   column. The actual wrapping/centering behavior that used to live
+   here moved to
+   .item-detail-files below, once that became the real file-list
+   container in both modes rather than view-mode-only. */
 .item-detail-header {
   flex: 1 0 100%;
+}
+/* The print-file card itself -- one rule for both modes, now that
+   buildFileEntry (itemModal.js) gives both the same .print-file-entry
+   class with no mode-specific modifier at all (previously .file-row/
+   .item-modal-file-card, dropped once nothing -- visual styling
+   included -- depended on telling them apart anymore). .selected/
+   .drop-target-active below are only ever applied in edit mode
+   (buildPrintFileCard) -- a file card is never "selected" as an
+   image-assignment target or a drop target in view mode -- but that's
+   real state-driven behavior, not a class-name distinction, so they
+   stay scoped to .print-file-entry rather than needing their own
+   class to hang off of. Width was 14em (.file-row) vs 13em
+   (.item-modal-file-card) before merging -- picked 14em since neither
+   mode has a functional reason to be narrower now that the checkbox
+   overlay (in both modes -- real in edit, inert in view) is
+   absolutely positioned and doesn't consume inline width either way. */
+.print-file-entry {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--paper-raised);
+  padding: 1em;
+  width: 14em;
+  box-sizing: border-box;
+  text-align: center;
+}
+.print-file-entry.selected {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+.print-file-entry.drop-target-active {
+  border-color: var(--accent);
+  background: var(--status-edit-bg);
+}
+/* Edit mode never hides a file the way view mode's printer/search
+   filter does -- this marks one that would be, rather than looking
+   identical to a real match (see refreshEditFilesArea, itemModal.js,
+   which also sorts these after the ones that do match). Deliberately
+   muted/grey rather than accent-colored, so it can't be confused with
+   .selected/.drop-target-active above -- this means "less relevant
+   right now", not "chosen" or "a drop target". The main grid's
+   analogous case (.listing-filtered-out, grid.css) uses the same
+   opacity/border/background recipe for the same reason, applied to a
+   different component. */
+.print-file-entry.print-file-filtered-out {
+  opacity: 0.6;
+  border-color: var(--line-soft);
+  background: var(--paper);
+}
+.file-thumb-wrap {
+  position: relative;
+}
+/* Height lives on the wrap (not the img) specifically so that when this
+   wrap also carries .crop-frame (see renderer.js/imageCropRender.js),
+   applyImageCrop's frameEl.clientHeight has a real, non-auto value to
+   compute against -- height:100% on a .crop-frame child is meaningless
+   against an auto-height parent. Both dimensions fixed and equal --
+   not just height -- so this is a genuinely square box, not a
+   190x160-ish rectangle with the square crop centered and letterboxed
+   inside it (which is what "height only" produced: mathematically
+   correct per applyImageCrop's contain-mode centering, but visibly
+   reads as padding/margin around the photo rather than a clean square
+   thumbnail). margin: auto centers the now-narrower-than-the-card box
+   horizontally. Was 10em (.file-row) vs 8em (.item-modal-file-card)
+   before merging -- picked 10em to match the card width choice above.
+   */
+.print-file-entry .file-thumb-wrap {
+  width: 10em;
+  height: 10em;
+  margin: 0 auto 0.5em;
+}
+.print-file-entry .file-thumb-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 .item-origin-info {
   display: block;
@@ -24,48 +108,6 @@
 }
 .item-origin-info a:hover {
   color: var(--accent);
-}
-.file-row {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  background: var(--paper-raised);
-  padding: 1em;
-  width: 14em;
-  box-sizing: border-box;
-  text-align: center;
-}
-.file-thumb-wrap {
-  position: relative;
-}
-/* Height lives on the wrap (not the img) specifically so that when this
-   wrap also carries .crop-frame (see renderer.js/imageCropRender.js),
-   applyImageCrop's frameEl.clientHeight has a real, non-auto value to
-   compute against -- height:100% on a .crop-frame child is meaningless
-   against an auto-height parent. */
-.file-row .file-thumb-wrap {
-  /* Both dimensions fixed and equal -- not just height -- so this is
-     a genuinely square box, not a 190x160-ish rectangle with the
-     square crop centered and letterboxed inside it (which is what
-     "height only" produced: mathematically correct per applyImageCrop's
-     contain-mode centering, but visibly reads as padding/margin around
-     the photo rather than a clean square thumbnail). margin: auto
-     centers the now-narrower-than-the-row box horizontally -- .file-row
-     itself is wider (see .file-row's own width above). */
-  width: 10em;
-  height: 10em;
-  margin: 0 auto 0.5em;
-}
-.file-row img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-}
-.file-row a {
-  display: inline-block;
-  margin-top: 0.5em;
-  color: var(--accent);
-  font-weight: 500;
 }
 .file-name {
   font-family: var(--font-display);
@@ -118,9 +160,34 @@
    overlays the still-intact main grid, same .modal-overlay
    pattern as the item editor and drive-picker dialogs. Wider than
    .editor-box since it needs to comfortably fit several 14em-wide
-   .file-row cards side by side (see .item-detail). */
+   .print-file-entry cards side by side (see .item-detail-files,
+   the actual wrapping container in both modes now). */
 .item-modal-box {
-  max-width: 52em;
+  /* Single source of truth for the gallery thumb size -- referenced
+     here, by .item-modal-gallery-thumb below, and by cropper.css's
+     higher-specificity .item-modal-gallery-item .item-modal-gallery-
+     thumb (which is the one that actually wins and governs the
+     rendered size -- see that rule's own comment). Splitting this
+     into a variable is specifically to stop the two from silently
+     drifting out of sync again the way they already did once before
+     (found at 4.5em there while this file's copy had been bumped to
+     5em) -- and now that --gallery-reserve below depends on this same
+     value too, keeping all three in sync matters even more.
+     --gallery-reserve is the total extra width the body row
+     (.item-detail-body) needs in edit mode to fit the gallery
+     alongside the file list: the gap between them, plus the gallery's
+     own border-left + padding-left + content width (the thumb is its
+     widest child, since chips are a single column now). Used two
+     places: bumping this modal's own max-width so 3 file cards still
+     fit side by side at full width same as before the gallery had a
+     footprint (see below), and as the padding view mode reserves on
+     the file list in .item-detail-body-reserve, so the file cards get
+     the exact same effective width -- and therefore never rewrap --
+     whether the gallery is actually taking up that space (edit mode)
+     or just being reserved for it (view mode). */
+  --gallery-thumb-size: 5em;
+  --gallery-reserve: calc(1.5em + 1px + 1em + var(--gallery-thumb-size));
+  max-width: calc(52em + var(--gallery-reserve));
   max-height: 85vh;
   overflow-y: auto;
 }
@@ -177,6 +244,9 @@
   justify-self: end;
 }
 .item-modal-topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
   justify-self: center;
   /* Allows this track to shrink below its content's natural width --
      the two 1fr side columns can't (see .item-modal-topbar-side
@@ -186,6 +256,16 @@
      track's own size is settled, which was clipping even short names
      -- min-width: 0 alone is the correct/sufficient constraint, since
      it only kicks in once the side columns' floors are satisfied. */
+  min-width: 0;
+}
+.item-modal-title-text,
+.item-modal-title-input {
+  /* Now that .item-modal-topbar-title is a flex row (icon + text,
+     rather than the text alone), the text/input needs its own
+     min-width: 0 too -- a flex item's default min-width is its
+     content's intrinsic size, which would silently defeat the
+     ellipsis truncation the parent's min-width: 0 above was added
+     for. */
   min-width: 0;
 }
 .item-modal-title-text {
@@ -248,12 +328,6 @@
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
-.item-modal-edit-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75em;
-  margin-bottom: 0.5em;
-}
 .item-modal-add-label {
   font-family: var(--font-display);
   font-weight: 700;
@@ -271,15 +345,39 @@
   background: var(--paper);
   color: var(--ink);
 }
+/* Holder mounted in the topbar's title column (renderTopBar,
+   itemModal.js), to the left of the name -- present in both view and
+   edit mode so it's a continuous fixture rather than something that
+   suddenly shows up when you enter edit mode. Sizing lives here
+   rather than on its contents, since view mode puts a plain <img>
+   directly inside it while edit mode nests the full interactive
+   .item-modal-thumb-chip (target-select checkbox, drag-drop, remove
+   button) one level deeper -- both fill this same box. */
+.item-modal-topbar-thumb {
+  flex: none;
+  width: 2.5em;
+  height: 2.5em;
+}
+.item-modal-topbar-thumb > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 0.3em;
+  border: 1px solid var(--line);
+}
 /* Item-level image chip, doubling as an image-assignment target (see
    .item-modal-target-select) -- same visual language as the
-   per-print-file image chips below, just larger since it sits next to
-   the name field. */
+   per-print-file image chips below, sized to fill
+   .item-modal-topbar-thumb above. At 2.5em there's enough room to
+   keep the checkbox/remove-button at their original per-print-file-
+   card scale (below) rather than shrinking them specifically for this
+   spot. */
 .item-modal-thumb-chip {
   position: relative;
   flex: none;
-  width: 3.5em;
-  height: 3.5em;
+  width: 100%;
+  height: 100%;
 }
 .item-modal-thumb-chip img {
   width: 100%;
@@ -319,11 +417,19 @@
   gap: 0.4em;
   margin-bottom: 0.5em;
 }
+/* Text styling itself now comes entirely from .item-origin-info
+   (shared with view mode -- see renderOriginRow, itemModal.js, which
+   applies both classes to the same element). This is just the
+   layout-only piece needed to sit alongside the edit/refresh buttons
+   in the row above: flex-grow so it takes the remaining space,
+   overflow-wrap so a long raw URL (when no platform label applies)
+   can still break, and margin-top zeroed since .item-origin-info's
+   own small top margin was meant for sitting under the heading in
+   view mode, not for sitting inline with buttons here. */
 .item-modal-origin-summary {
   flex: 1;
-  color: var(--ink-soft);
-  font-size: 0.9em;
   overflow-wrap: anywhere;
+  margin-top: 0;
 }
 .item-modal-origin-btn {
   flex: none;
@@ -336,15 +442,20 @@
 .item-modal-origin-btn:hover {
   border-color: var(--ink-faint);
 }
-.item-modal-tags-row {
-  margin-bottom: 1em;
-}
-/* View mode's read-only tags row sits right under the origin line in
-   the header -- .item-detail-tags is the view-mode-only spacing
-   modifier, kept separate from the shared .item-modal-tags-row base
-   so edit mode's margin isn't affected by tweaking this. */
+/* One shared class for both modes now -- used to be
+   .item-modal-tags-row (edit) plus an extra .item-detail-tags
+   modifier (view, margin-top: 0.5em) layered on top. That extra
+   margin turned out to be doing nothing once both modes started
+   wrapping the origin row + tags row in the same .item-detail-header:
+   .item-modal-origin-row's own margin-bottom: 0.5em already collapses
+   with whatever margin-top the tags row has (adjacent sibling
+   margins take the max, not the sum) -- view's 0.5em top margin
+   collapsed against that same 0.5em bottom margin to the exact same
+   0.5em gap edit mode already got from margin-bottom: 0.5em alone.
+   No actual visual difference to preserve, so no reason for two
+   classes. */
 .item-detail-tags {
-  margin-top: 0.5em;
+  margin-bottom: 1em;
 }
 .item-detail-tags-none {
   font-size: 0.85em;
@@ -362,26 +473,91 @@
 .item-detail-tags-box {
   border-color: transparent;
 }
-/* Transition hook: only one of view mode's/edit mode's tags row is
-   ever in the DOM at a time (renderContent replaces content wholesale
-   on mode switch -- see itemModal.js), so giving both the same
-   view-transition-name is safe. withViewTransition() (itemModal.js)
-   wraps the enterEditMode/exitEditMode DOM mutation in
-   document.startViewTransition(), so the browser captures this
-   element's before/after position+size+appearance and animates
-   between them as one unit -- a real morph, not a manual
-   position/opacity animation we'd have to compute ourselves.
-   Named on the whole .item-modal-tags-row, not just the inner
-   .tag-chip-list -- naming only the chip list left the "Tagged" label
-   outside the animated group, so it hard-cut to its new position on
-   frame one while the chip list was still animating into place,
-   reading as the label "teleporting" mid-transition. Naming the row
-   means the label travels with the chips as one coherent unit.
-   @supports keeps this inert on engines without the API (falls back
-   to withViewTransition's plain-call path, i.e. a hard cut). */
+/* Transition hooks: each of these has exactly one side present in the
+   DOM at a time (renderContent replaces content wholesale on mode
+   switch -- see itemModal.js), so giving both sides of each pair the
+   same view-transition-name is safe -- a true matched-element morph
+   the browser handles natively (position/size/appearance
+   interpolated automatically), not a manual animation we compute
+   ourselves. withViewTransition() (itemModal.js) is what wraps the
+   enterEditMode/exitEditMode mutation in document.startViewTransition
+   so any of this actually runs. @supports keeps all of it inert on
+   engines without the API (falls back to withViewTransition's
+   plain-call path, i.e. a hard cut).
+   - .item-detail-tags: named on the whole row, not just the inner
+     .tag-chip-list -- naming only the chip list left the "Tagged"
+     label outside the animated group, so it hard-cut to its new
+     position on frame one while the chip list was still animating
+     into place, reading as the label "teleporting" mid-transition.
+   - .item-modal-origin-row: same reasoning -- the row's shape (info
+     text + pencil/refresh buttons) barely changes between modes now
+     that both are the exact same buildOriginRowContents output, so
+     this is mostly just a clean crossfade with very little to
+     actually resize.
+   - .item-modal-title-text/.item-modal-title-input: two different
+     elements (a static heading, a text input) that are never both
+     present at once -- naming both the same lets the browser morph
+     "centered text" into "centered input field" as one continuous
+     thing, the same trick .tag-chip-list/.tag-input-box already use
+     for the tags row itself.
+   - .item-modal-topbar-thumb: the outer holder is the same class in
+     both modes already (renderTopBar), so this animates the plain-img
+     vs. interactive-chip content swap the same way the title does.
+   - .item-modal-edit-gallery: unlike the others, this one's about
+     size, not content -- animates the real grow-from-zero-width reveal
+     when entering edit mode (and the reverse leaving it), instead of
+     the column just snapping into/out of existence.
+   - .item-modal-close:not(.save): Close (view) and Cancel (edit/add)
+     are different buttons (different text/icon) that are never both
+     present at once, same situation as the title text/input pair --
+     naming both lets them crossfade into each other rather than one
+     instantly replacing the other. :not(.save) specifically excludes
+     the Save button, which shares this same base class but needs its
+     own separate name and its own fade-only treatment below (a
+     genuine enter/exit case, unlike this pair) rather than joining
+     this crossfade.
+   - .item-modal-box: the outer shell itself, so its own border/size
+     animates when its content's overall footprint changes between
+     modes (e.g. the gallery reveal above changing how much width the
+     modal needs), instead of the box just snapping to its new size.
+     Persists across mode switches already (only topBar/content are
+     torn down and rebuilt inside it -- see renderContent), but that
+     doesn't disqualify it: the browser matches old/new state by name,
+     not by node identity, so a stable node whose size changes as a
+     side effect of its children mutating still gets captured and
+     interpolated like any other named element.
+   Per-print-file-card names are set directly in JS (see
+   printFileTransitionName, buildPrintFileCard, and the view-mode file
+   loop) since there's one per file rather than a single fixed name --
+   CSS can't generate those dynamically, so there's nothing to add
+   here for them beyond the shared duration/easing rule below, which
+   already applies to any named group regardless of where its name
+   came from. */
 @supports (view-transition-name: none) {
-  .item-modal-box .item-modal-tags-row {
+  .item-modal-box {
+    view-transition-name: item-modal-box;
+  }
+  .item-modal-box .item-detail-tags {
     view-transition-name: item-modal-tags;
+  }
+  .item-modal-box .item-modal-origin-row {
+    view-transition-name: item-modal-origin;
+  }
+  .item-modal-box .item-modal-title-text,
+  .item-modal-box .item-modal-title-input {
+    view-transition-name: item-modal-title;
+  }
+  .item-modal-box .item-modal-topbar-thumb {
+    view-transition-name: item-modal-thumb;
+  }
+  .item-modal-box .item-modal-edit-gallery {
+    view-transition-name: item-modal-gallery;
+  }
+  .item-modal-box .item-modal-close:not(.save) {
+    view-transition-name: item-modal-close-btn;
+  }
+  .item-modal-box .item-modal-close.save {
+    view-transition-name: item-modal-save-btn;
   }
 }
 /* document.startViewTransition() animates the *entire page* by
@@ -391,28 +567,57 @@
    to animate yet. This app is the only thing on the page calling
    startViewTransition, so disabling the root's default animation
    here is safe globally: it just means only explicitly-named groups
-   (item-modal-tags today, more as this effort continues) ever
-   animate; everything else still hard-cuts exactly as before.
-   ::view-transition-group(item-modal-tags) is left at the browser's
-   default animation (a combined resize + cross-fade) -- only its
-   duration/easing are tuned here, to match the 0.12s-ish snappy feel
-   used for hover transitions elsewhere in this app (see filters.css,
-   grid.css, lightbox.css, settings.css); left slightly longer than
-   those since this is a bigger, one-off content change rather than a
-   hover micro-interaction. */
+   ever animate; everything else still hard-cuts exactly as before. */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
 }
-::view-transition-group(item-modal-tags) {
-  /* TEMP, for testing: 1.8s = 0.18s / 0.1 (10% speed), slow enough to
-     watch frame-by-frame. Change back to 0.18s (the intended
-     real-world speed) once the shape/color match-up looks right at
-     full speed -- the target duration is normally tuned relative to
-     this app's 0.12s hover transitions (see filters.css, grid.css,
-     lightbox.css, settings.css), not to this slowed-down testing
-     value. */
-  animation-duration: 1.8s;
+/* Single source of truth for how fast every item-modal view transition
+   runs -- referenced by every animation-duration/animation shorthand
+   below instead of each repeating its own literal value, so changing
+   the speed again later (this was 1.8s, a deliberately slow 10%-speed
+   testing value, for most of this feature's development) means
+   editing one line instead of five. Has to live on :root specifically,
+   not on .item-modal-box the way --gallery-thumb-size/--gallery-reserve
+   do (see .item-modal-box's own comment) -- the ::view-transition-*
+   pseudo-element tree these rules target is rooted on the document's
+   root element per spec, not nested inside wherever the real
+   .item-modal-box happens to sit in the DOM, so a variable set there
+   would never actually inherit down to them. */
+:root {
+  --item-modal-transition-duration: 0.2s;
+}
+/* `*` rather than naming each group individually -- covers every
+   named group above plus the per-print-file-card names set in JS,
+   all with the same duration/easing, without having to list them out
+   or update this rule every time a new one is added. Only sets the
+   longhand duration/timing-function, not the animation shorthand or
+   animation-name, so each group keeps whatever its own default
+   resize+crossfade animation actually is -- this just retimes it.
+   root is included too but that's harmless: root's own group
+   essentially never resizes (it's the whole viewport), so retiming a
+   no-op animation changes nothing.
+   Also applies to ::view-transition-old(*)/::view-transition-new(*) --
+   the *group*'s resize/position animation and the *image*'s crossfade
+   (opacity blend between old and new content) are two genuinely
+   separate animations, and only the group's was being retimed here
+   before. At the original 1.8s that mismatch was proportionally small
+   enough not to notice; once this got sped up to a real-world value,
+   the crossfade kept running at the browser's own untouched default
+   duration well after the (now much faster) resize had already
+   finished, reading as edit-only content "flashing back in" right at
+   the end of a view-mode exit -- it wasn't actually reappearing, the
+   still-fading-out old-state snapshot (which legitimately does show
+   it, since that's what edit mode really looked like) was just
+   outlasting everything else around it. Named :only-child overrides
+   below (e.g. item-modal-save-btn's fade, item-modal-chip-remove's
+   grow/shrink) are unaffected -- higher specificity than this bare
+   wildcard, and they already set their own duration via the same
+   variable through their full animation shorthand. */
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: var(--item-modal-transition-duration);
   animation-timing-function: ease;
 }
 /* Fallback grow/shrink for a chip-remove button that genuinely has no
@@ -460,10 +665,43 @@
   }
 }
 ::view-transition-new(*):only-child {
-  animation: item-modal-chip-remove-grow-in 1.8s ease;
+  animation: item-modal-chip-remove-grow-in var(--item-modal-transition-duration) ease;
 }
 ::view-transition-old(*):only-child {
-  animation: item-modal-chip-remove-grow-out 1.8s ease;
+  animation: item-modal-chip-remove-grow-out var(--item-modal-transition-duration) ease;
+}
+/* Save button (item-modal-save-btn) is a pure enter/exit case too --
+   no counterpart exists in view mode at all (unlike Close/Cancel,
+   which crossfade into each other -- see the @supports block above)
+   -- so without this it would fall into the same wildcard :only-child
+   bucket as the chip-remove buttons above and inherit their
+   scaleX grow/shrink. A plain fade is what was actually asked for
+   here, not a grow, so this overrides that with its own keyframes on
+   the named (not wildcard) selector, which wins on specificity
+   regardless of source order -- same reasoning .item-modal-chip-remove
+   never needed, since it was always fine sharing the wildcard's
+   default treatment. */
+@keyframes item-modal-save-btn-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes item-modal-save-btn-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+::view-transition-new(item-modal-save-btn):only-child {
+  animation: item-modal-save-btn-fade-in var(--item-modal-transition-duration) ease;
+}
+::view-transition-old(item-modal-save-btn):only-child {
+  animation: item-modal-save-btn-fade-out var(--item-modal-transition-duration) ease;
 }
 /* Known limitation, left as-is rather than risking the fix above: a
    pure enter/exit element (the fallback case, only reached when tag
@@ -480,52 +718,44 @@
    normal case now that every button has a same-index counterpart on
    both sides -- so it's not worth the regression risk for what should
    be a rare edge case. */
-.item-modal-edit-body {
+/* Shared by both modes now (renderItemDetail/buildEditRoot,
+   itemModal.js) -- the two-column row (file list | gallery). */
+.item-detail-body {
   display: flex;
   gap: 1.5em;
   align-items: flex-start;
 }
-.item-modal-edit-files {
+/* View-mode-only modifier (renderItemDetail, itemModal.js -- not
+   applied in buildEditRoot) that reserves --gallery-reserve's worth of
+   space as padding, split evenly left/right, instead of leaving the
+   file list free to expand into it. The point is to make the file
+   cards' available width -- and therefore how many wrap per row --
+   come out identical whether the gallery is actually taking up that
+   space (edit mode) or just sitting there empty and hidden (view
+   mode), so switching modes never rewraps/rearranges the cards.
+   Split evenly across both sides (not all on the right, where the
+   real gallery would go) so the card group stays visually centered in
+   view mode the same way it already was before this existed --
+   flex-wrap only cares about total available width for how many cards
+   fit per row, not which side that width is reserved on, so centering
+   is the only reason the split matters here. */
+.item-detail-body-reserve {
+  padding-left: calc(var(--gallery-reserve) / 2);
+  padding-right: calc(var(--gallery-reserve) / 2);
+}
+/* Shared by both modes -- the actual wrapping file-card/file-row
+   grid, previously view-mode-only via .item-detail's own flex-wrap
+   (now removed, see the comment above .item-detail-header). Gets
+   justify-content: center here instead, since that's genuinely the
+   same centering behavior view mode always had -- not a new
+   difference between the two, just relocated to where the real
+   wrapping container is now that both modes share it. */
+.item-detail-files {
   flex: 2;
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 1em;
-}
-/* Print-file card in edit mode -- same visual footprint as the
-   view-mode .file-row card, plus a selection checkbox (top-left) and
-   an editable name field in place of the plain <h3>. */
-.item-modal-file-card {
-  position: relative;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  background: var(--paper-raised);
-  padding: 1em;
-  width: 13em;
-  box-sizing: border-box;
-  text-align: center;
-}
-.item-modal-file-card.selected {
-  border-color: var(--accent);
-  border-width: 2px;
-}
-.item-modal-file-card.drop-target-active {
-  border-color: var(--accent);
-  background: var(--status-edit-bg);
-}
-/* Height on the wrap, not the img -- see the matching comment on
-   .file-row .file-thumb-wrap above; same reason. */
-.item-modal-file-card .file-thumb-wrap {
-  /* Same reasoning as .file-row .file-thumb-wrap above -- both
-     dimensions fixed and equal, not just height. */
-  width: 8em;
-  height: 8em;
-  margin: 0 auto 0.5em;
-}
-.item-modal-file-card .file-thumb-wrap img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
 }
 .item-modal-file-name-input {
   width: 100%;
@@ -542,31 +772,130 @@
   margin-bottom: 0.3em;
 }
 .item-modal-edit-gallery {
-  flex: 1;
-  min-width: 12em;
   border-left: 1px solid var(--line-soft);
   padding-left: 1em;
+  /* Single column top to bottom: help icon, chip list, add button --
+     flex-column + align-items: flex-start so those three (all
+     shrink-to-fit, not full-width) don't stretch to the column's
+     width the way plain block children would. gap replaces what used
+     to be individual margin-bottom rules scattered across the three
+     pieces. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6em;
 }
-.item-modal-gallery-heading {
-  font-weight: bold;
-  margin: 0 0 0.3em;
+/* View mode's instance of .item-modal-edit-gallery (see
+   renderHiddenGalleryColumn, itemModal.js) -- exists in the DOM only
+   so the gallery column's shape is present in both modes' structure,
+   never actually shown. Zero width AND display: none together, not
+   just one: width: 0 alone would still be a real (if collapsed-to-
+   nothing) box in the layout and reachable to a screen reader;
+   display: none alone would still carry the base class's flex/
+   min-width/border/padding into whatever brief layout pass happens
+   before that's resolved. Together neither ambiguity applies. This
+   only overrides what .item-modal-edit-gallery sets -- the base class
+   stays exactly as edit mode needs it. */
+.item-detail-gallery-collapsed {
+  flex: none;
+  width: 0;
+  min-width: 0;
+  border-left: none;
+  padding-left: 0;
+  overflow: hidden;
+  display: none;
 }
+/* Inert twins of edit-only or view-only interactive elements -- see
+   buildFileEntry/buildOriginRowContents (itemModal.js) for what each
+   one stands in for: the per-file target-select checkbox, the print
+   button, and the thumb zoom/cycle placeholders all now exist in both
+   modes, one real and one an inert placeholder, same as the origin
+   row's pencil/refresh buttons. (The chip row has its own hidden
+   variant below, .print-file-image-chips-hidden, since unlike these it's
+   a flex row with its own height, not a single control.) Just
+   display: none -- unlike .item-detail-gallery-collapsed above, none
+   of these are a flex item whose absence needs to free up reserved
+   space for a sibling, so there's nothing else to zero out. */
+.item-modal-target-select-inert,
+.print-file-action-hidden,
+.item-modal-origin-btn-inert {
+  display: none;
+}
+/* Replaces the old heading + explanatory paragraph -- a small circular
+   badge (drawn with CSS, not an icon-font glyph or a unicode symbol,
+   since neither is as reliable/legible at this size) carrying the
+   full instructions as a native tooltip via its title attribute (see
+   buildGalleryColumn, itemModal.js). Not disabled and no onclick, so
+   it's still focusable/hoverable for the tooltip -- purely
+   informational otherwise. cursor: help is the same cue native
+   title-tooltip elements usually give. */
+.item-modal-gallery-help {
+  flex: none;
+  width: 1.6em;
+  height: 1.6em;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-soft);
+  font-size: 0.85em;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+.item-modal-gallery-help:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+/* display: flex; flex-direction: column (was flex-wrap: wrap) --
+   "only one column of image chips" rather than wrapping into a grid,
+   now that the column itself is a single narrow list rather than a
+   wide multi-column area. */
 .item-modal-gallery-grid {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 0.75em;
-  margin-bottom: 0.75em;
 }
 .item-modal-gallery-item {
   position: relative;
 }
 .item-modal-gallery-thumb {
-  width: 4.5em;
-  height: 4.5em;
+  width: var(--gallery-thumb-size);
+  height: var(--gallery-thumb-size);
   object-fit: cover;
   border-radius: 0.3em;
   border: 1px solid var(--line);
   display: block;
+}
+/* Condensed from a full-width "Add image…" text button (previously
+   .settings-action-button) to a small square icon-style button, same
+   footprint language as .item-modal-gallery-help above. TEMP: plain
+   "+" text -- see the addBtn comment in buildGalleryColumn
+   (itemModal.js) for why, and the same note on the thumb-cycle
+   arrows (lightbox.css) this is grouped with for a future icon-font
+   resubset. */
+.item-modal-gallery-add-btn {
+  flex: none;
+  width: 1.8em;
+  height: 1.8em;
+  padding: 0;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 1.1em;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.item-modal-gallery-add-btn:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
 }
 .modal-box button.item-modal-assign-btn {
   position: absolute;
@@ -589,15 +918,26 @@
   color: var(--ink-faint);
   cursor: default;
 }
-.editor-image-chips {
+.print-file-image-chips {
   display: flex;
   gap: 0.3em;
 }
-.editor-image-chip {
+/* View mode's hidden twin of the row above -- split out from the
+   shared .print-file-action-hidden (still used for the print button
+   and thumb zoom/cycle placeholders) since this one's a flex row with
+   its own reserved height, not just a single control. display: none
+   alone would already collapse it, but height: 0 alongside it removes
+   any ambiguity the same way .item-detail-gallery-collapsed's
+   width: 0 + display: none combination does. */
+.print-file-image-chips-hidden {
+  display: none;
+  height: 0;
+}
+.print-file-image-chip {
   position: relative;
   display: inline-block;
 }
-.editor-image-chip img {
+.print-file-image-chip img {
   width: 2.5em;
   height: 2.5em;
   object-fit: cover;
@@ -605,7 +945,7 @@
   border: 1px solid var(--line);
   display: block;
 }
-.editor-image-chip button {
+.print-file-image-chip button {
   position: absolute;
   top: -0.4em;
   right: -0.4em;

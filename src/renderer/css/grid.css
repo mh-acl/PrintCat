@@ -49,6 +49,24 @@ a.listing:hover {
   border-color: var(--ink-faint);
   transform: translateY(-1px);
 }
+/* Edit mode never hides an item just because of the ambient printer/
+   tag/search filter (see render(), grid.js, which also sorts these
+   after the ones that do match) -- this marks one that would be
+   filtered out under plain browsing rules, rather than looking
+   identical to a real match. Deliberately muted/grey, not accent-
+   colored, so it reads as "less relevant right now" and can't be
+   confused with any selected/active state. Combined selector
+   (a.listing.listing-filtered-out) to reliably beat a.listing's own
+   border/background regardless of source order -- same reasoning as
+   .print-file-entry.selected already needing to beat .print-file-entry
+   itself (itemModal.css), which uses the analogous
+   .print-file-filtered-out treatment for the same underlying idea
+   applied to print files within an item's own edit view. */
+a.listing.listing-filtered-out {
+  opacity: 0.6;
+  border-color: var(--line-soft);
+  background: var(--paper);
+}
 a.listing .thumb-slot {
   position: relative;
   width: 100%;

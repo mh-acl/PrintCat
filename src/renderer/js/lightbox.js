@@ -28,6 +28,59 @@ function makeZoomButton(getSrc, altText, getCropRect) {
   };
   return btn;
 }
+// Cycle-through buttons for a print file with more than one assigned
+// image (file.metadataImages.length > 1 -- see the view-mode file-row
+// loop in itemModal.js, the only caller; assigning multiple images to
+// one print file has been possible for a while, this is what finally
+// makes the rest of them visible in view mode instead of just the
+// first). imagePaths[0] always matches whatever getFileThumbnail
+// already resolved as the initial image (see thumbnailResolver.js's
+// resolveFileThumbnail, which returns metadataImages[0] first,
+// unconditionally, whenever that list is non-empty) -- so this only
+// ever needs to run after that initial resolution has already
+// happened (see the call site), and never needs to touch it itself.
+// TEMP: plain unicode arrows (U+2190/U+2192), not the icon font --
+// these glyphs aren't in the current subset (printcat-icons.woff2,
+// see base.css's @font-face + Material Symbols subsetting decision),
+// and adding them means re-subsetting. Swap for real icons once
+// that's done; .file-thumb-cycle-btn (lightbox.css) doesn't need to
+// change either way, same as .thumb-zoom-btn above already handles
+// icon-vs-text content.
+function makeThumbCycleButtons(imagePaths, img, thumbWrap, item, onChange) {
+  if (imagePaths.length <= 1) return [];
+
+  let index = 0;
+  function show(newIndex) {
+    index = (newIndex + imagePaths.length) % imagePaths.length;
+    const path = imagePaths[index];
+    img.src = fileUrl(path);
+    applyImageCrop(img, thumbWrap, cropRectFor(item, path, 'thumb'), { useDefault: true });
+    // Lets the caller's zoom button (see itemModal.js's call site)
+    // keep reading the crop for whichever image is actually on screen
+    // right now, rather than staying frozen on whatever was first
+    // resolved before any cycling happened.
+    if (onChange) onChange(path);
+  }
+
+  function makeBtn(direction, glyph, ariaLabel) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `file-thumb-cycle-btn file-thumb-cycle-${direction}`;
+    btn.textContent = glyph;
+    btn.setAttribute('aria-label', ariaLabel);
+    btn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      show(index + (direction === 'prev' ? -1 : 1));
+    };
+    return btn;
+  }
+
+  return [
+    makeBtn('prev', '\u2190', 'Show previous image'),
+    makeBtn('next', '\u2192', 'Show next image'),
+  ];
+}
 // Full-size image viewer opened by the zoom button. Dismissed via its
 // close button, clicking the dimmed backdrop, or Escape. cropRect is
 // the image's saved 'full' viewport (see itemMetadata.js's imageCrops

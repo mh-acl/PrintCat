@@ -151,11 +151,18 @@
    itself (now the .crop-frame wrapper, not the img -- see
    buildGalleryColumn) so applyImageCrop's frame has an actual size to
    read. Scoped under .item-modal-gallery-item for specificity, same
-   reasoning as .file-row .file-thumb-wrap above: needs to reliably
-   beat .crop-frame's generic 100%/100% regardless of source order. */
+   reasoning as .print-file-entry .file-thumb-wrap (itemModal.css):
+   needs to reliably beat .crop-frame's generic 100%/100% regardless
+   of source order. This one wins in practice (two classes beats one),
+   so it's the rule that actually governs the rendered size -- both
+   this and the plain .item-modal-gallery-thumb rule (itemModal.css)
+   now read var(--gallery-thumb-size) (defined on .item-modal-box)
+   instead of each hardcoding their own copy of the value, specifically
+   because those two drifted out of sync once already (found this one
+   still at 4.5em while the other had already been bumped to 5em). */
 .item-modal-gallery-item .item-modal-gallery-thumb {
-  width: 4.5em;
-  height: 4.5em;
+  width: var(--gallery-thumb-size);
+  height: var(--gallery-thumb-size);
   border-radius: 0.3em;
   border: 1px solid var(--line);
 }
