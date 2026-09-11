@@ -693,8 +693,23 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       nameInput.className = 'item-modal-name-input item-modal-title-input';
       nameInput.value = draft.displayName;
       nameInput.placeholder = 'Item name';
+      // Sized via the `size` attribute rather than CSS width: 100% --
+      // this input's containing block (.item-modal-topbar-title) is an
+      // `auto`-sized CSS Grid track, so a percentage width here has
+      // nothing definite to resolve against and silently fell back to
+      // the UA default input width (~20 chars), completely disconnected
+      // from the actual name length. That fixed-width fallback was
+      // wider than most titles ever need, so it (not the print-file/
+      // gallery row) was what set the modal's width on any item with
+      // few enough files -- switching to edit mode would visibly widen
+      // the whole box for no reason tied to its content. `size` gives
+      // the browser real content to size against, matching how the
+      // view-mode <h2> (.item-modal-title-text) sizes to its actual
+      // text instead of a constant.
+      nameInput.size = Math.max((draft.displayName || '').length, 1);
       nameInput.oninput = () => {
         draft.displayName = nameInput.value;
+        nameInput.size = Math.max(nameInput.value.length, 1);
       };
       title.appendChild(nameInput);
 

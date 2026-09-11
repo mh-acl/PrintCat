@@ -289,7 +289,12 @@
    that made sense in its old full-width row but not in this centered
    title-bar column. */
 .item-modal-title-input {
-  width: 100%;
+  /* No width here -- sized via the `size` attribute set in itemModal.js
+     instead. width: 100% used to sit here, but this input's containing
+     block (.item-modal-topbar-title) is an `auto`-sized grid track, so
+     the percentage had nothing definite to resolve against and fell
+     back to the UA default width regardless of the actual name --
+     see the comment at nameInput.size in itemModal.js. */
   flex: none;
   text-align: center;
   border-color: transparent;
@@ -751,9 +756,36 @@
    difference between the two, just relocated to where the real
    wrapping container is now that both modes share it. */
 .item-detail-files {
-  flex: 2;
-  display: flex;
-  flex-wrap: wrap;
+  /* Grid + auto-fit, not flex-wrap, and specifically *not* flex-grow --
+     both are what make this size snugly to its actual content instead
+     of ballooning to max-width the moment a row can't fit every card.
+     flex-wrap's shrink-to-fit sizing only has two candidates to work
+     with: "all cards in one line" (max-content) or "grab the available
+     space" -- there's no "just wide enough for the fullest row" option,
+     so the instant a card doesn't fit on one line, the container jumps
+     from its snug single-row width straight to max-width, even though
+     the actual multi-row content needed far less (this is what showed
+     up as "wrapping adds padding to the row" -- it isn't padding, it's
+     this fallback). auto-fit's column-count resolution avoids that:
+     given a definite max-width to resolve against (below), it works
+     out how many 14em columns actually fit and sizes to exactly that
+     many, collapsing anything beyond what's needed -- so going from a
+     row that just fits (e.g. 3 cards) to one that needs to wrap (4
+     cards) doesn't change the container's width at all, since it was
+     already sized to the full row before the extra card ever showed
+     up. flex-grow would fight this directly (it exists specifically to
+     claim more space than content needs), so it's dropped here in
+     favor of letting the row be exactly as wide as its cards require,
+     the gallery/reserve column, gap, and box padding.
+     max-width matches the "3 file cards side by side" assumption
+     --gallery-reserve/max-width above are already built around (14em
+     * 3 + 1em gap * 2 = 44em) -- this is what gives auto-fit a
+     definite width to resolve its column count against; without it,
+     an indefinite/auto container width leaves auto-fit unable to
+     determine a column count at all. */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, 14em);
+  max-width: 44em;
   justify-content: center;
   gap: 1em;
 }
@@ -858,6 +890,15 @@
   display: flex;
   flex-direction: column;
   gap: 0.75em;
+  /* --gallery-reserve (below, on .item-modal-box) assumes the gallery
+     column's widest child is always a thumb at --gallery-thumb-size --
+     true once there's at least one pool image, but with zero images
+     this grid is empty and the column's widest child becomes the much
+     narrower add-image button instead, making edit mode's real gallery
+     footprint smaller than what view mode reserved (the box visibly
+     shrinks switching to edit). This floor keeps the two in sync
+     regardless of image count. */
+  min-width: var(--gallery-thumb-size);
 }
 .item-modal-gallery-item {
   position: relative;
