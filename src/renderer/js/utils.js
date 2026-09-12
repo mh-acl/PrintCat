@@ -68,6 +68,12 @@ function strippedBatchName(name) {
 function isImageFileName(name) {
   return /\.(jpe?g|png|gif|svg)$/i.test(name);
 }
+// Same extension set editSession.js's PRINTFILE_ADD_EXT accepts when
+// copying a new print file into an item's folder -- kept in sync
+// manually since the renderer has no access to that Node module.
+function isPrintFileName(name) {
+  return /\.(gcode|bgcode|3mf)$/i.test(name);
+}
 // "PLA,PLA" -> "PLA"; "PLA,PETG" -> "PLA/PETG". Order of first
 // appearance is preserved; a single-material print's one entry
 // passes through unchanged.

@@ -7,6 +7,7 @@ const { run } = require('./gitSync');
 const { writeItemMetadata, METADATA_FILENAME } = require('./itemMetadata');
 const { parseFilename, parseGcodeMetadata } = require('./gcodeParser');
 const { detectOrigin: detectOriginInFolder } = require('./originLocation');
+const { uniqueFilename } = require('./uniqueFilename');
 
 // Same extension sets indexer.js uses -- duplicated rather than
 // imported since indexer.js doesn't export them, and they're small,
@@ -143,21 +144,13 @@ async function pathExists(p) {
   }
 }
 
-// Picks a filename that doesn't collide with anything already in
-// destDir -- used when copying in an image browsed from outside the
-// item's folder (see _resolveImages below). "photo.jpg" becomes
-// "photo(2).jpg", "photo(3).jpg", etc. on repeated collisions.
-async function uniqueDestName(destDir, baseName) {
-  let candidate = baseName;
-  let n = 2;
-  while (await pathExists(path.join(destDir, candidate))) {
-    const ext = path.extname(baseName);
-    const stem = path.basename(baseName, ext);
-    candidate = `${stem}(${n})${ext}`;
-    n++;
-  }
-  return candidate;
-}
+// Extensions accepted when adding new print files to an existing item
+// in edit mode (see _resolveNewPrintFiles below) -- the two indexer.js
+// treats as an actual "print file" card (.gcode/.bgcode) plus the
+// .3mf project file some items keep alongside them. Kept as its own
+// set (not reusing GCODE_EXT above) since a bare gcode/bgcode-only set
+// would silently reject a dropped .3mf.
+const PRINTFILE_ADD_EXT = new Set(['.gcode', '.bgcode', '.3mf']);
 
 // One of these exists per active editing session (see main.js's
 // enterEditSession()/editSession module-level var) -- null when no
@@ -355,7 +348,9 @@ class EditSession {
   async _resolveSingleImageRef(destDir, ref, resolvedPathToName) {
     if (ref.kind === 'existing') return ref.name;
     if (!resolvedPathToName.has(ref.path)) {
-      const finalName = await uniqueDestName(destDir, path.basename(ref.path));
+      const finalName = await uniqueFilename(path.basename(ref.path), (candidate) =>
+        pathExists(path.join(destDir, candidate))
+      );
       await fsp.copyFile(ref.path, path.join(destDir, finalName));
       resolvedPathToName.set(ref.path, finalName);
     }
@@ -365,7 +360,7 @@ class EditSession {
   // Renderer-side crop identities (see renderer.js's refIdentity) are
   // 'existing:<name>' or 'external:<sourcePath>' -- the renderer can't
   // know an external image's *final* filename in destDir until it's
-  // actually been copied (uniqueDestName may rename it on collision),
+  // actually been copied (uniqueFilename() may rename it on collision),
   // so crops are staged against the same identity the image
   // assignment itself was staged against, and resolved here using the
   // very same resolvedPathToName map _resolveImages/_resolveSingleImageRef
@@ -408,7 +403,42 @@ class EditSession {
     return merged;
   }
 
-  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops }) {
+  // newPrintFiles is a plain array of external file paths -- picked via
+  // the "Add print file(s)" button/drop zone in edit mode (see
+  // itemModal.js's draft.newPrintFiles), staged client-side and not
+  // copied anywhere until Save, same as an externally-browsed image.
+  // Unlike images, a new print file isn't "assigned" to anything --
+  // it just becomes its own item in destDir, picked up as a normal
+  // print-file card the next time indexer.js scans the folder, so
+  // there's no metadata.json write here at all, just the copy.
+  // Rejects (before copying anything) a file with an unexpected
+  // extension or over MAX_FILE_BYTES, same "check before touching
+  // disk" shape as findOversizedFiles/addItem's pre-flight check
+  // above. Returns the final on-disk names, informational only.
+  async _resolveNewPrintFiles(destDir, newPrintFiles) {
+    if (!newPrintFiles || newPrintFiles.length === 0) return [];
+
+    const added = [];
+    for (const sourcePath of newPrintFiles) {
+      const baseName = path.basename(sourcePath);
+      const ext = path.extname(baseName).toLowerCase();
+      if (!PRINTFILE_ADD_EXT.has(ext)) {
+        throw new Error(`"${baseName}" isn't a print file (.gcode/.bgcode/.3mf).`);
+      }
+      const stat = await fsp.stat(sourcePath);
+      if (stat.size >= MAX_FILE_BYTES) {
+        throw new Error(oversizedFilesMessage([{ relPath: baseName, size: stat.size }], MAX_FILE_BYTES));
+      }
+      const finalName = await uniqueFilename(baseName, (candidate) =>
+        pathExists(path.join(destDir, candidate))
+      );
+      await fsp.copyFile(sourcePath, path.join(destDir, finalName));
+      added.push(finalName);
+    }
+    return added;
+  }
+
+  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops, newPrintFiles }) {
     const folderName = path.basename(sourceDir);
     const destDir = path.join(this.dataDir, folderName);
 
@@ -433,6 +463,7 @@ class EditSession {
 
     await fsp.mkdir(this.dataDir, { recursive: true });
     await fsp.cp(sourceDir, destDir, { recursive: true });
+    await this._resolveNewPrintFiles(destDir, newPrintFiles);
     const resolvedPathToName = new Map(); // external path -> final filename, shared below
     const resolvedPrintFiles = this._mergePrintFileNames(
       await this._resolveImages(destDir, printFileImages, resolvedPathToName),
@@ -461,7 +492,7 @@ class EditSession {
     return this.changes;
   }
 
-  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops }) {
+  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops, newPrintFiles }) {
     // No category anymore, so nothing ever needs to move the item's
     // folder on an edit -- itemPath stays itemPath, only its
     // metadata.json changes.
@@ -476,6 +507,13 @@ class EditSession {
     if (oversized.length > 0) {
       throw new Error(oversizedFilesMessage(oversized, MAX_FILE_BYTES));
     }
+
+    // Copied in before metadata/image resolution below -- nothing
+    // downstream depends on a new print file's own final name, but a
+    // co-admin who also assigns an image in the same save reasonably
+    // expects the new file to already be on disk (and thus a valid
+    // print-file card after the next scan) by the time that happens.
+    await this._resolveNewPrintFiles(itemPath, newPrintFiles);
 
     const resolvedPathToName = new Map(); // external path -> final filename, shared below
     const resolvedPrintFiles = this._mergePrintFileNames(

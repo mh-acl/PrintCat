@@ -1185,6 +1185,42 @@ name is harmless given `_mergePrintFileNames()`'s per-key merge.
 `main.js`/`preload.js` needed no changes — `commitAdd`/`commitEdit`
 already forward their whole `fields` object through.
 
+## Adding print files to an existing item (edit mode)
+
+A co-admin can now add extra print files to an item directly from the
+unified item modal's edit mode, not just at the initial "add item"
+folder scan. A "+ Add print file(s)" tile at the end of the file-card
+grid (`buildAddPrintFileTile()`, `itemModal.js`) opens a native
+multi-select file dialog (`editSession:browsePrintFiles`, main.js —
+filtered to `.gcode`/`.bgcode`/`.3mf`) or accepts a direct OS
+file-drop; either way the picked path(s) are only staged into
+`draft.newPrintFiles` (`{ path, name }[]`, deduped by source path via
+`addExternalPrintFileToDraft()`) and shown as a lightweight "Pending"
+card (`buildPendingPrintFileCard()`) — nothing touches disk until
+`Save`, same staging model as every other edit-mode field. `saveDraft()`
+sends the staged paths as a plain `newPrintFiles: string[]` alongside
+the existing fields.
+
+`editSession.js`'s `addItem()`/`editItem()` both take that same
+`newPrintFiles` param and copy each one into the item's folder via a
+new `_resolveNewPrintFiles()`, which rejects (before copying anything)
+a file outside `.gcode`/`.bgcode`/`.3mf` or at/above `MAX_FILE_BYTES`,
+then resolves any filename collision and copies. A new print file
+isn't "assigned" to anything the way an image is — it becomes its own
+item just by existing in the folder, picked up as a normal print-file
+card the next time `indexer.js` scans, so there's no `metadata.json`
+write involved in this step at all.
+
+**Collision-resolution consolidation:** this surfaced that the app had
+two separate filename-collision resolvers with different naming
+conventions — `uniqueFilename.js`'s `uniqueFilename()` (`name.1.ext`,
+used by USB save) and a second, local `uniqueDestName()` inside
+`editSession.js` (`name(2).ext`, used only for image collisions). The
+local one is now gone; `_resolveSingleImageRef()` (images) and
+`_resolveNewPrintFiles()` (print files) both go through the same
+`uniqueFilename()` util, so every collision-prone copy in the app now
+uses the one `name.1.ext` convention.
+
 ## Not yet implemented
 
 - GUI for adding/editing/deleting catalog items: "Edit Print Catalog…"

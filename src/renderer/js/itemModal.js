@@ -394,6 +394,13 @@ function createDraftFromItem(item) {
         modes,
       ])
     ),
+    // Print files picked via "Add print file(s)"/drop, staged as
+    // { path, name } (external only -- there's no 'existing' case the
+    // way images have, a print file is either already a real card or
+    // it's a pending add). Not copied anywhere until Save -- see
+    // editSession.js's _resolveNewPrintFiles, called from saveDraft
+    // below.
+    newPrintFiles: [],
   };
 }
 // Case-insensitive basename-without-extension match against a file
@@ -457,6 +464,10 @@ function createDraftFromPicked(picked) {
     // A freshly-scanned folder has no metadata.json yet -- see
     // createDraftFromItem's identical field for the shape.
     imageCrops: {},
+    // Same staged-external shape as createDraftFromItem's field above --
+    // lets a co-admin add an extra loose print file while assembling a
+    // brand-new item, not just after it's already in the catalog.
+    newPrintFiles: [],
   };
 }
 // Small standalone popup for hand-editing/reviewing origin info --
@@ -857,6 +868,16 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     return ref;
   }
 
+  // Stages an externally-picked print file (from the "Add print
+  // file(s)" button or a drop onto the file list) into the draft,
+  // deduped by source path the same way addExternalToPoolDraft is --
+  // dropping/picking the same file twice before Save just no-ops the
+  // second time rather than queuing a duplicate copy.
+  function addExternalPrintFileToDraft(extPath, name) {
+    if (draft.newPrintFiles.some((f) => f.path === extPath)) return;
+    draft.newPrintFiles.push({ path: extPath, name });
+  }
+
   // --- Edit-mode DOM builders ---------------------------------------------
 
   function buildItemThumbChip() {
@@ -1059,6 +1080,86 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     };
 
     return card;
+  }
+
+  // A staged (not-yet-copied) print file, shown alongside the real
+  // .print-file-entry cards -- deliberately lighter than
+  // buildPrintFileCard's real card (no thumb/meta/checkbox/rename,
+  // since none of that exists yet for a file that isn't on disk and
+  // hasn't been scanned) rather than a full card with placeholder
+  // fields standing in for data that doesn't exist. Reuses the same
+  // .pending-badge-add styling the main grid's "Added" badge uses
+  // (editSession.css) so it reads as the same kind of "not saved yet"
+  // state, not a new visual language.
+  function buildPendingPrintFileCard(entry) {
+    const card = document.createElement('div');
+    card.className = 'print-file-entry print-file-entry-pending';
+
+    const badge = document.createElement('span');
+    badge.className = 'pending-badge pending-badge-add';
+    badge.textContent = 'Pending';
+    card.appendChild(badge);
+
+    const name = document.createElement('p');
+    name.className = 'print-file-pending-name';
+    name.textContent = entry.name;
+    name.title = entry.name;
+    card.appendChild(name);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'icon icon-close';
+    removeBtn.title = 'Remove';
+    removeBtn.onclick = () => {
+      draft.newPrintFiles = draft.newPrintFiles.filter((f) => f !== entry);
+      refreshEditFilesArea();
+    };
+    card.appendChild(removeBtn);
+
+    return card;
+  }
+
+  // "+ Add print file(s)" tile at the end of the card list -- opens
+  // the same file-picker dialog browseImages uses for images
+  // (editSession:browsePrintFiles, main.js), and doubles as a drop
+  // zone so a print file can be dragged straight in instead. Nothing
+  // is copied to disk here -- picked/dropped files are only staged
+  // into draft.newPrintFiles (see addExternalPrintFileToDraft above)
+  // until Save, same as every other edit-mode field.
+  function buildAddPrintFileTile() {
+    const tile = document.createElement('button');
+    tile.type = 'button';
+    tile.className = 'print-file-add-tile';
+    tile.textContent = '+ Add print file(s)';
+    tile.title = 'Add print file(s)\u2026';
+    tile.onclick = async () => {
+      const picked = await window.catalogAPI.editSessionBrowsePrintFiles();
+      for (const p of picked) addExternalPrintFileToDraft(p.path, p.name);
+      if (picked.length > 0) refreshEditFilesArea();
+    };
+    tile.ondragover = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    tile.ondragenter = () => tile.classList.add('drop-target-active');
+    tile.ondragleave = (e) => {
+      if (!tile.contains(e.relatedTarget)) tile.classList.remove('drop-target-active');
+    };
+    tile.ondrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      tile.classList.remove('drop-target-active');
+      const files = e.dataTransfer.files;
+      if (!files || files.length === 0) return; // in-app drags have nothing to do with this tile
+      let added = false;
+      for (const f of files) {
+        if (!isPrintFileName(f.name)) continue;
+        addExternalPrintFileToDraft(window.catalogAPI.getPathForFile(f), f.name);
+        added = true;
+      }
+      if (added) refreshEditFilesArea();
+    };
+    return tile;
   }
 
   function buildGalleryColumn() {
@@ -1307,6 +1408,10 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
         }
         filesCol.appendChild(card);
       }
+      for (const entry of draft.newPrintFiles) {
+        filesCol.appendChild(buildPendingPrintFileCard(entry));
+      }
+      filesCol.appendChild(buildAddPrintFileTile());
       filesArea.appendChild(filesCol);
 
       filesArea.appendChild(buildGalleryColumn());
@@ -1331,6 +1436,11 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       printFileNames,
       origin: draft.origin,
       itemImage: draft.itemImageRef,
+      // Plain external paths -- editSession.js copies each one in
+      // (resolving collisions) and doesn't need anything else from the
+      // draft to do it, unlike images there's no per-target assignment
+      // to carry along.
+      newPrintFiles: draft.newPrintFiles.map((f) => f.path),
       // Sent as-is, still keyed by refIdentity -- editSession.js
       // resolves each identity to its final on-disk filename itself
       // (see its _resolveImageCrops), using the same resolvedPathToName

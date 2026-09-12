@@ -542,6 +542,21 @@ ipcMain.handle('editSession:browseImages', async () => {
   return filePaths.map((p) => ({ path: p, name: path.basename(p) }));
 });
 
+// Lets a co-admin add print files to an existing item from outside its
+// folder (e.g. a new sliced variant saved elsewhere), same
+// stage-now/copy-at-save shape as browseImages above -- the actual
+// copy (with collision handling) happens in editSession.js's
+// _resolveNewPrintFiles(), as part of commitEdit/commitAdd below.
+ipcMain.handle('editSession:browsePrintFiles', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select print files to add',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Print files', extensions: ['gcode', 'bgcode', '3mf'] }],
+  });
+  if (canceled) return [];
+  return filePaths.map((p) => ({ path: p, name: path.basename(p) }));
+});
+
 // Used by the 'edit' item editor to autofill "Original Location" (and
 // creator info, when detectable) when the item's metadata.json doesn't
 // already have creator info stored -- including items that already

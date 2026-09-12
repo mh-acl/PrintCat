@@ -69,6 +69,49 @@
   border-color: var(--line-soft);
   background: var(--paper);
 }
+/* Staged (not-yet-copied) print file card, and the "+ Add print
+   file(s)" tile that creates one -- see buildPendingPrintFileCard/
+   buildAddPrintFileTile, itemModal.js. Both share .print-file-entry's
+   14em width so they sit naturally in the same auto-fit grid as the
+   real cards (.item-detail-files above), but skip its thumb/meta
+   layout entirely -- there's no thumbnail, printer info, or filament
+   data for a file that hasn't been copied/scanned yet. */
+.print-file-entry-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  min-height: 6em;
+}
+.print-file-pending-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.9em;
+  word-break: break-word;
+  margin: 0;
+}
+.print-file-add-tile {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-card);
+  background: none;
+  width: 14em;
+  min-height: 6em;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+  font-family: var(--font-display);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.print-file-add-tile:hover,
+.print-file-add-tile.drop-target-active {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: var(--status-edit-bg);
+}
 .file-thumb-wrap {
   position: relative;
 }
