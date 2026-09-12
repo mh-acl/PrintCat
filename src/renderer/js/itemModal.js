@@ -584,11 +584,19 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   box.appendChild(topBar);
 
   const content = document.createElement('div');
+  // .item-modal-content (itemModal.css) makes this the flexible,
+  // non-scrolling half of .modal-box's column layout -- see that
+  // rule's comment for the full independent-scroll-regions chain this
+  // is the top of (topbar fixed -> this -> .item-detail's header
+  // fixed/body scrolling -> the two body columns scrolling on their
+  // own).
+  content.className = 'item-modal-content';
   box.appendChild(content);
 
   function close() {
     if (overlay.parentNode) document.body.removeChild(overlay);
     document.removeEventListener('keydown', onKeydown);
+    unlockBackgroundScroll();
     // Reference equality rather than itemPath, so this works for 'add'
     // mode too (item is null there, so there's no path to key off of) --
     // clears the handle whenever *this* modal instance is the one
@@ -1761,6 +1769,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
         renderTopBar();
         renderContent();
         document.body.appendChild(overlay);
+        lockBackgroundScroll();
         // Registered only once the form is actually visible -- nothing
         // to close before this point beyond the native folder picker,
         // which already handles its own cancellation above. No
@@ -1783,6 +1792,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   renderTopBar();
   renderContent();
   document.body.appendChild(overlay);
+  lockBackgroundScroll();
 }
 // Read-only "Tagged" row for view mode -- same label class
 // (.settings-field-label) and chip classes (.tag-chip.tag-chip-existing,

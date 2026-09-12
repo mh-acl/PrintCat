@@ -10,16 +10,26 @@
 /* .item-detail is the root class for BOTH modes now (buildEditRoot
    used to use .item-modal-edit for its own root -- dropped once it
    turned out neither name was ever an actual CSS selector or a JS
-   mode-detection check, just an inert marker). Has no layout rule of
-   its own -- just a plain stacking container: .item-detail-header,
-   then the .item-detail-body row (shared class -- see
-   renderItemDetail, itemModal.js) holding the file list + gallery
-   column. The actual wrapping/centering behavior that used to live
-   here moved to
-   .item-detail-files below, once that became the real file-list
-   container in both modes rather than view-mode-only. */
+   mode-detection check, just an inert marker). Now a flex column so
+   .item-detail-header can sit fixed above the scrolling
+   .item-detail-body -- see the independent-scroll-regions comment on
+   .item-modal-content below for the full chain this is part of.
+   min-height: 0 lets it shrink below its content's natural height
+   once .item-modal-content caps it, instead of forcing the modal to
+   grow past max-height. */
+.item-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* Fixed header row -- name/origin/tags. flex: none (overriding the
+   old flex: 1 0 100%, which only made sense back when .item-detail
+   itself had no flex context at all and this rule was inert) keeps it
+   at its natural height and off-limits to the flex shrinking that
+   .item-detail-body below absorbs instead. */
 .item-detail-header {
-  flex: 1 0 100%;
+  flex: none;
 }
 /* The print-file card itself -- one rule for both modes, now that
    buildFileEntry (itemModal.js) gives both the same .print-file-entry
@@ -275,7 +285,32 @@
   --gallery-reserve: calc(1.5em + 1px + 1em + var(--gallery-thumb-size));
   max-width: calc(52em + var(--gallery-reserve));
   max-height: 85vh;
-  overflow-y: auto;
+  /* Used to be overflow-y: auto here, scrolling the topbar, header,
+     file list, and gallery as one unit. Replaced with overflow: hidden
+     plus flex on .modal-box's existing column layout, so the topbar
+     and .item-detail-header (via .item-modal-content/.item-detail
+     below) stay fixed in place while .item-detail-files and
+     .item-modal-edit-gallery each get their own independent
+     overflow-y: auto -- scrolling one to its end no longer moves the
+     other, and neither one can scroll the header out of view. */
+  overflow: hidden;
+}
+/* content div (itemModal.js) -- wraps whichever of
+   renderItemDetail()/buildEditRoot()'s .item-detail root is current.
+   The flexible half of .modal-box's column layout (topbar is the
+   fixed half, above): flex: 1 1 auto lets it claim the space left
+   after the topbar's natural height, min-height: 0 lets it shrink
+   below its own content's natural height once the box hits
+   max-height, and overflow: hidden means it never scrolls itself --
+   scrolling happens one level further in, on .item-detail-files/
+   .item-modal-edit-gallery, once .item-detail below has split
+   header from body. */
+.item-modal-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .item-modal-close {
   align-self: flex-start;
@@ -308,7 +343,13 @@
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 0.75em;
-  margin: -1em -1em 0.75em -1em; 
+  margin: -1em -1em 0.75em -1em;
+  /* .modal-box is a flex column with this and .item-modal-content
+     (below) as its only two children -- flex: none keeps the topbar
+     at its natural height instead of sharing in flex-shrink once
+     content pushes the box to its max-height, so it can never be
+     scrolled or squeezed out of view. */
+  flex: none;
 }
 .item-modal-topbar-side {
   display: flex;
@@ -829,11 +870,23 @@
    both sides -- so it's not worth the regression risk for what should
    be a rare edge case. */
 /* Shared by both modes now (renderItemDetail/buildEditRoot,
-   itemModal.js) -- the two-column row (file list | gallery). */
+   itemModal.js) -- the two-column row (file list | gallery).
+   flex: 1 1 auto + min-height: 0 make this the region that actually
+   absorbs the modal's available height (.item-detail-header above is
+   flex: none and never shrinks); align-items switched from
+   flex-start to stretch so both columns are handed that same full
+   height rather than sizing to their own content, which is what lets
+   .item-detail-files/.item-modal-edit-gallery each become their own
+   overflow-y: auto region below instead of one growing past the
+   other. This row itself is never a scroll container -- no
+   overflow rule here, just the height budget its children scroll
+   within. */
 .item-detail-body {
   display: flex;
   gap: 1.5em;
-  align-items: flex-start;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 /* View-mode-only modifier (renderItemDetail, itemModal.js -- not
    applied in buildEditRoot) that reserves --gallery-reserve's worth of
@@ -893,6 +946,17 @@
   max-width: 44em;
   justify-content: center;
   gap: 1em;
+  /* Own independent scroll region -- see .item-detail-body above.
+     align-content: start keeps rows packed at the top instead of
+     spreading out to fill the stretched height (grid's default
+     align-content is stretch, which would otherwise space rows apart
+     as gaps grow rather than leaving real empty space to scroll
+     through). min-height: 0 overrides the auto min-height a grid item
+     gets by default, which is based on its content and would
+     otherwise force this taller than the row instead of scrolling. */
+  overflow-y: auto;
+  align-content: start;
+  min-height: 0;
 }
 .item-modal-file-name-input {
   width: 100%;
@@ -916,11 +980,17 @@
      shrink-to-fit, not full-width) don't stretch to the column's
      width the way plain block children would. gap replaces what used
      to be individual margin-bottom rules scattered across the three
-     pieces. */
+     pieces. min-height: 0 lets this shrink to the stretched height
+     .item-detail-body now hands it (see that rule's comment) instead
+     of forcing the row taller to fit its content -- the help icon and
+     add button stay flex: none (their own rules, below/above) so only
+     .item-modal-gallery-grid, the actual chip list, ends up
+     scrollable; see that rule for why. */
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.6em;
+  min-height: 0;
 }
 /* View mode's instance of .item-modal-edit-gallery (see
    renderHiddenGalleryColumn, itemModal.js) -- exists in the DOM only
@@ -1004,6 +1074,15 @@
      shrinks switching to edit). This floor keeps the two in sync
      regardless of image count. */
   min-width: var(--gallery-thumb-size);
+  /* The actual scrolling piece of .item-modal-edit-gallery -- flex:
+     1 1 auto claims whatever height is left in the column once the
+     help icon and add button (both flex: none) take their natural
+     space, min-height: 0 lets it shrink below its own content instead
+     of pushing the column taller, and overflow-y: auto is what makes
+     it scroll on its own, independently of .item-detail-files. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 .item-modal-gallery-item {
   position: relative;

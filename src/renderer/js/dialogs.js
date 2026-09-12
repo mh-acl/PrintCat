@@ -21,6 +21,31 @@ function attachEscapeHandler(onEscape) {
   document.addEventListener('keydown', onKeydown);
   return () => document.removeEventListener('keydown', onKeydown);
 }
+// Background-scroll lock for overlay modals whose backdrop shows the
+// still-intact main view behind them (currently just the item modal --
+// the USB dialogs above don't need this since they're shown over an
+// already-static admin flow). Without this, scrolling the mouse past
+// the edge of the modal box bubbles the wheel event up to the page,
+// scrolling the dimmed grid behind it.
+//
+// Counted rather than a plain boolean, so nested/overlapping callers
+// (e.g. the item modal's own origin-info popup, itself a .modal-overlay
+// on top of the item modal) can each lock/unlock independently without
+// the inner one's unlock prematurely re-enabling scroll while the outer
+// modal is still open. `overflow: hidden` on body specifically (not
+// html) is deliberate -- per the CSS spec, a body with non-'visible'
+// overflow has that value propagate up to become the viewport's actual
+// scrolling behavior, which is what actually stops the page from
+// scrolling here since body itself has no set height to scroll within.
+let scrollLockCount = 0;
+function lockBackgroundScroll() {
+  if (scrollLockCount === 0) document.body.classList.add('scroll-locked');
+  scrollLockCount++;
+}
+function unlockBackgroundScroll() {
+  scrollLockCount = Math.max(0, scrollLockCount - 1);
+  if (scrollLockCount === 0) document.body.classList.remove('scroll-locked');
+}
 // Shown only when more than one USB drive is plugged in at once.
 // Resolves to the chosen drive, or null if the user cancels (via the
 // Cancel button or Escape).

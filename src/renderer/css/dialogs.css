@@ -23,6 +23,13 @@
   gap: 0.5em;
   min-width: 18em;
 }
+/* Applied to <body> while an overlay modal that sits over the still-
+   intact main view is open (see lockBackgroundScroll in dialogs.js) --
+   stops the dimmed background from scrolling when the mouse is over
+   the modal and the wheel scrolls past its edge. */
+body.scroll-locked {
+  overflow: hidden;
+}
 .modal-box h3 {
   font-family: var(--font-display);
   margin: 0 0 0.5em;
