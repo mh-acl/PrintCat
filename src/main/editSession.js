@@ -403,23 +403,38 @@ class EditSession {
     return merged;
   }
 
-  // newPrintFiles is a plain array of external file paths -- picked via
-  // the "Add print file(s)" button/drop zone in edit mode (see
-  // itemModal.js's draft.newPrintFiles), staged client-side and not
-  // copied anywhere until Save, same as an externally-browsed image.
-  // Unlike images, a new print file isn't "assigned" to anything --
-  // it just becomes its own item in destDir, picked up as a normal
-  // print-file card the next time indexer.js scans the folder, so
-  // there's no metadata.json write here at all, just the copy.
-  // Rejects (before copying anything) a file with an unexpected
-  // extension or over MAX_FILE_BYTES, same "check before touching
-  // disk" shape as findOversizedFiles/addItem's pre-flight check
-  // above. Returns the final on-disk names, informational only.
-  async _resolveNewPrintFiles(destDir, newPrintFiles) {
-    if (!newPrintFiles || newPrintFiles.length === 0) return [];
+  // newPrintFiles is an array of { path (source), images (ImageRef[]),
+  // displayName } descriptors -- one per file picked/dropped via the
+  // edit-mode "Add print file(s)" flow (itemModal.js's draft.printFiles
+  // isNew entries, plus the older lightweight .3mf staging which just
+  // has empty images/null displayName, since a .3mf is a companion
+  // file with no card of its own to carry an image/name on). Copies
+  // each one into destDir (rejecting, before copying anything, a file
+  // with an unexpected extension or over MAX_FILE_BYTES -- same
+  // "check before touching disk" shape as findOversizedFiles/addItem's
+  // pre-flight check above), resolving any filename collision the same
+  // way every other collision-prone copy in the app does.
+  //
+  // Unlike an existing print file, whose caller already knows its real
+  // on-disk name to key printFileImages/printFileNames by, a brand new
+  // file's renderer-side identity (its original filename, or the
+  // gcode-parsed isNew card's sourcePath) isn't necessarily what it
+  // ends up named here -- uniqueFilename() can still rename it on a
+  // collision. So rather than have the caller guess the right key,
+  // this resolves each new file's own images/displayName itself (via
+  // the same _resolveSingleImageRef the pre-existing-file path uses,
+  // sharing the same resolvedPathToName map so a pool image reused
+  // across both is only ever copied once) and returns a
+  // { [finalName]: { images?, displayName? } } map already shaped for
+  // writeItemMetadata's printFiles field -- the caller just merges it
+  // in alongside whatever _resolveImages/_mergePrintFileNames produced
+  // for pre-existing files.
+  async _resolveNewPrintFiles(destDir, newPrintFiles, resolvedPathToName) {
+    const result = {};
+    if (!newPrintFiles || newPrintFiles.length === 0) return result;
 
-    const added = [];
-    for (const sourcePath of newPrintFiles) {
+    for (const entry of newPrintFiles) {
+      const sourcePath = entry.path;
       const baseName = path.basename(sourcePath);
       const ext = path.extname(baseName).toLowerCase();
       if (!PRINTFILE_ADD_EXT.has(ext)) {
@@ -433,12 +448,44 @@ class EditSession {
         pathExists(path.join(destDir, candidate))
       );
       await fsp.copyFile(sourcePath, path.join(destDir, finalName));
-      added.push(finalName);
+
+      const fields = {};
+      if (entry.images && entry.images.length > 0) {
+        const names = [];
+        for (const ref of entry.images) {
+          names.push(await this._resolveSingleImageRef(destDir, ref, resolvedPathToName));
+        }
+        fields.images = names;
+      }
+      if (entry.displayName) fields.displayName = entry.displayName;
+      if (Object.keys(fields).length > 0) result[finalName] = fields;
     }
-    return added;
+    return result;
   }
 
-  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops, newPrintFiles }) {
+  // trashedPrintFiles is a plain array of on-disk filenames (pf.key in
+  // itemModal.js's draft.printFiles) -- toggled by the trash/restore
+  // button on each print-file card, staged client-side the same
+  // delete/undo-before-save way the main grid's whole-item trashing
+  // already works (see this.changes/deleteItem above), just scoped to
+  // one item's own files. This only removes the files themselves --
+  // the matching metadata.json cleanup (dropping any stale per-file
+  // displayName/images override) is handled separately by
+  // writeItemMetadata's removePrintFiles param below, since
+  // metadata.json's printFiles map merges rather than replaces and
+  // would otherwise keep a deleted file's override forever. Missing
+  // files are silently ignored (not an error) since nothing about a
+  // plain deletion needs the file to still exist for the outcome
+  // ("this filename is gone from the folder") to already be true.
+  async _deleteTrashedPrintFiles(dirPath, trashedPrintFiles) {
+    if (!trashedPrintFiles || trashedPrintFiles.length === 0) return;
+    for (const name of trashedPrintFiles) {
+      const filePath = path.join(dirPath, path.basename(name));
+      if (await pathExists(filePath)) await fsp.unlink(filePath);
+    }
+  }
+
+  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops, newPrintFiles, trashedPrintFiles }) {
     const folderName = path.basename(sourceDir);
     const destDir = path.join(this.dataDir, folderName);
 
@@ -463,12 +510,16 @@ class EditSession {
 
     await fsp.mkdir(this.dataDir, { recursive: true });
     await fsp.cp(sourceDir, destDir, { recursive: true });
-    await this._resolveNewPrintFiles(destDir, newPrintFiles);
     const resolvedPathToName = new Map(); // external path -> final filename, shared below
-    const resolvedPrintFiles = this._mergePrintFileNames(
-      await this._resolveImages(destDir, printFileImages, resolvedPathToName),
-      printFileNames
-    );
+    const newPrintFilesResolved = await this._resolveNewPrintFiles(destDir, newPrintFiles, resolvedPathToName);
+    await this._deleteTrashedPrintFiles(destDir, trashedPrintFiles);
+    const resolvedPrintFiles = {
+      ...this._mergePrintFileNames(
+        await this._resolveImages(destDir, printFileImages, resolvedPathToName),
+        printFileNames
+      ),
+      ...newPrintFilesResolved,
+    };
     const resolvedItemImage = itemImage
       ? await this._resolveSingleImageRef(destDir, itemImage, resolvedPathToName)
       : '';
@@ -479,6 +530,7 @@ class EditSession {
       origin,
       itemImage: resolvedItemImage,
       imageCrops: this._resolveImageCrops(imageCrops, resolvedPathToName),
+      removePrintFiles: trashedPrintFiles,
     });
 
     // New items get today's protocol applied immediately: if origin is
@@ -492,7 +544,7 @@ class EditSession {
     return this.changes;
   }
 
-  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops, newPrintFiles }) {
+  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops, newPrintFiles, trashedPrintFiles }) {
     // No category anymore, so nothing ever needs to move the item's
     // folder on an edit -- itemPath stays itemPath, only its
     // metadata.json changes.
@@ -508,18 +560,25 @@ class EditSession {
       throw new Error(oversizedFilesMessage(oversized, MAX_FILE_BYTES));
     }
 
-    // Copied in before metadata/image resolution below -- nothing
-    // downstream depends on a new print file's own final name, but a
-    // co-admin who also assigns an image in the same save reasonably
-    // expects the new file to already be on disk (and thus a valid
-    // print-file card after the next scan) by the time that happens.
-    await this._resolveNewPrintFiles(itemPath, newPrintFiles);
-
+    // Resolved here (not left to guessed filenames) since a new
+    // file's images/displayName can only be attached to whatever name
+    // it actually ends up on disk under -- see _resolveNewPrintFiles.
+    // Nothing downstream depends on that happening before the deletion
+    // below, but a co-admin who also assigns an image to the new file
+    // in the same save reasonably expects it to already be on disk
+    // (and thus a valid print-file card after the next scan) by the
+    // time that happens.
     const resolvedPathToName = new Map(); // external path -> final filename, shared below
-    const resolvedPrintFiles = this._mergePrintFileNames(
-      await this._resolveImages(itemPath, printFileImages, resolvedPathToName),
-      printFileNames
-    );
+    const newPrintFilesResolved = await this._resolveNewPrintFiles(itemPath, newPrintFiles, resolvedPathToName);
+    await this._deleteTrashedPrintFiles(itemPath, trashedPrintFiles);
+
+    const resolvedPrintFiles = {
+      ...this._mergePrintFileNames(
+        await this._resolveImages(itemPath, printFileImages, resolvedPathToName),
+        printFileNames
+      ),
+      ...newPrintFilesResolved,
+    };
     const resolvedItemImage = itemImage
       ? await this._resolveSingleImageRef(itemPath, itemImage, resolvedPathToName)
       : '';
@@ -530,6 +589,7 @@ class EditSession {
       origin,
       itemImage: resolvedItemImage,
       imageCrops: this._resolveImageCrops(imageCrops, resolvedPathToName),
+      removePrintFiles: trashedPrintFiles,
     });
 
     // Pre-existing items only get pruned the next time they're

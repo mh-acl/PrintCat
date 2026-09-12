@@ -1192,24 +1192,46 @@ unified item modal's edit mode, not just at the initial "add item"
 folder scan. A "+ Add print file(s)" tile at the end of the file-card
 grid (`buildAddPrintFileTile()`, `itemModal.js`) opens a native
 multi-select file dialog (`editSession:browsePrintFiles`, main.js —
-filtered to `.gcode`/`.bgcode`/`.3mf`) or accepts a direct OS
-file-drop; either way the picked path(s) are only staged into
-`draft.newPrintFiles` (`{ path, name }[]`, deduped by source path via
-`addExternalPrintFileToDraft()`) and shown as a lightweight "Pending"
-card (`buildPendingPrintFileCard()`) — nothing touches disk until
-`Save`, same staging model as every other edit-mode field. `saveDraft()`
-sends the staged paths as a plain `newPrintFiles: string[]` alongside
-the existing fields.
+filtered to `.gcode`/`.bgcode`/`.3mf`), or a print-file drag can be
+dropped anywhere in the file-card grid (see the drag-and-drop section
+below for why that's a whole-area drop zone rather than per-card).
 
-`editSession.js`'s `addItem()`/`editItem()` both take that same
-`newPrintFiles` param and copy each one into the item's folder via a
-new `_resolveNewPrintFiles()`, which rejects (before copying anything)
-a file outside `.gcode`/`.bgcode`/`.3mf` or at/above `MAX_FILE_BYTES`,
-then resolves any filename collision and copies. A new print file
-isn't "assigned" to anything the way an image is — it becomes its own
-item just by existing in the folder, picked up as a normal print-file
-card the next time `indexer.js` scans, so there's no `metadata.json`
-write involved in this step at all.
+A `.gcode`/`.bgcode` file is parsed immediately — `editSession:
+parseNewPrintFile` (main.js) reuses the indexer's own per-file parser
+(`indexer.js`'s `_parseGcodeFile`, so this can never drift from what a
+real folder scan would produce) — and dropped straight into
+`draft.printFiles` as a full, real `buildPrintFileCard()` card
+(`isNew: true`, `sourcePath: <external path>`, `key` set to that same
+external path since there's no on-disk name yet): selectable as an
+image-assignment target, droppable-onto, renameable, immediately,
+rather than only after a save+reopen round trip. It's marked with a
+"Pending" badge and its corner button is a plain Remove (not a
+trash/restore toggle — there's nothing to restore for a file that was
+never saved). A `.3mf`, by contrast, has no card of its own even after
+a real scan (indexer.js only cards `.gcode`/`.bgcode`), so it keeps
+the original lighter treatment instead: staged in `draft.newPrintFiles`
+(`{ path, name }[]`) and shown via `buildPendingPrintFileCard()`, a
+placeholder with no thumb/meta/checkbox. Nothing touches disk for
+either kind until Save.
+
+`saveDraft()` combines both into one `newPrintFiles` array of
+`{ path, images, displayName }` descriptors — the `isNew` `printFiles`
+entries carry their real staged images/displayName, the `.3mf`
+entries send empty/null for both. `editSession.js`'s `addItem()`/
+`editItem()` both take that array and, via a rewritten
+`_resolveNewPrintFiles()`, copy each file into the item's folder
+(rejecting, before copying anything, a file outside `.gcode`/
+`.bgcode`/`.3mf` or at/above `MAX_FILE_BYTES`), resolve any filename
+collision, and then resolve *that file's own* images/displayName
+(sharing the same `resolvedPathToName` map `_resolveImages` uses
+elsewhere in the same save, so a pool image reused across both is
+only copied once) under whatever name it actually ended up with —
+necessary since a collision can rename it away from the name the
+renderer picked/parsed it under. The returned
+`{ [finalName]: { images?, displayName? } }` map is merged into
+`resolvedPrintFiles` alongside whatever `_resolveImages`/
+`_mergePrintFileNames` produced for pre-existing files, before the one
+`writeItemMetadata()` call for the whole save.
 
 **Collision-resolution consolidation:** this surfaced that the app had
 two separate filename-collision resolvers with different naming
@@ -1220,6 +1242,63 @@ local one is now gone; `_resolveSingleImageRef()` (images) and
 `_resolveNewPrintFiles()` (print files) both go through the same
 `uniqueFilename()` util, so every collision-prone copy in the app now
 uses the one `name.1.ext` convention.
+
+**Drag-and-drop targeting:** every `.print-file-entry` card used to
+unconditionally `preventDefault`+`stopPropagation`+highlight on
+`dragover`/`drop` regardless of what was being dragged, so dragging an
+actual print file over the list lit up every card (even a filtered-out
+one) as a false "drop here" signal, even though dropping one on a
+card did nothing. Fixed with `dragIsImage(e)` (checks
+`dataTransfer.types`/`items`, the only things readable at
+dragenter/dragover time — real files report a MIME type, so an
+unrecognized extension like `.gcode` reads as non-image; an in-app
+pool-image chip drag is identified by its `'text/plain'` drag-data
+type instead): a card now only claims a drag that looks like an image
+(and isn't itself trashed). Anything else is left alone entirely —
+no `preventDefault`/`stopPropagation` — so it bubbles up to a new
+`filesCol`-level handler (`refreshEditFilesArea()`, itemModal.js) that
+claims non-image drags, highlights the whole file-card grid
+(`.item-detail-files-drop-active`, a plain outline rather than the
+per-card `.drop-target-active` treatment, so it can't read as one
+specific card being chosen), and adds any dropped print files the same
+way the add-tile's own drop does.
+
+## Print-file level trashing (shipped)
+
+Mirrors the main grid's whole-item trash/restore pattern
+(`item-trash-btn`/`this.changes`, see `deleteItem`/`undoDelete` above),
+scoped down to one print file inside an already-open item's edit mode
+instead of a whole item on the main grid. Each real print-file card
+(`buildPrintFileCard()`, `itemModal.js`) gets a `print-file-trash-btn`
+in its top-right corner (the checkbox already occupies top-left) that
+toggles the file's `pf.key` in/out of `draft.trashedPrintFiles` (a
+`Set`); a trashed card dims (`.print-file-entry-trashed`), can't be
+selected as an image-assignment target or drop zone, and won't be
+suggested as a batch-share target for another file's newly-assigned
+image. Nothing is deleted until Save — same staging model as every
+other edit-mode field, including print-file adding above. A *pending*
+new print file (not yet saved at all) isn't part of this — it keeps
+its own plain remove button, since there's nothing to "restore" for a
+file that was never on disk in the first place.
+
+`saveDraft()` sends the staged filenames as `trashedPrintFiles:
+string[]`, and — since a trashed file has nothing left to say about
+itself — leaves it out of the `printFileImages`/`printFileNames`
+payloads entirely. `editSession.js`'s `editItem()`/`addItem()` both
+take that new param and delete each file via `_deleteTrashedPrintFiles()`
+(missing files are silently ignored, not an error).
+
+This surfaced a real gap in `itemMetadata.js`'s `writeItemMetadata()`:
+its `printFiles` field is a *merge* against whatever's already in
+`metadata.json` (needed so an edit that only touches one file's image
+doesn't clobber every other file's own override) — which meant a
+deleted file's old per-file override (display name, assigned images)
+would've been preserved in `metadata.json` forever, orphaned, since
+nothing in the new payload ever mentions a filename that's being
+removed rather than updated. Fixed with a new `removePrintFiles`
+param on `writeItemMetadata()` that deletes those keys before the
+merge runs; both `editItem`/`addItem` pass `trashedPrintFiles` through
+to it alongside the file-deletion call.
 
 ## Not yet implemented
 

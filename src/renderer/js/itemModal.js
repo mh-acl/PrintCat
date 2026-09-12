@@ -394,13 +394,24 @@ function createDraftFromItem(item) {
         modes,
       ])
     ),
-    // Print files picked via "Add print file(s)"/drop, staged as
-    // { path, name } (external only -- there's no 'existing' case the
-    // way images have, a print file is either already a real card or
-    // it's a pending add). Not copied anywhere until Save -- see
+    // .3mf companion files picked via "Add print file(s)"/drop, staged
+    // as { path, name }. A .gcode/.bgcode instead goes straight into
+    // printFiles above (isNew: true, parsed immediately for a real
+    // preview card) -- this array only exists for .3mf, which has no
+    // card of its own even after a real scan, so there's nothing to
+    // preview it as. Not copied anywhere until Save -- see
     // editSession.js's _resolveNewPrintFiles, called from saveDraft
     // below.
     newPrintFiles: [],
+    // Set of pf.key (real on-disk filenames, see the printFiles map
+    // above) for *existing* print files staged for deletion -- toggled
+    // by the trash/restore button on each card (buildPrintFileCard),
+    // same delete/undelete-before-save shape as the main grid's
+    // item-level trashing (pendingChanges), just scoped to one item's
+    // files instead of whole items. A pending *new* print file never
+    // enters this set -- it has its own plain remove button, since it
+    // was never saved in the first place.
+    trashedPrintFiles: new Set(),
   };
 }
 // Case-insensitive basename-without-extension match against a file
@@ -468,6 +479,10 @@ function createDraftFromPicked(picked) {
     // lets a co-admin add an extra loose print file while assembling a
     // brand-new item, not just after it's already in the catalog.
     newPrintFiles: [],
+    // Same shape as createDraftFromItem's field above -- lets a
+    // just-scanned file be excluded before the item is even added,
+    // not just after.
+    trashedPrintFiles: new Set(),
   };
 }
 // Small standalone popup for hand-editing/reviewing origin info --
@@ -781,6 +796,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     if (!source || source.colorChangeCount === null) return;
     for (const target of draft.printFiles) {
       if (target.key === justAssignedKey) continue;
+      if (draft.trashedPrintFiles.has(target.key)) continue; // pointless to share into something being deleted
       if (target.colorChangeCount !== source.colorChangeCount) continue;
       if (strippedBatchName(target.key) !== strippedBatchName(source.key)) continue;
       if (target.images.some((r) => imageRefEquals(r, ref))) continue;
@@ -869,16 +885,81 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   }
 
   // Stages an externally-picked print file (from the "Add print
-  // file(s)" button or a drop onto the file list) into the draft,
-  // deduped by source path the same way addExternalToPoolDraft is --
-  // dropping/picking the same file twice before Save just no-ops the
-  // second time rather than queuing a duplicate copy.
-  function addExternalPrintFileToDraft(extPath, name) {
-    if (draft.newPrintFiles.some((f) => f.path === extPath)) return;
-    draft.newPrintFiles.push({ path: extPath, name });
+  // file(s)" button or a drop onto the file list/tile) into the draft.
+  // A .gcode/.bgcode file is parsed immediately -- via the
+  // editSession:parseNewPrintFile IPC call, which reuses the same
+  // per-file parser a real folder scan uses -- and dropped straight
+  // into draft.printFiles as a full, editable card (isNew: true,
+  // sourcePath: extPath): selectable as an image-assignment target,
+  // droppable-onto, renameable, right away, rather than only after a
+  // save+reopen round trip. A .3mf has no equivalent real card even
+  // after a real scan (indexer.js never cards project files, only
+  // gcode/bgcode -- see PRINTFILE_ADD_EXT's comment in editSession.js),
+  // so it keeps the older, lighter "Pending" placeholder treatment
+  // instead (draft.newPrintFiles, buildPendingPrintFileCard). Deduped
+  // by source path either way -- picking/dropping the same file twice
+  // before Save just no-ops the second time.
+  async function addExternalPrintFileToDraft(extPath, name) {
+    const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+    if (ext === '.3mf') {
+      if (draft.newPrintFiles.some((f) => f.path === extPath)) return;
+      draft.newPrintFiles.push({ path: extPath, name });
+      return;
+    }
+    if (draft.printFiles.some((f) => f.isNew && f.sourcePath === extPath)) return;
+    const parsed = await window.catalogAPI.editSessionParseNewPrintFile(extPath);
+    draft.printFiles.push({
+      key: extPath,
+      isNew: true,
+      sourcePath: extPath,
+      shortname: parsed.shortname,
+      longname: parsed.longname,
+      tags: parsed.tags,
+      displayName: null,
+      printerModel: parsed.printerModel,
+      printerVariant: parsed.printerVariant,
+      colorChangeCount: parsed.colorChangeCount,
+      copies: parsed.copies,
+      printTime: parsed.printTime,
+      filamentType: parsed.filamentType,
+      filamentUsedG: parsed.filamentUsedG,
+      pauseCount: parsed.pauseCount,
+      pauseMessages: parsed.pauseMessages,
+      images: [],
+    });
   }
 
   // --- Edit-mode DOM builders ---------------------------------------------
+
+  // True if the drag payload looks like it's carrying image data --
+  // either an in-app pool-image chip drag (identified by the
+  // 'text/plain' index payload those chips use as their drag data) or
+  // real OS files that all report an image/* MIME type. Checked at
+  // dragenter/dragover time, when only `types`/`items` (not `files` or
+  // getData()) are readable -- that's the browser's drag-and-drop
+  // security model, not an oversight here. Used to decide whether a
+  // print-file-entry card (or the item thumbnail chip) should claim a
+  // drag at all -- previously every card unconditionally
+  // preventDefault+stopPropagation'd and highlighted on dragover
+  // regardless of what was being dragged, so dragging an actual print
+  // file over the list lit up every card as a false "drop here"
+  // signal even though dropping one there did nothing. A card that
+  // doesn't claim the drag now leaves it alone entirely (no
+  // preventDefault/stopPropagation), letting it bubble to
+  // refreshEditFilesArea's filesCol-level handler below, which is
+  // where a real print-file drop actually gets handled.
+  function dragIsImage(e) {
+    const types = e.dataTransfer.types;
+    if (types.includes('text/plain')) return true; // internal pool-image chip drag
+    if (!types.includes('Files')) return false;
+    const items = e.dataTransfer.items;
+    if (!items || items.length === 0) return false;
+    for (const item of items) {
+      if (item.kind !== 'file') continue;
+      if (!item.type || !item.type.startsWith('image/')) return false;
+    }
+    return true;
+  }
 
   function buildItemThumbChip() {
     const chip = document.createElement('div');
@@ -974,6 +1055,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   }
 
   function buildPrintFileCard(pf) {
+    const isTrashed = draft.trashedPrintFiles.has(pf.key);
     const thumbWrap = document.createElement('div');
     thumbWrap.className = 'file-thumb-wrap crop-frame';
     const img = document.createElement('img');
@@ -1016,14 +1098,16 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     nameInput.className = 'item-modal-file-name-input';
     nameInput.value = pf.displayName || pf.shortname;
     nameInput.title = pf.key;
+    nameInput.disabled = isTrashed;
     nameInput.oninput = () => {
       pf.displayName = nameInput.value;
     };
 
     const card = buildFileEntry({
       editable: true,
-      selected: selectedTargets.has(pf.key),
+      selected: !isTrashed && selectedTargets.has(pf.key),
       onToggleSelect: (checked) => {
+        if (isTrashed) return; // can't be an image target while staged for deletion
         if (checked) selectedTargets.add(pf.key);
         else selectedTargets.delete(pf.key);
         refreshEditFilesArea();
@@ -1052,18 +1136,87 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     // cut, same mechanism as the tags row and its chip-remove buttons.
     card.style.viewTransitionName = printFileTransitionName(pf);
 
+    if (isTrashed) {
+      card.classList.add('print-file-entry-trashed');
+      // buildFileEntry's `editable` flag has to stay true above (it
+      // also controls the real-vs-placeholder Print button, which
+      // must stay hidden/placeholder in edit mode regardless of trash
+      // state), so the checkbox is disabled directly here rather than
+      // by threading a second meaning through that flag.
+      const checkbox = card.querySelector('.item-modal-target-select');
+      if (checkbox) checkbox.disabled = true;
+    }
+
+    if (pf.isNew) {
+      // Same "not saved yet" badge buildPendingPrintFileCard uses for
+      // a .3mf staged add -- this card is otherwise a full, real
+      // print-file-entry (see addExternalPrintFileToDraft above), just
+      // not actually on disk yet. insertBefore rather than append so
+      // it reads as the top of the card, ahead of the (absolutely
+      // positioned, flow-inert) checkbox/thumbnail rather than after
+      // everything else.
+      const badge = document.createElement('span');
+      badge.className = 'pending-badge pending-badge-add';
+      badge.textContent = 'Pending';
+      card.insertBefore(badge, card.firstChild);
+    }
+
+    const trashBtn = document.createElement('button');
+    trashBtn.type = 'button';
+    if (pf.isNew) {
+      // Nothing to restore -- this print file was never saved in the
+      // first place, so its only action is a plain removal from the
+      // draft, same as buildPendingPrintFileCard's remove button for
+      // a staged .3mf.
+      trashBtn.className = 'print-file-trash-btn icon icon-close';
+      trashBtn.title = 'Remove this print file';
+      trashBtn.setAttribute('aria-label', 'Remove this print file');
+      trashBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        draft.printFiles = draft.printFiles.filter((f) => f !== pf);
+        selectedTargets.delete(pf.key);
+        refreshEditFilesArea();
+      };
+    } else {
+      trashBtn.className = `print-file-trash-btn icon ${isTrashed ? 'icon-restore' : 'icon-delete'}`;
+      trashBtn.title = isTrashed ? 'Restore this print file' : 'Delete this print file';
+      trashBtn.setAttribute('aria-label', isTrashed ? 'Restore this print file' : 'Delete this print file');
+      trashBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isTrashed) {
+          draft.trashedPrintFiles.delete(pf.key);
+        } else {
+          draft.trashedPrintFiles.add(pf.key);
+          selectedTargets.delete(pf.key); // can't stay an image-assignment target once staged for deletion
+        }
+        refreshEditFilesArea();
+      };
+    }
+    card.appendChild(trashBtn);
+
     // Card-level drag/drop -- pure event wiring, not a DOM-shape
     // concern, so this stays here rather than in buildFileEntry; view
-    // mode's row simply never gets these handlers.
+    // mode's row simply never gets these handlers. Only claims the
+    // drag (preventDefault/stopPropagation/highlight) when it looks
+    // like an image and the card isn't trashed -- see dragIsImage
+    // above for why anything else is left alone rather than swallowed.
+    const cardClaimsDrag = (e) => !isTrashed && dragIsImage(e);
     card.ondragover = (e) => {
+      if (!cardClaimsDrag(e)) return;
       e.preventDefault();
       e.stopPropagation();
     };
-    card.ondragenter = () => card.classList.add('drop-target-active');
+    card.ondragenter = (e) => {
+      if (!cardClaimsDrag(e)) return;
+      card.classList.add('drop-target-active');
+    };
     card.ondragleave = (e) => {
       if (!card.contains(e.relatedTarget)) card.classList.remove('drop-target-active');
     };
     card.ondrop = (e) => {
+      if (!cardClaimsDrag(e)) return;
       e.preventDefault();
       e.stopPropagation();
       card.classList.remove('drop-target-active');
@@ -1082,15 +1235,17 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     return card;
   }
 
-  // A staged (not-yet-copied) print file, shown alongside the real
-  // .print-file-entry cards -- deliberately lighter than
-  // buildPrintFileCard's real card (no thumb/meta/checkbox/rename,
-  // since none of that exists yet for a file that isn't on disk and
-  // hasn't been scanned) rather than a full card with placeholder
-  // fields standing in for data that doesn't exist. Reuses the same
-  // .pending-badge-add styling the main grid's "Added" badge uses
-  // (editSession.css) so it reads as the same kind of "not saved yet"
-  // state, not a new visual language.
+  // A staged (not-yet-copied) .3mf companion file (see
+  // addExternalPrintFileToDraft -- a .gcode/.bgcode gets a full,
+  // parsed buildPrintFileCard() preview instead, isNew: true, since it
+  // has real fields to show). A .3mf has no equivalent real card even
+  // after a real scan (indexer.js never cards project files), so
+  // there's nothing to preview it as -- deliberately lighter than a
+  // real card (no thumb/meta/checkbox/rename) rather than a full card
+  // with placeholder fields standing in for data that doesn't exist.
+  // Reuses the same .pending-badge-add styling the main grid's
+  // "Added" badge uses (editSession.css) so it reads as the same kind
+  // of "not saved yet" state, not a new visual language.
   function buildPendingPrintFileCard(entry) {
     const card = document.createElement('div');
     card.className = 'print-file-entry print-file-entry-pending';
@@ -1120,12 +1275,13 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   }
 
   // "+ Add print file(s)" tile at the end of the card list -- opens
-  // the same file-picker dialog browseImages uses for images
-  // (editSession:browsePrintFiles, main.js), and doubles as a drop
-  // zone so a print file can be dragged straight in instead. Nothing
-  // is copied to disk here -- picked/dropped files are only staged
-  // into draft.newPrintFiles (see addExternalPrintFileToDraft above)
-  // until Save, same as every other edit-mode field.
+  // its own file-picker dialog (editSession:browsePrintFiles, main.js),
+  // and doubles as a drop zone so a print file can be dragged straight
+  // in instead. Nothing is copied to disk here -- see
+  // addExternalPrintFileToDraft for what actually happens to a picked/
+  // dropped file (a full parsed preview card for .gcode/.bgcode, or
+  // the older lightweight staging for .3mf); either way nothing hits
+  // disk until Save, same as every other edit-mode field.
   function buildAddPrintFileTile() {
     const tile = document.createElement('button');
     tile.type = 'button';
@@ -1134,7 +1290,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     tile.title = 'Add print file(s)\u2026';
     tile.onclick = async () => {
       const picked = await window.catalogAPI.editSessionBrowsePrintFiles();
-      for (const p of picked) addExternalPrintFileToDraft(p.path, p.name);
+      for (const p of picked) await addExternalPrintFileToDraft(p.path, p.name);
       if (picked.length > 0) refreshEditFilesArea();
     };
     tile.ondragover = (e) => {
@@ -1145,7 +1301,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     tile.ondragleave = (e) => {
       if (!tile.contains(e.relatedTarget)) tile.classList.remove('drop-target-active');
     };
-    tile.ondrop = (e) => {
+    tile.ondrop = async (e) => {
       e.preventDefault();
       e.stopPropagation();
       tile.classList.remove('drop-target-active');
@@ -1154,7 +1310,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       let added = false;
       for (const f of files) {
         if (!isPrintFileName(f.name)) continue;
-        addExternalPrintFileToDraft(window.catalogAPI.getPathForFile(f), f.name);
+        await addExternalPrintFileToDraft(window.catalogAPI.getPathForFile(f), f.name);
         added = true;
       }
       if (added) refreshEditFilesArea();
@@ -1382,6 +1538,41 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 
       const filesCol = document.createElement('div');
       filesCol.className = 'item-detail-files';
+      // Whole-area drop zone for adding print files -- a print-file
+      // drag isn't claimed by any individual card (see dragIsImage/
+      // cardClaimsDrag in buildPrintFileCard) or by the add-print-file
+      // tile unless it's dropped exactly on the tile, so it bubbles up
+      // to here from anywhere in the list, and the highlight covers
+      // the whole area rather than implying one particular card (or
+      // nothing at all) is the drop target. Mirrors
+      // buildAddPrintFileTile's own drop handling below, just scoped
+      // to "anywhere in this column" instead of "exactly on this
+      // button".
+      filesCol.ondragover = (e) => {
+        if (dragIsImage(e)) return; // no whole-list image target -- let it fall through unhandled
+        e.preventDefault();
+      };
+      filesCol.ondragenter = (e) => {
+        if (dragIsImage(e)) return;
+        filesCol.classList.add('item-detail-files-drop-active');
+      };
+      filesCol.ondragleave = (e) => {
+        if (!filesCol.contains(e.relatedTarget)) filesCol.classList.remove('item-detail-files-drop-active');
+      };
+      filesCol.ondrop = async (e) => {
+        if (dragIsImage(e)) return;
+        e.preventDefault();
+        filesCol.classList.remove('item-detail-files-drop-active');
+        const files = e.dataTransfer.files;
+        if (!files || files.length === 0) return;
+        let added = false;
+        for (const f of files) {
+          if (!isPrintFileName(f.name)) continue;
+          await addExternalPrintFileToDraft(window.catalogAPI.getPathForFile(f), f.name);
+          added = true;
+        }
+        if (added) refreshEditFilesArea();
+      };
       // Edit mode never hides a file the way view mode's printer/
       // search filter does (see renderContent's matchingFiles) -- but
       // rather than showing everything in a flat, undifferentiated
@@ -1426,6 +1617,8 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     const printFileImages = {};
     const printFileNames = {};
     for (const pf of draft.printFiles) {
+      if (pf.isNew) continue; // carries its own images/displayName via newPrintFiles below -- pf.key is a sourcePath, not a real on-disk name, until editSession.js resolves it
+      if (draft.trashedPrintFiles.has(pf.key)) continue; // being deleted -- nothing to carry into metadata.json
       if (pf.images.length > 0) printFileImages[pf.key] = pf.images;
       if (pf.displayName) printFileNames[pf.key] = pf.displayName;
     }
@@ -1436,11 +1629,26 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       printFileNames,
       origin: draft.origin,
       itemImage: draft.itemImageRef,
-      // Plain external paths -- editSession.js copies each one in
-      // (resolving collisions) and doesn't need anything else from the
-      // draft to do it, unlike images there's no per-target assignment
-      // to carry along.
-      newPrintFiles: draft.newPrintFiles.map((f) => f.path),
+      // { path, images, displayName } descriptors -- editSession.js
+      // copies each one in (resolving collisions), then resolves its
+      // own images/displayName under whatever final name it actually
+      // lands on (see _resolveNewPrintFiles). The isNew draft.printFiles
+      // entries (gcode/bgcode, parsed+previewed immediately -- see
+      // addExternalPrintFileToDraft) carry real images/displayName;
+      // the older draft.newPrintFiles staging (.3mf only, no card of
+      // its own to carry either on) just sends empty/null for both.
+      newPrintFiles: [
+        ...draft.printFiles
+          .filter((f) => f.isNew)
+          .map((f) => ({ path: f.sourcePath, images: f.images, displayName: f.displayName || null })),
+        ...draft.newPrintFiles.map((f) => ({ path: f.path, images: [], displayName: null })),
+      ],
+      // Plain on-disk filenames (pf.key) -- editSession.js deletes each
+      // one from the item's folder and drops its stale metadata.json
+      // override (writeItemMetadata's removePrintFiles); nothing here
+      // needs to do more than list which ones, since
+      // printFileImages/printFileNames above already just omit them.
+      trashedPrintFiles: Array.from(draft.trashedPrintFiles),
       // Sent as-is, still keyed by refIdentity -- editSession.js
       // resolves each identity to its final on-disk filename itself
       // (see its _resolveImageCrops), using the same resolvedPathToName

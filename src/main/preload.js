@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('catalogAPI', {
   editSessionPrepareAddFolder: (sourceDir) => ipcRenderer.invoke('editSession:prepareAddFolder', sourceDir),
   editSessionBrowseImages: () => ipcRenderer.invoke('editSession:browseImages'),
   editSessionBrowsePrintFiles: () => ipcRenderer.invoke('editSession:browsePrintFiles'),
+  editSessionParseNewPrintFile: (filePath) => ipcRenderer.invoke('editSession:parseNewPrintFile', filePath),
   detectItemOrigin: (itemPath) => ipcRenderer.invoke('editSession:detectOrigin', itemPath),
   backfillOrigins: () => ipcRenderer.invoke('editSession:backfillOrigins'),
   // webUtils.getPathForFile must be called from here (preload), not the

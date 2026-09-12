@@ -90,14 +90,26 @@ function sanitizeCropRect(rect) {
 // A mode explicitly passed as `null` clears just that mode (the
 // "reset to default" affordance in the cropper tool), rather than
 // requiring the caller to delete the whole filename entry.
+//
+// removePrintFiles (plain filename array, optional) drops those keys
+// from the merged printFiles map before the merge above runs, for a
+// print file that's being deleted from the item's folder entirely
+// (see editSession.js's _deleteTrashedPrintFiles) -- without this,
+// mergedPrintFiles's existing-entry preservation (right above) would
+// keep that file's old displayName/images override in metadata.json
+// forever, even though the file itself is gone.
 async function writeItemMetadata(
   itemDir,
-  { displayName, tags, printFiles, origin, itemImage, imageCrops }
+  { displayName, tags, printFiles, origin, itemImage, imageCrops, removePrintFiles }
 ) {
   const existing = await readItemMetadata(itemDir);
   const now = new Date().toISOString();
 
   let mergedPrintFiles = (existing && existing.printFiles) || {};
+  if (removePrintFiles && removePrintFiles.length > 0) {
+    mergedPrintFiles = { ...mergedPrintFiles };
+    for (const filename of removePrintFiles) delete mergedPrintFiles[filename];
+  }
   if (printFiles) {
     mergedPrintFiles = { ...mergedPrintFiles };
     for (const [filename, fields] of Object.entries(printFiles)) {

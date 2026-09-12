@@ -557,6 +557,24 @@ ipcMain.handle('editSession:browsePrintFiles', async () => {
   return filePaths.map((p) => ({ path: p, name: path.basename(p) }));
 });
 
+// Lets the edit-mode "Add print file(s)" flow show a fully parsed
+// print-file card immediately (printer/print-time/filament/etc.),
+// instead of only a generic filename placeholder until the next
+// save+reopen round trip. Reuses the indexer's own per-file parser
+// (indexer.js's _parseGcodeFile) rather than duplicating the gcode/
+// bgcode parsing logic here, so this can never drift from what a real
+// folder scan would produce for the same file -- it also means the
+// file's parsed entry gets cached exactly like any real catalog file
+// would, at the cost of one small, never-pruned cache entry if the
+// file is never actually added (same "cache only grows" characteristic
+// the real scan already has for moved/deleted catalog files, not a
+// new problem introduced here). Only meaningful for .gcode/.bgcode --
+// a .3mf is a companion file, never its own print-file card even after
+// a real scan, so the renderer never calls this for one.
+ipcMain.handle('editSession:parseNewPrintFile', async (event, filePath) => {
+  return indexer._parseGcodeFile(filePath);
+});
+
 // Used by the 'edit' item editor to autofill "Original Location" (and
 // creator info, when detectable) when the item's metadata.json doesn't
 // already have creator info stored -- including items that already

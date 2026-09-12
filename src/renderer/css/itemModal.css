@@ -69,6 +69,49 @@
   border-color: var(--line-soft);
   background: var(--paper);
 }
+/* Delete/restore toggle for one print file within an item, edit mode
+   only (buildPrintFileCard) -- same delete/undo-before-save behavior
+   as the main grid's .item-trash-btn (editSession.css), same circular
+   corner-overlay treatment, but placed at the top-RIGHT corner instead
+   of top-left: .print-file-entry's checkbox (.item-modal-target-select,
+   -0.4em/-0.4em) already occupies that corner, and unlike the grid
+   card there's no separate top-right occupant here to conflict with. */
+.print-file-trash-btn {
+  position: absolute;
+  top: 0.4em;
+  right: 0.4em;
+  z-index: 2;
+  width: 1.9em;
+  height: 1.9em;
+  line-height: 1.7em;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  font-size: 1em;
+  cursor: pointer;
+}
+.print-file-trash-btn:hover {
+  border-color: var(--status-delete-line);
+}
+/* Same recipe as the main grid's `a.listing.pending-delete` --
+   deliberately just opacity, not a border-color change like
+   .selected/.drop-target-active above, so it can't be confused with
+   either of those (this means "leaving", not "chosen"). */
+.print-file-entry-trashed {
+  opacity: 0.5;
+}
+/* Whole-area highlight for a print-file drag hovering anywhere in the
+   file list, as opposed to any individual card claiming it -- see
+   filesCol's drag handlers in refreshEditFilesArea, itemModal.js.
+   Deliberately a plain outline on the grid container itself rather
+   than reusing .drop-target-active (that's a per-card border/
+   background treatment, and would look like one specific card was
+   chosen, which is exactly the false signal this replaces). */
+.item-detail-files-drop-active {
+  outline: 2px dashed var(--accent);
+  outline-offset: 0.4em;
+}
 /* Staged (not-yet-copied) print file card, and the "+ Add print
    file(s)" tile that creates one -- see buildPendingPrintFileCard/
    buildAddPrintFileTile, itemModal.js. Both share .print-file-entry's
