@@ -166,9 +166,14 @@ const PRINTFILE_ADD_EXT = new Set(['.gcode', '.bgcode', '.3mf']);
 // restores HEAD and removes untracked files in one step, which undoes
 // the whole session regardless of how many operations led up to it.
 class EditSession {
-  constructor(dataDir) {
+  constructor(dataDir, syncToken) {
     this.dataDir = dataDir;
     this.changes = {}; // itemPath -> { type: 'add'|'edit'|'delete', name }
+    // Fetched once, at entry (see main.js's enterEditSession()), via the
+    // native macOS admin-auth prompt -- held here for the lifetime of
+    // this session so confirmSession() can push without prompting a
+    // second time. Never sent to the renderer (same rule as before).
+    this.syncToken = syncToken;
   }
 
   getChanges() {

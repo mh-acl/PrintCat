@@ -136,11 +136,20 @@ async function getOrProvisionToken() {
 // "Edit Print Catalog..." -- lets a co-admin enter a single editing
 // session covering any number of adds/edits/deletes (see
 // editSession.js), reviewed together and pushed as one commit, rather
-// than the old flow's one-folder-in-one-push-out. Just flips the
-// renderer into its editing-mode view (see renderer.js) -- everything
-// else (folder picking, staging, the confirm/cancel push) happens via
-// the editSession:* IPC handlers below, driven from that UI.
-function enterEditSession() {
+// than the old flow's one-folder-in-one-push-out. Flips the renderer
+// into its editing-mode view (see renderer.js) -- everything else
+// (folder picking, staging, the confirm/cancel push) happens via the
+// editSession:* IPC handlers below, driven from that UI.
+//
+// Authorization now happens right here, before edit mode is ever
+// shown, rather than at confirmSession (push) time -- a co-admin who
+// can't/won't authorize gets told immediately instead of after staging
+// a whole session's worth of changes. getOrProvisionToken() pops the
+// native macOS admin-auth prompt; the resulting token is handed to the
+// new EditSession and held there for the rest of the session (see
+// editSession.js), so confirmSession() below can push without
+// prompting a second time.
+async function enterEditSession() {
   const settings = settingsStore.get();
   if (!settings.gitRepoUrl) {
     dialog.showMessageBox(mainWindow, {
@@ -151,7 +160,16 @@ function enterEditSession() {
     });
     return;
   }
-  if (!editSession) editSession = new EditSession(DATA_DIR);
+
+  // A session already in progress (e.g. the co-admin re-opens "Edit
+  // Print Catalog..." from the menu while mid-session) already holds a
+  // token from when it started -- don't prompt again just to re-show
+  // the same session.
+  if (!editSession) {
+    const token = await getOrProvisionToken();
+    if (!token) return; // admin prompt cancelled/failed -- back out quietly, same as any other cancel in this flow
+    editSession = new EditSession(DATA_DIR, token);
+  }
   mainWindow.webContents.send('editSession:entered');
   broadcastSyncStatus(); // reflects pausedForEdit right away, not just on the next sync tick
 }
@@ -629,18 +647,20 @@ ipcMain.handle('editSession:cancelSession', async () => {
 // locally and are idempotent to repeat, same as retrying any other
 // gitSync failure. On success, the session ends and the renderer goes
 // back to normal browsing.
+//
+// The token was already obtained (native admin-auth prompt) back in
+// enterEditSession() and is held on the session itself -- reused here
+// rather than re-prompting, so authorizing is a one-time cost per
+// session instead of once at entry and again at confirm.
 ipcMain.handle('editSession:confirmSession', async () => {
   const settings = settingsStore.get();
   const { commitMessage } = await editSession.confirm();
-
-  const token = await getOrProvisionToken();
-  if (!token) return { ok: false, cancelled: true };
 
   await pushNewItem({
     targetDir: DATA_DIR,
     repoUrl: settings.gitRepoUrl,
     branch: settings.gitBranch || 'main',
-    token,
+    token: editSession.syncToken,
     commitMessage,
   });
 

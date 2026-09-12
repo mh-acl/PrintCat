@@ -116,12 +116,21 @@ bones-only "Add items to Print Catalog…" — rather than one folder in,
 one push out, the *main catalog screen itself* doubles as an editing
 UI (see `renderer.js`'s `editModeActive` below): a co-admin can add,
 edit, and delete any number of items, reviewed together, before a
-single push covers everything. `enterEditSession()` just checks
-`gitRepoUrl` is configured, creates an `EditSession` (`editSession.js`)
-if one doesn't already exist, and tells the renderer to flip into
-edit mode (`'editSession:entered'`) — the actual folder-picking,
+single push covers everything. `enterEditSession()` checks
+`gitRepoUrl` is configured, then — if no session is already in
+progress — obtains a token via `getOrProvisionToken()` (the same
+inline-provisioning path the old flow used, popping the native macOS
+admin-auth prompt via `tokenStore.js`'s `readSyncToken()`) *before*
+edit mode is ever shown; a co-admin who can't/won't authorize is told
+immediately rather than after staging a whole session's worth of
+changes, and quietly stays in normal browsing mode. The token is
+handed straight into a new `EditSession` (`editSession.js`) and held
+there for the session's lifetime, then the renderer is told to flip
+into edit mode (`'editSession:entered'`) — the actual folder-picking,
 staging, and confirm/cancel push all happen through the
-`editSession:*` IPC handlers below, driven from that UI.
+`editSession:*` IPC handlers below, driven from that UI. Re-opening
+"Edit Print Catalog…" while a session is already active reuses that
+session (and its already-obtained token) rather than prompting again.
 
 **`editSession.js`** — `EditSession` tracks one co-admin's in-progress
 changes, keyed by item folder path: `{ type: 'add'|'edit'|'delete', name }`,
@@ -172,14 +181,16 @@ everything to the last push in one step, regardless of how many
 operations led up to it. `confirm()` performs the real deletes for
 anything marked, then builds a commit message listing every
 added/edited/deleted item by name; `main.js`'s
-`editSession:confirmSession` handler takes that message, gets a token
-(`getOrProvisionToken()`, the same inline-provisioning path the old
-flow used), and calls `gitPush.js`'s `pushNewItem()` — unchanged from
-before, since its resilience (postBuffer, spurious-disconnect
-verification, HTTP/1.1 retry) applies just as well to a multi-item
-commit as a single-item one. On push failure the session is left
-active (nothing's cleared) so a retry after fixing the underlying
-issue just works, the same way retrying `pushNewItem()` always has.
+`editSession:confirmSession` handler takes that message and calls
+`gitPush.js`'s `pushNewItem()` using the token already sitting on
+`editSession` (obtained back in `enterEditSession()`, see above) —
+no second admin-auth prompt at push time. `pushNewItem()` itself is
+unchanged from before, since its resilience (postBuffer,
+spurious-disconnect verification, HTTP/1.1 retry) applies just as
+well to a multi-item commit as a single-item one. On push failure the
+session is left active (nothing's cleared, token included) so a retry
+after fixing the underlying issue just works, the same way retrying
+`pushNewItem()` always has.
 
 **`itemMetadata.js`** — `readItemMetadata()`/`writeItemMetadata()` for
 an item's sibling `metadata.json` (schema per prior design

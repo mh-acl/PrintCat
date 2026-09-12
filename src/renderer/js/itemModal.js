@@ -296,7 +296,7 @@ function buildFileEntry(opts) {
 // requiring the co-admin to close and reopen it -- per prior design
 // discussion, entering edit mode while viewing an item should behave
 // exactly as if they'd been in the main view and clicked to edit it.
-let openModalHandle = null; // { itemPath, switchToEdit() } or null while nothing's open
+let openModalHandle = null; // { itemPath, switchToEdit(), switchToView() } or null while nothing's open -- itemPath is null for an 'add'-mode modal
 // Wraps a synchronous DOM-mutating callback in document.startViewTransition
 // when the engine supports it (Electron's Chromium does), so any element
 // present in both the before/after DOM with a matching view-transition-name
@@ -565,6 +565,12 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   let thumbChipHolder = null; // set fresh by renderTopBar() each render; refreshEditFilesArea() (buildEditRoot) targets whatever this currently points to
   let sourceDir = item ? item.path : null; // becomes known for 'add' once the folder's picked, below
   let folderPath = item ? item.path : null; // raw fs path, not a URL -- see imageRefSrc/fileUrl
+  // Set alongside openModalHandle below (both the 'add' and non-'add'
+  // paths) -- close() compares against this by reference to know
+  // whether *this* modal instance is the one currently registered
+  // globally, so it can clear openModalHandle without needing item.path
+  // (which 'add' mode doesn't have).
+  let myOpenModalHandle = null;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay item-modal-overlay';
@@ -583,7 +589,11 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   function close() {
     if (overlay.parentNode) document.body.removeChild(overlay);
     document.removeEventListener('keydown', onKeydown);
-    if (item && openModalHandle && openModalHandle.itemPath === item.path) openModalHandle = null;
+    // Reference equality rather than itemPath, so this works for 'add'
+    // mode too (item is null there, so there's no path to key off of) --
+    // clears the handle whenever *this* modal instance is the one
+    // currently registered, regardless of mode.
+    if (openModalHandle === myOpenModalHandle) openModalHandle = null;
   }
   // This modal supports its explicit button (Close in view mode, Cancel
   // in edit/add mode) and Escape, but deliberately NOT click-on-backdrop
@@ -1702,12 +1712,21 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   // draft only ever affects pendingChanges via saveDraft(), which if
   // called already landed before Confirm was clicked.
   //
+  // For 'add' mode there's no "view" to fall back into -- the item
+  // doesn't exist until Save is clicked -- so the session ending just
+  // closes the modal outright, same as if its own Cancel button had
+  // been clicked.
+  //
   // Re-reads the item from the now-current allItems (post-cancel/
   // confirm) rather than reusing the stale closured item, since the
   // underlying data may have changed. If the item is gone entirely --
   // e.g. this was a staged delete that just got confirmed -- there's
   // nothing left to view, so close the modal instead.
   function exitEditMode() {
+    if (mode === 'add') {
+      close();
+      return;
+    }
     if (mode !== 'edit') return;
     const freshItem = allItems.find((i) => i.path === item.path);
     if (!freshItem) {
@@ -1742,12 +1761,22 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
         renderTopBar();
         renderContent();
         document.body.appendChild(overlay);
+        // Registered only once the form is actually visible -- nothing
+        // to close before this point beyond the native folder picker,
+        // which already handles its own cancellation above. No
+        // itemPath (there's no item yet); switchToEdit is a no-op
+        // since 'add' mode never starts out in 'view' for the global
+        // "entered edit mode" listener to catch (see enterEditMode's
+        // own comment).
+        myOpenModalHandle = { itemPath: null, switchToEdit: () => {}, switchToView: exitEditMode };
+        openModalHandle = myOpenModalHandle;
       })
       .catch((err) => alert(err.message)); // e.g. a dropped path that wasn't actually a folder
     return;
   }
 
-  openModalHandle = { itemPath: item.path, switchToEdit: enterEditMode, switchToView: exitEditMode };
+  myOpenModalHandle = { itemPath: item.path, switchToEdit: enterEditMode, switchToView: exitEditMode };
+  openModalHandle = myOpenModalHandle;
 
   if (mode === 'edit') draft = createDraftFromItem(item);
 

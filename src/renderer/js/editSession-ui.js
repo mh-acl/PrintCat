@@ -58,14 +58,12 @@ function renderEditBar() {
     confirmBtn.disabled = true;
     confirmBtn.textContent = 'Pushing\u2026';
     try {
+      // Authorization now happens up front, when edit mode is entered
+      // (see main.js's enterEditSession()) -- by the time Confirm is
+      // clickable, the session already holds a token, so there's no
+      // more auth-cancelled outcome to handle here, only network/git
+      // failures (caught below).
       const result = await window.catalogAPI.editSessionConfirm();
-      if (result.cancelled) {
-        // Admin backed out of the token/provisioning prompt -- changes
-        // are untouched, just re-enable the button.
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = `Confirm ${total} change${total === 1 ? '' : 's'}`;
-        return;
-      }
       allItems = result.tree;
       editModeActive = false;
       pendingChanges = {};
