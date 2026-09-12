@@ -545,8 +545,27 @@
    0.5em gap edit mode already got from margin-bottom: 0.5em alone.
    No actual visual difference to preserve, so no reason for two
    classes. */
+/* position+z-index here (not just visual, load-bearing): the
+   @supports block below gives this row a view-transition-name, and
+   per the View Transitions spec that forces the browser to treat it
+   as its own stacking context -- equivalent to an implicit
+   position:relative + z-index:0 -- regardless of whether this rule
+   says so. Since this row sits earlier in the DOM than
+   .item-detail-body (the print-file grid), and both end up as
+   z-index:0-ish boxes in the same ambient stacking context, plain
+   tree order decides paint order between them: the file grid, being
+   later, paints on top and buries this row's whole subtree --
+   including the tag-suggestion dropdown inside it, even though the
+   dropdown has its own z-index:20 (that z-index only wins fights
+   *inside* this row's stacking context; it can't lift the row itself
+   above a later sibling). Making the stacking-context promotion
+   explicit here, with a real positive z-index, is what lets it win
+   against .print-file-entry's cards (position:relative, z-index:auto
+   -> 0) regardless of DOM order. */
 .item-detail-tags {
   margin-bottom: 1em;
+  position: relative;
+  z-index: 1;
 }
 .item-detail-tags-none {
   font-size: 0.85em;
