@@ -953,8 +953,15 @@
      as gaps grow rather than leaving real empty space to scroll
      through). min-height: 0 overrides the auto min-height a grid item
      gets by default, which is based on its content and would
-     otherwise force this taller than the row instead of scrolling. */
+     otherwise force this taller than the row instead of scrolling.
+     scrollbar-gutter/overflow-x: same fix as .item-modal-gallery-grid
+     below, and for the same reason -- a fixed-width (14em) card is
+     just as unable to shrink to make room for a scrollbar as that
+     rule's fixed-width thumb is, so this is exposed to the identical
+     stray-horizontal-scroll bug once a scrollbar actually appears. */
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   align-content: start;
   min-height: 0;
 }
@@ -1079,10 +1086,26 @@
      help icon and add button (both flex: none) take their natural
      space, min-height: 0 lets it shrink below its own content instead
      of pushing the column taller, and overflow-y: auto is what makes
-     it scroll on its own, independently of .item-detail-files. */
+     it scroll on its own, independently of .item-detail-files.
+     scrollbar-gutter: stable reserves the scrollbar's width up front
+     as part of this box's own sizing, rather than letting the
+     scrollbar carve that width out of the content area only once it
+     actually appears -- without it, the thumb (a fixed
+     --gallery-thumb-size square, not something that can shrink to
+     make room) ended up a few pixels wider than what was left over,
+     which is what the stray horizontal scroll was: content genuinely
+     overflowing this box's inline axis by the scrollbar's width.
+     overflow-x: hidden is a belt-and-suspenders fallback for browsers
+     without scrollbar-gutter support (this box only ever scrolls
+     vertically, so there's no legitimate horizontal scroll to lose;
+     without this, those browsers get the CSS "overflow-y: auto also
+     computes overflow-x to auto" quirk, which is exactly what made
+     the sideways scroll possible in the first place). */
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 .item-modal-gallery-item {
   position: relative;
