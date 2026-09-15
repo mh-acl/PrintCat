@@ -39,13 +39,11 @@ function makeZoomButton(getSrc, altText, getCropRect) {
 // unconditionally, whenever that list is non-empty) -- so this only
 // ever needs to run after that initial resolution has already
 // happened (see the call site), and never needs to touch it itself.
-// TEMP: plain unicode arrows (U+2190/U+2192), not the icon font --
-// these glyphs aren't in the current subset (printcat-icons.woff2,
-// see base.css's @font-face + Material Symbols subsetting decision),
-// and adding them means re-subsetting. Swap for real icons once
-// that's done; .file-thumb-cycle-btn (lightbox.css) doesn't need to
-// change either way, same as .thumb-zoom-btn above already handles
-// icon-vs-text content.
+// Uses the icon font (icon-chevron-left/icon-chevron-right) -- added
+// to the printcat-icons.woff2 subset alongside icon-add/icon-help/
+// icon-target/icon-target-check; .file-thumb-cycle-btn (lightbox.css)
+// doesn't need to change either way, same as .thumb-zoom-btn above
+// already handles icon-vs-text content.
 function makeThumbCycleButtons(imagePaths, img, thumbWrap, item, onChange) {
   if (imagePaths.length <= 1) return [];
 
@@ -62,11 +60,11 @@ function makeThumbCycleButtons(imagePaths, img, thumbWrap, item, onChange) {
     if (onChange) onChange(path);
   }
 
-  function makeBtn(direction, glyph, ariaLabel) {
+  function makeBtn(direction, iconClass, ariaLabel) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = `file-thumb-cycle-btn file-thumb-cycle-${direction}`;
-    btn.textContent = glyph;
+    btn.className = `file-thumb-cycle-btn file-thumb-cycle-${direction} icon ${iconClass}`;
+    btn.title = ariaLabel;
     btn.setAttribute('aria-label', ariaLabel);
     btn.onclick = (e) => {
       e.preventDefault();
@@ -77,8 +75,8 @@ function makeThumbCycleButtons(imagePaths, img, thumbWrap, item, onChange) {
   }
 
   return [
-    makeBtn('prev', '\u2190', 'Show previous image'),
-    makeBtn('next', '\u2192', 'Show next image'),
+    makeBtn('prev', 'icon-chevron-left', 'Show previous image'),
+    makeBtn('next', 'icon-chevron-right', 'Show next image'),
   ];
 }
 // Full-size image viewer opened by the zoom button. Dismissed via its

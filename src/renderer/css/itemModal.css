@@ -1053,7 +1053,6 @@
   background: var(--paper-raised);
   color: var(--ink-soft);
   font-size: 0.85em;
-  font-weight: 700;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -1120,11 +1119,8 @@
 }
 /* Condensed from a full-width "Add image…" text button (previously
    .settings-action-button) to a small square icon-style button, same
-   footprint language as .item-modal-gallery-help above. TEMP: plain
-   "+" text -- see the addBtn comment in buildGalleryColumn
-   (itemModal.js) for why, and the same note on the thumb-cycle
-   arrows (lightbox.css) this is grouped with for a future icon-font
-   resubset. */
+   footprint language as .item-modal-gallery-help above. Uses the
+   icon font (icon-add). */
 .item-modal-gallery-add-btn {
   flex: none;
   width: 1.8em;

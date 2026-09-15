@@ -1364,8 +1364,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     // via mouse or keyboard, purely informational otherwise.
     const helpIcon = document.createElement('button');
     helpIcon.type = 'button';
-    helpIcon.className = 'item-modal-gallery-help';
-    helpIcon.textContent = '?';
+    helpIcon.className = 'item-modal-gallery-help icon icon-help';
     helpIcon.title =
       selectedTargets.size > 0
         ? `Click the assign icon on an image to assign it to ${selectedTargets.size} selected target${
@@ -1420,13 +1419,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
-    addBtn.className = 'item-modal-gallery-add-btn';
-    // TEMP: plain "+" text, not the icon font -- same situation as the
-    // thumbnail-cycle arrows (lightbox.js, makeThumbCycleButtons):
-    // no glyph for this in the current subset (printcat-icons.woff2)
-    // yet. Flagged for the same future re-subsetting pass as those
-    // arrows, not blocking on it now.
-    addBtn.textContent = '+';
+    addBtn.className = 'item-modal-gallery-add-btn icon icon-add';
     addBtn.title = 'Add image\u2026';
     addBtn.setAttribute('aria-label', 'Add image');
     addBtn.onclick = async () => {
@@ -2046,8 +2039,7 @@ function renderHiddenGalleryColumn() {
   // only exists for structural parity in the first place.
   const helpIcon = document.createElement('button');
   helpIcon.type = 'button';
-  helpIcon.className = 'item-modal-gallery-help';
-  helpIcon.textContent = '?';
+  helpIcon.className = 'item-modal-gallery-help icon icon-help';
   helpIcon.disabled = true;
   helpIcon.tabIndex = -1;
   col.appendChild(helpIcon);
@@ -2058,8 +2050,7 @@ function renderHiddenGalleryColumn() {
 
   const addBtn = document.createElement('button');
   addBtn.type = 'button';
-  addBtn.className = 'item-modal-gallery-add-btn';
-  addBtn.textContent = '+';
+  addBtn.className = 'item-modal-gallery-add-btn icon icon-add';
   addBtn.disabled = true;
   addBtn.tabIndex = -1;
   col.appendChild(addBtn);
