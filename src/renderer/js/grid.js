@@ -108,6 +108,19 @@ function buildGridEmptyMessage(effectivePrinters, editMode) {
 function itemWouldShowInBrowsing(item, effective) {
   return itemMatchesPrinter(item, effective) && itemMatchesTags(item, selectedTags) && itemMatchesKeyword(item, keywordQuery);
 }
+// 'recent' (default): newest importedAt first, with items missing one
+// (not yet backfilled) sorted to the end rather than the top -- an
+// unknown date shouldn't masquerade as "just added". 'name': plain
+// alphabetical by displayName. See state.js's sortMode and
+// filters.js's renderSortFilter().
+function compareByMode(a, b) {
+  if (sortMode === 'name') {
+    return (a.displayName || '').localeCompare(b.displayName || '');
+  }
+  const aTime = a.importedAt ? new Date(a.importedAt).getTime() : -Infinity;
+  const bTime = b.importedAt ? new Date(b.importedAt).getTime() : -Infinity;
+  return bTime - aTime;
+}
 function render() {
   const effective = effectivePrinterFilter();
   const listing = document.getElementById('listing');
@@ -125,15 +138,22 @@ function render() {
     // and marked (.listing-filtered-out below), rather than removed.
     // Same treatment as an item's own file list within its edit view
     // (buildEditRoot/refreshEditFilesArea, itemModal.js).
-    visibleItems = allItems.filter((item) => itemMatchesSmartTags(item, selectedSmartTags)).sort((a, b) => {
-      const aShows = itemWouldShowInBrowsing(a, effective);
-      const bShows = itemWouldShowInBrowsing(b, effective);
-      return aShows === bShows ? 0 : aShows ? -1 : 1;
-    });
+    // Array.prototype.sort is stable, so sorting by compareByMode first
+    // and the would-show grouping second layers the two: each group
+    // keeps its Recent/Name order intact rather than the grouping
+    // scrambling it.
+    visibleItems = allItems
+      .filter((item) => itemMatchesSmartTags(item, selectedSmartTags))
+      .sort(compareByMode)
+      .sort((a, b) => {
+        const aShows = itemWouldShowInBrowsing(a, effective);
+        const bShows = itemWouldShowInBrowsing(b, effective);
+        return aShows === bShows ? 0 : aShows ? -1 : 1;
+      });
   } else {
-    visibleItems = allItems.filter(
-      (item) => itemWouldShowInBrowsing(item, effective) && itemMatchesSmartTags(item, selectedSmartTags)
-    );
+    visibleItems = allItems
+      .filter((item) => itemWouldShowInBrowsing(item, effective) && itemMatchesSmartTags(item, selectedSmartTags))
+      .sort(compareByMode);
   }
 
   if (visibleItems.length === 0) {

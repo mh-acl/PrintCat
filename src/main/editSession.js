@@ -8,6 +8,13 @@ const { writeItemMetadata, METADATA_FILENAME } = require('./itemMetadata');
 const { parseFilename, parseGcodeMetadata } = require('./gcodeParser');
 const { detectOrigin: detectOriginInFolder } = require('./originLocation');
 const { uniqueFilename } = require('./uniqueFilename');
+const { isShallowRepo, unshallowRepo, computeAddedDate } = require('./dateBackfill');
+
+// Per-item git log call is fast (one small subprocess), but a repo
+// that's never been unshallowed before needs one much longer fetch
+// first -- see dateBackfill.js's isShallowRepo/unshallowRepo.
+const GIT_LOG_TIMEOUT_MS = 15 * 1000;
+const UNSHALLOW_TIMEOUT_MS = 5 * 60 * 1000;
 
 // Same extension sets indexer.js uses -- duplicated rather than
 // imported since indexer.js doesn't export them, and they're small,
@@ -311,12 +318,90 @@ class EditSession {
       // Marked the same way editItem() marks a change -- 'edit' unless
       // this item was already a pending 'add' this session, in which
       // case it stays 'add' (see editItem's identical comment above).
-      const wasAdd = this.changes[item.path] && this.changes[item.path].type === 'add';
-      this.changes[item.path] = { type: wasAdd ? 'add' : 'edit', name: item.displayName };
+      // Tagged with the same `bulk` marker backfillAddedDates uses, so
+      // confirm() folds a whole-catalog run into one commit-message
+      // line instead of one per item -- unless a real edit already
+      // touched this item earlier in the session, in which case that
+      // stays its own line (see backfillAddedDates' identical logic).
+      const existing = this.changes[item.path];
+      let changeEntry;
+      if (existing && existing.type === 'add') {
+        changeEntry = { type: 'add', name: item.displayName };
+      } else if (existing && existing.type === 'edit' && !existing.bulk) {
+        changeEntry = { type: 'edit', name: item.displayName };
+      } else {
+        changeEntry = { type: 'edit', name: item.displayName, bulk: 'backfillOrigins' };
+      }
+      this.changes[item.path] = changeEntry;
       updated.push(item.displayName);
     }
 
     return { updated, mismatched, notFound };
+  }
+
+  // One-off catch-up recomputing importedAt (see itemMetadata.js) for
+  // every item passed in, via dateBackfill.js's git+filesystem
+  // heuristic -- see main.js's Tools-menu wiring for why this exists.
+  // Unlike backfillOrigins above, this deliberately does NOT skip
+  // items that already have a value: an existing importedAt may just
+  // be a "first time this item was ever edited by the app" artifact
+  // (writeItemMetadata only fills it in if missing on a normal save --
+  // see itemMetadata.js) rather than a trustworthy add date, so every
+  // item gets recomputed. Safe to re-run -- the heuristic converges on
+  // the same answer each time for a given item, since it only depends
+  // on git history and file mtimes, neither of which this backfill
+  // itself changes.
+  //
+  // Unshallows the local data-repo clone first if needed (see
+  // dateBackfill.js) -- a one-time, permanent side effect on whichever
+  // laptop runs this, accepted as the cost of getting real git history
+  // to check against.
+  async backfillAddedDates(items) {
+    if (await isShallowRepo(this.dataDir, GIT_LOG_TIMEOUT_MS)) {
+      await unshallowRepo(this.dataDir, UNSHALLOW_TIMEOUT_MS);
+    }
+
+    const results = [];
+    for (const item of items) {
+      const { date, source } = await computeAddedDate(item.path, this.dataDir, GIT_LOG_TIMEOUT_MS);
+
+      // displayName/tags/itemImage passed through unchanged -- same
+      // reasoning as backfillOrigins above, since writeItemMetadata
+      // fully replaces (rather than merges) those three fields.
+      await writeItemMetadata(item.path, {
+        displayName: item.displayName,
+        tags: item.tags,
+        itemImage: item.metadataItemImage,
+        importedAt: date,
+      });
+
+      // Same type-preservation rule as backfillOrigins above: stays
+      // 'add' if this item was already a pending add this session,
+      // otherwise marked 'edit' -- no separate change-type vocabulary
+      // for this, so it shows up in the ordinary Edited count/badge.
+      // The extra `bulk` marker (edit-only -- an 'add' this session
+      // doesn't need grouping, there's rarely more than a couple) is
+      // just for confirm()'s commit-message builder, which folds every
+      // same-`bulk` change into one summary line instead of listing
+      // each item -- a whole-catalog backfill would otherwise produce
+      // a commit message hundreds of lines long.
+      const existing = this.changes[item.path];
+      let changeEntry;
+      if (existing && existing.type === 'add') {
+        changeEntry = { type: 'add', name: item.displayName };
+      } else if (existing && existing.type === 'edit' && !existing.bulk) {
+        // A real edit already happened to this item earlier in the
+        // session -- keep it as its own commit-message line rather
+        // than folding it into the bulk summary below.
+        changeEntry = { type: 'edit', name: item.displayName };
+      } else {
+        changeEntry = { type: 'edit', name: item.displayName, bulk: 'backfillAddedDates' };
+      }
+      this.changes[item.path] = changeEntry;
+      results.push({ name: item.displayName, date, source });
+    }
+
+    return results;
   }
 
   // printFileImages is { [printFileBasename]: ImageRef[] }, where each
@@ -659,7 +744,22 @@ class EditSession {
       }
     }
 
-    const summaryLines = Object.values(this.changes).map((c) => `${c.type}: ${c.name}`);
+    // Entries sharing a `bulk` marker (see backfillAddedDates above)
+    // collapse into one "type: N items" line each; everything else
+    // still gets its own "type: name" line as before.
+    const bulkCounts = {};
+    const individualLines = [];
+    for (const change of Object.values(this.changes)) {
+      if (change.bulk) {
+        bulkCounts[change.bulk] = (bulkCounts[change.bulk] || 0) + 1;
+      } else {
+        individualLines.push(`${change.type}: ${change.name}`);
+      }
+    }
+    const bulkLines = Object.entries(bulkCounts).map(
+      ([bulk, count]) => `${bulk}: ${count} item${count === 1 ? '' : 's'}`
+    );
+    const summaryLines = [...individualLines, ...bulkLines];
     const commitMessage =
       summaryLines.length === 1
         ? `Update print catalog: ${summaryLines[0]}`

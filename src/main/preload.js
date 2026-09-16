@@ -32,6 +32,13 @@ contextBridge.exposeInMainWorld('catalogAPI', {
   onEditSessionEntered: (callback) => {
     ipcRenderer.on('editSession:entered', () => callback());
   },
+  // Pushed by main.js after a main-process-triggered session mutation
+  // (currently just the native "Backfill Added Dates" Tools-menu item)
+  // that has no renderer-initiated invoke() call to carry a response
+  // back through -- see main.js's backfillAddedDatesTask().
+  onEditSessionChangesUpdated: (callback) => {
+    ipcRenderer.on('editSession:changesUpdated', (event, payload) => callback(payload));
+  },
   editSessionPickAddFolder: () => ipcRenderer.invoke('editSession:pickAddFolder'),
   editSessionPrepareAddFolder: (sourceDir) => ipcRenderer.invoke('editSession:prepareAddFolder', sourceDir),
   editSessionBrowseImages: () => ipcRenderer.invoke('editSession:browseImages'),

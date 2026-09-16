@@ -19,6 +19,39 @@ function renderEditBar() {
   addBtn.onclick = () => openItemModal(null, 'add');
   listing.appendChild(addBtn);
 
+  // Wired here rather than left as a dead CSS class -- the IPC handler
+  // and preload exposure (editSession:backfillOrigins) already existed
+  // but had no button actually calling them. See ARCHITECTURE.md/
+  // editSession.js's backfillOrigins() for what it does (skips items
+  // that already have creator info; flags URL mismatches for manual
+  // review rather than overwriting).
+  const backfillBtn = document.createElement('button');
+  backfillBtn.textContent = 'Backfill creator info';
+  backfillBtn.className = 'backfill-origins-button';
+  backfillBtn.onclick = async () => {
+    backfillBtn.disabled = true;
+    backfillBtn.textContent = 'Backfilling\u2026';
+    try {
+      const { result, changes, tree } = await window.catalogAPI.backfillOrigins();
+      allItems = tree;
+      pendingChanges = changes;
+      renderPrinterFilter();
+      renderTagFilter();
+      render();
+      let message = `Updated ${result.updated.length} item${result.updated.length === 1 ? '' : 's'}.`;
+      if (result.mismatched.length > 0) {
+        message += `\n\n${result.mismatched.length} flagged for manual review (detected URL doesn't match what's on file):\n${result.mismatched.join('\n')}`;
+      }
+      alert(message);
+    } catch (err) {
+      alert(`Backfill failed: ${err.message}`);
+    } finally {
+      backfillBtn.disabled = false;
+      backfillBtn.textContent = 'Backfill creator info';
+    }
+  };
+  listing.appendChild(backfillBtn);
+
   const counts = { add: 0, edit: 0, delete: 0 };
   for (const change of Object.values(pendingChanges)) counts[change.type]++;
   const total = counts.add + counts.edit + counts.delete;

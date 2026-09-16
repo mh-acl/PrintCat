@@ -101,7 +101,8 @@ async function runTool(task) {
       await dialog.showMessageBox(mainWindow, {
         type: 'info',
         title: task.label,
-        message: `${task.label} completed successfully.`,
+        message: (result && result.summary) || `${task.label} completed successfully.`,
+        detail: result && result.detail,
       });
     } else {
       await dialog.showMessageBox(mainWindow, {
@@ -172,8 +173,54 @@ async function enterEditSession() {
   }
   mainWindow.webContents.send('editSession:entered');
   broadcastSyncStatus(); // reflects pausedForEdit right away, not just on the next sync tick
+  buildMenu(); // adds the edit-mode-only Tools items (see buildMenu())
 }
 
+// One-time catch-up for every item's importedAt (see itemMetadata.js/
+// dateBackfill.js) -- an ad-hoc runTool() task rather than one of the
+// state-independent TOOLS.js entries, since it needs the live
+// editSession/indexer instances defined in this file. Only offered
+// from the Tools menu while an edit session is open (see buildMenu()
+// below) -- the writes land immediately, like any other edit made
+// through the UI, but nothing is pushed until the session itself is
+// confirmed, and Discard All Changes reverts them the same way.
+// Pushes the refreshed tree and pending-change counts to the renderer
+// itself (editSession:changesUpdated) since this runs from the native
+// menu rather than a renderer-initiated IPC call, so there's no
+// invoke() response to carry that back through.
+function backfillAddedDatesTask() {
+  return {
+    label: 'Backfill Added Dates',
+    confirmTitle: 'Backfill Added Dates',
+    confirmMessage: 'Recompute "added" dates for every item in the catalog?',
+    confirmDetail:
+      "For each item, this checks the data repo's git history and the item's own file " +
+      'timestamps and uses whichever points to an older date. If the local data checkout is ' +
+      'still a shallow clone, it\u2019s converted to a full clone first (one-time, permanent, ' +
+      'harmless) so real git history is available to check. Nothing is pushed until you ' +
+      'confirm the edit session -- Discard All Changes reverts this like any other edit.',
+    async run() {
+      if (!editSession) throw new Error('Start an edit session before backfilling.');
+      const items = await indexer.scan();
+      const results = await editSession.backfillAddedDates(items);
+      const tree = await indexer.scan();
+      if (mainWindow) {
+        mainWindow.webContents.send('editSession:changesUpdated', { tree, changes: editSession.getChanges() });
+      }
+      return {
+        summary: `Backfill finished: ${results.length} item${results.length === 1 ? '' : 's'} updated.`,
+        detail: results.length ? results.map((r) => `${r.name}: ${r.date.slice(0, 10)} (${r.source})`).join('\n') : undefined,
+      };
+    },
+  };
+}
+
+// Rebuilt (not just built once) at every edit-session transition --
+// enterEditSession()/cancelSession/confirmSession all call this again
+// after changing `editSession`, so the Tools submenu's edit-mode-only
+// items ("Backfill Added Dates...") appear/disappear alongside actual
+// session state rather than needing their own always-visible entry
+// that just errors out on a stray click outside a session.
 function buildMenu() {
   const isMac = process.platform === 'darwin';
 
@@ -219,6 +266,9 @@ function buildMenu() {
         })),
         { type: 'separator' },
         { label: 'USB Wiper', click: () => openUsbWiperWindow(settingsStore) },
+        ...(editSession
+          ? [{ label: 'Backfill Added Dates\u2026', click: () => runTool(backfillAddedDatesTask()) }]
+          : []),
         { label: 'Edit Print Catalog\u2026', click: () => enterEditSession() },
       ],
     },
@@ -638,6 +688,7 @@ ipcMain.handle('editSession:cancelSession', async () => {
   await editSession.cancel();
   editSession = null;
   broadcastSyncStatus(); // clears pausedForEdit right away
+  buildMenu(); // drops the edit-mode-only Tools items now that the session's gone
   return indexer.scan();
 });
 
@@ -666,6 +717,7 @@ ipcMain.handle('editSession:confirmSession', async () => {
 
   editSession = null;
   broadcastSyncStatus(); // clears pausedForEdit right away
+  buildMenu(); // drops the edit-mode-only Tools items now that the session's gone
   return { ok: true, tree: await indexer.scan() };
 });
 

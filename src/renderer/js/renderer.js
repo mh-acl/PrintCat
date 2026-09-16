@@ -70,12 +70,25 @@ async function init() {
     render();
   });
 
+  // Only fires while an edit session is open (see main.js's
+  // backfillAddedDatesTask()) -- carries both the refreshed tree and
+  // pendingChanges, unlike onCatalogUpdated above, so the Edited
+  // badges/counts pick up the backfill immediately too.
+  window.catalogAPI.onEditSessionChangesUpdated(({ tree, changes }) => {
+    allItems = tree;
+    pendingChanges = changes;
+    renderPrinterFilter();
+    renderTagFilter();
+    render();
+  });
+
   // The search box is a static element (see index.html), never
   // recreated by render() -- unlike the filter pills, it holds live
   // text-input focus and a cursor position that rebuilding the node
   // every keystroke would destroy.
   document.getElementById('keyword-filter').addEventListener('input', onKeywordInput);
 
+  renderSortFilter();
   renderPrinterFilter();
   renderTagFilter();
   render();

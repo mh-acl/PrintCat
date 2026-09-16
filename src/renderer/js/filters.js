@@ -270,3 +270,30 @@ function renderTagFilter() {
     }
   }
 }
+// Recent/Name sort control -- always exactly one active, unlike the
+// printer/tag pills above which support "none selected". Static aside
+// from its own active state, so it's rendered once at startup (see
+// renderer.js's init()) rather than needing a re-render hook on
+// allItems changes like the pill rows above.
+const SORT_MODES = [
+  { mode: 'recent', label: 'Recent' },
+  { mode: 'name', label: 'Name' },
+];
+function renderSortFilter() {
+  const el = document.getElementById('sort-filter');
+  if (!el) return;
+  el.innerHTML = '';
+
+  for (const { mode, label } of SORT_MODES) {
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.className = 'filter-pill' + (sortMode === mode ? ' active' : '');
+    btn.onclick = () => {
+      if (sortMode === mode) return;
+      sortMode = mode;
+      renderSortFilter();
+      render();
+    };
+    el.appendChild(btn);
+  }
+}

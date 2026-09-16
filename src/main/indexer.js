@@ -158,6 +158,12 @@ class Indexer {
       name,
       displayName: (metadata && metadata.displayName) || stripTrailingId(name),
       tags: (metadata && metadata.tags) || [],
+      // When this item was added to the catalog (see itemMetadata.js's
+      // importedAt) -- null for an item added before this field
+      // existed and not yet caught up by the Tools-menu backfill (see
+      // editSession.js's backfillAddedDates). Used for the "Recent"
+      // sort in the renderer.
+      importedAt: (metadata && metadata.importedAt) || null,
       // { url, creatorName, creatorUrl } if metadata.json has one,
       // else null. Deliberately not auto-detected here (see
       // originLocation.js) -- that scan (README/PDF parsing) only

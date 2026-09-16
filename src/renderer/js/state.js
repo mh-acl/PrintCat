@@ -16,6 +16,10 @@ let allItems = [];
 let selectedPrinters = new Set(); // empty = no restriction chosen ("All Printers")
 let selectedTags = new Set(); // empty = no restriction chosen ("All Tags")
 let keywordQuery = ''; // raw text from the search box; '' = no restriction
+// Which order the grid displays items in -- 'recent' (default) sorts by
+// importedAt descending, 'name' sorts alphabetically by displayName. See
+// grid.js's compareByMode()/render() and filters.js's renderSortFilter().
+let sortMode = 'recent';
 let settings = { availablePrinters: [], hideUnavailable: false, gitRepoUrl: '', gitBranch: '' };
 let syncStatus = { configured: false, lastSuccessAt: null, inProgress: false, pausedForEdit: false };
 

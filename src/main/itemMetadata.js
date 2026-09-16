@@ -57,7 +57,13 @@ function sanitizeCropRect(rect) {
 
 // Writes displayName/tags, preserving importedAt across edits (set
 // once, on the item's first write) and always refreshing
-// lastEditedAt. `printFiles`, if given, is a map of
+// lastEditedAt. An explicit `importedAt` argument overrides that
+// preserve-once behavior instead -- the one caller that needs this is
+// editSession.js's backfillAddedDates(), since an item's *existing*
+// importedAt may just be a "first time this item was ever edited by
+// the app" artifact rather than its real add date (a plain edit never
+// passes this, so normal add/edit saves are unaffected). `printFiles`,
+// if given, is a map of
 // { [printFileBasename]: { images?: string[], displayName?: string } }
 // -- each entry is merged onto (not replacing) whatever that print
 // file's existing metadata block already held, so an images-only
@@ -100,7 +106,7 @@ function sanitizeCropRect(rect) {
 // forever, even though the file itself is gone.
 async function writeItemMetadata(
   itemDir,
-  { displayName, tags, printFiles, origin, itemImage, imageCrops, removePrintFiles }
+  { displayName, tags, printFiles, origin, itemImage, imageCrops, removePrintFiles, importedAt }
 ) {
   const existing = await readItemMetadata(itemDir);
   const now = new Date().toISOString();
@@ -141,7 +147,7 @@ async function writeItemMetadata(
     schemaVersion: SCHEMA_VERSION,
     displayName: displayName || '',
     tags: Array.isArray(tags) ? tags : [],
-    importedAt: (existing && existing.importedAt) || now,
+    importedAt: importedAt || (existing && existing.importedAt) || now,
     lastEditedAt: now,
     ...(Object.keys(mergedPrintFiles).length > 0 ? { printFiles: mergedPrintFiles } : {}),
     ...(hasOrigin ? { origin: mergedOrigin } : {}),
