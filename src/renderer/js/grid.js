@@ -108,18 +108,99 @@ function buildGridEmptyMessage(effectivePrinters, editMode) {
 function itemWouldShowInBrowsing(item, effective) {
   return itemMatchesPrinter(item, effective) && itemMatchesTags(item, selectedTags) && itemMatchesKeyword(item, keywordQuery);
 }
-// 'recent' (default): newest importedAt first, with items missing one
-// (not yet backfilled) sorted to the end rather than the top -- an
-// unknown date shouldn't masquerade as "just added". 'name': plain
-// alphabetical by displayName. See state.js's sortMode and
-// filters.js's renderSortFilter().
+// Numeric sort key per mode ('name' is handled separately in
+// compareByMode below, as a string compare rather than a numeric
+// key). null means "unknown" and is handled as its own case in
+// compareByMode so it consistently sorts to the end regardless of
+// sortReverse (state.js), rather than jumping to the front when the
+// direction flips.
+//
+// 'recent' is the most recent addedAt (indexer.js's per-file
+// timestamp) among only the files that would currently show for this
+// item -- filesMatchingCurrentFilters (filters.js), which folds in
+// both the printer filter and the ambient keyword search -- not a
+// flat item-level date, so an item whose *matching* files are all old
+// sorts as old even if some other, currently-hidden file of its was
+// added recently.
+//
+// 'time' is fixed to the shortest print time (printTimeRangeSeconds's
+// .min) among the files that would currently print on the selected
+// printer(s) -- filesMatchingPrinter (filters.js), deliberately not
+// narrowed by keyword (see that function's comment) -- no matter
+// which direction is active. That's a deliberate choice over using
+// .min ascending / .max descending: that would make Reverse change
+// what an item is being sorted *by*, not just the order, which would
+// break Reverse's meaning as a uniform modifier across all three sort
+// modes. The full min-max range (over that same printer-filtered file
+// set) is still shown on every card regardless of sort (see
+// buildItemCardMetaText) so that information isn't lost, just moved
+// from the sort key to the display.
+function sortKeyForItem(item) {
+  const effective = effectivePrinterFilter();
+  if (sortMode === 'recent') {
+    return latestAddedAtMs(filesMatchingCurrentFilters(item, effective));
+  }
+  if (sortMode === 'time') {
+    const range = printTimeRangeSeconds(filesMatchingPrinter(item, effective));
+    return range ? range.min : null;
+  }
+  return null;
+}
+// 'recent' (default): newest-updated first (see sortKeyForItem above
+// for exactly which files/timestamp that means). 'name': plain
+// alphabetical by displayName. 'time': shortest print time first (see
+// sortKeyForItem above for why it's always the shortest, not
+// shortest/longest depending on direction). sortReverse (state.js)
+// flips the comparison result -- not the rendered array -- so the
+// "unknown sorts to the end" rule below holds regardless of
+// direction. See state.js's sortMode/sortReverse and filters.js's
+// renderSortFilter().
 function compareByMode(a, b) {
   if (sortMode === 'name') {
-    return (a.displayName || '').localeCompare(b.displayName || '');
+    const cmp = (a.displayName || '').localeCompare(b.displayName || '');
+    return sortReverse ? -cmp : cmp;
   }
-  const aTime = a.importedAt ? new Date(a.importedAt).getTime() : -Infinity;
-  const bTime = b.importedAt ? new Date(b.importedAt).getTime() : -Infinity;
-  return bTime - aTime;
+  const aKey = sortKeyForItem(a);
+  const bKey = sortKeyForItem(b);
+  if (aKey == null && bKey == null) return 0;
+  if (aKey == null) return 1;
+  if (bKey == null) return -1;
+  // 'recent' defaults newest-first (larger key first); 'time' defaults
+  // shortest-first (smaller key first).
+  const base = sortMode === 'recent' ? bKey - aKey : aKey - bKey;
+  return sortReverse ? -base : base;
+}
+// Item card's metadata line (see renderItemCard) -- print-time range
+// across the files that would currently print on the selected
+// printer(s) (filesMatchingPrinter), plus a relative "updated"
+// timestamp derived from the most recent addedAt among the files that
+// would currently show (filesMatchingCurrentFilters) -- see
+// sortKeyForItem above for why those two file sets differ. Shown
+// unconditionally, regardless of the active sort (unlike the sort
+// keys, which only use single values off these same sets). Either
+// clause is omitted on its own if that data isn't available (no
+// parseable print time / no addedAt yet on any counted file); returns
+// '' if neither is, so the caller can skip rendering the line
+// entirely.
+function buildItemCardMetaText(item) {
+  const effective = effectivePrinterFilter();
+  const parts = [];
+
+  const range = printTimeRangeSeconds(filesMatchingPrinter(item, effective));
+  if (range) {
+    parts.push(
+      range.min === range.max
+        ? formatDurationShort(range.min)
+        : `${formatDurationShort(range.min)} - ${formatDurationShort(range.max)}`
+    );
+  }
+
+  const latestMs = latestAddedAtMs(filesMatchingCurrentFilters(item, effective));
+  if (latestMs != null) {
+    parts.push(`updated ${formatRelativeTime(new Date(latestMs).toISOString())}`);
+  }
+
+  return parts.join(', ');
 }
 function render() {
   const effective = effectivePrinterFilter();
@@ -285,6 +366,20 @@ function renderItemCard(item) {
     label.appendChild(badge);
   }
   card.appendChild(label);
+
+  // Print-time range + "updated" line -- styled like the print-file
+  // card's batch/color-change subtitle (see itemModal.js's
+  // buildFileSubtitleText / .file-subtitle in itemModal.css): smaller
+  // bold monospace text sitting right under the title. A plain <div>
+  // rather than a <span> so it isn't also caught by the "a.listing
+  // span" padding rule meant for the title (grid.css).
+  const metaText = buildItemCardMetaText(item);
+  if (metaText) {
+    const meta = document.createElement('div');
+    meta.className = 'item-card-meta';
+    meta.textContent = metaText;
+    card.appendChild(meta);
+  }
 
   return card;
 }

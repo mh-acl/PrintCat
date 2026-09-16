@@ -2,11 +2,13 @@
 
 // dateBackfill.js
 //
-// Computes a best-guess "added to catalog" date for an existing item,
-// for editSession.js's one-off backfillAddedDates() (see main.js's
-// Tools-menu wiring for why this exists at all: items added before
-// this feature shipped never had an accurate importedAt recorded --
-// see itemMetadata.js).
+// Computes a best-guess "added to catalog" date for an existing item
+// (computeAddedDate) or a single print file within one
+// (computeAddedDateForFile), for editSession.js's one-off
+// backfillAddedDates() (see main.js's Tools-menu wiring for why this
+// exists at all: items -- and, now, individual print files -- added
+// before this feature shipped never had an accurate added-date
+// recorded -- see itemMetadata.js).
 //
 // Two independent signals, and we take whichever is OLDER:
 //
@@ -120,14 +122,12 @@ async function computeFsEarliestDate(itemPath) {
   return earliestMs === null ? null : new Date(earliestMs).toISOString();
 }
 
-// Combines both signals for one item, returning the older of the two
-// plus which one won (so the caller can report it). Falls back to
-// "now" -- flagged via source -- only when neither signal produced
-// anything at all, which shouldn't normally happen for a real item.
-async function computeAddedDate(itemPath, dataDir, timeoutMs) {
-  const relPath = path.relative(dataDir, itemPath);
-  const gitDateStr = await computeGitEarliestDate(relPath, dataDir, timeoutMs);
-  const fsDateStr = await computeFsEarliestDate(itemPath);
+// Combines a git-history date and a filesystem-mtime date, returning
+// the older of the two plus which one won. Shared by computeAddedDate
+// (whole item) and computeAddedDateForFile (a single print file)
+// below -- same "older signal wins" reasoning for both, just scoped
+// to a different git-log path / mtime source.
+function olderOf(gitDateStr, fsDateStr) {
   const gitMs = gitDateStr ? Date.parse(gitDateStr) : null;
   const fsMs = fsDateStr ? Date.parse(fsDateStr) : null;
 
@@ -141,4 +141,37 @@ async function computeAddedDate(itemPath, dataDir, timeoutMs) {
   return { date: new Date().toISOString(), source: 'fallback-now' };
 }
 
-module.exports = { isShallowRepo, unshallowRepo, computeAddedDate };
+// Combines both signals for one item, returning the older of the two
+// plus which one won (so the caller can report it). Falls back to
+// "now" -- flagged via source -- only when neither signal produced
+// anything at all, which shouldn't normally happen for a real item.
+async function computeAddedDate(itemPath, dataDir, timeoutMs) {
+  const relPath = path.relative(dataDir, itemPath);
+  const gitDateStr = await computeGitEarliestDate(relPath, dataDir, timeoutMs);
+  const fsDateStr = await computeFsEarliestDate(itemPath);
+  return olderOf(gitDateStr, fsDateStr);
+}
+
+// Same idea as computeAddedDate, scoped to one print file rather than
+// a whole item -- editSession.js's backfillAddedDates() calls this
+// once per print file so each one gets its own addedAt (see
+// itemMetadata.js's printFiles map) instead of inheriting the item's
+// single date. Git history is checked against the file's own path
+// (so a file added to an existing item well after that item's own
+// earliest commit gets its own, later, git date rather than the
+// item's); the filesystem signal is just that one file's own mtime,
+// not a directory walk.
+async function computeAddedDateForFile(filePath, dataDir, timeoutMs) {
+  const relPath = path.relative(dataDir, filePath);
+  const gitDateStr = await computeGitEarliestDate(relPath, dataDir, timeoutMs);
+  let fsDateStr = null;
+  try {
+    const stat = await fsp.stat(filePath);
+    fsDateStr = new Date(stat.mtimeMs).toISOString();
+  } catch (err) {
+    // Vanished between scan and backfill -- fall back to git alone.
+  }
+  return olderOf(gitDateStr, fsDateStr);
+}
+
+module.exports = { isShallowRepo, unshallowRepo, computeAddedDate, computeAddedDateForFile };

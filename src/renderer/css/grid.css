@@ -86,6 +86,20 @@ a.listing span {
   padding: 0.5em 0.6em;
   font-weight: 500;
 }
+/* Print-time range + "updated" line -- same treatment as the
+   print-file card's batch/color-change subtitle (itemModal.css's
+   .file-subtitle): bold monospace, small, muted, sitting right under
+   the title rather than reading as a separate metadata block. Pulled
+   up slightly to sit closer to the title text, since the title span
+   above already carries its own bottom padding. */
+.item-card-meta {
+  display: block;
+  margin: -0.3em 0.6em 0.5em;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.7em;
+  color: var(--ink-soft);
+}
 .sync-footer {
   /* display:none by default (before renderSyncStatus() has run, e.g.
      required-setup mode where sync is never configured) -- toggled to

@@ -195,10 +195,12 @@ function backfillAddedDatesTask() {
     confirmMessage: 'Recompute "added" dates for every item in the catalog?',
     confirmDetail:
       "For each item, this checks the data repo's git history and the item's own file " +
-      'timestamps and uses whichever points to an older date. If the local data checkout is ' +
-      'still a shallow clone, it\u2019s converted to a full clone first (one-time, permanent, ' +
-      'harmless) so real git history is available to check. Nothing is pushed until you ' +
-      'confirm the edit session -- Discard All Changes reverts this like any other edit.',
+      'timestamps and uses whichever points to an older date -- same for each of its print ' +
+      'files individually, which get their own added date shown on the catalog card. If the ' +
+      'local data checkout is still a shallow clone, it\u2019s converted to a full clone first ' +
+      '(one-time, permanent, harmless) so real git history is available to check. Nothing is ' +
+      'pushed until you confirm the edit session -- Discard All Changes reverts this like any ' +
+      'other edit.',
     async run() {
       if (!editSession) throw new Error('Start an edit session before backfilling.');
       const items = await indexer.scan();
@@ -207,8 +209,9 @@ function backfillAddedDatesTask() {
       if (mainWindow) {
         mainWindow.webContents.send('editSession:changesUpdated', { tree, changes: editSession.getChanges() });
       }
+      const totalFiles = results.reduce((sum, r) => sum + r.filesDated, 0);
       return {
-        summary: `Backfill finished: ${results.length} item${results.length === 1 ? '' : 's'} updated.`,
+        summary: `Backfill finished: ${results.length} item${results.length === 1 ? '' : 's'} (${totalFiles} print file${totalFiles === 1 ? '' : 's'}) updated.`,
         detail: results.length ? results.map((r) => `${r.name}: ${r.date.slice(0, 10)} (${r.source})`).join('\n') : undefined,
       };
     },

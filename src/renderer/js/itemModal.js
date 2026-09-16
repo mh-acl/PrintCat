@@ -770,8 +770,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     content.innerHTML = '';
     if (mode === 'view') {
       const effective = effectivePrinterFilter();
-      const matchesPrinterOnly =
-        effective && effective.size > 0 ? item.files.filter((f) => effective.has(printerLabel(f))) : item.files;
+      const matchesPrinterOnly = item.files.filter((f) => fileMatchesPrinter(f, effective));
       const matchingFiles = matchesPrinterOnly.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
       if (matchingFiles.length === 0) {
         // Same reasoning as the main grid's empty state (buildGridEmptyMessage)
@@ -1488,7 +1487,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   // would, not a separately-maintained approximation of it.
   function fileWouldShowInBrowsing(pf) {
     const effective = effectivePrinterFilter();
-    if (effective && effective.size > 0 && !effective.has(printerLabel(pf))) return false;
+    if (!fileMatchesPrinter(pf, effective)) return false;
     return fileMatchesKeywordInItem(item, pf, keywordQuery);
   }
 

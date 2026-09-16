@@ -41,9 +41,18 @@ function collectTags(items) {
   }
   return set;
 }
+// A single file's printer identity vs. the current filter -- the
+// shared building block behind itemMatchesPrinter (any-file-matches,
+// used to decide whether an item shows at all) and the "which files
+// count for this item" helpers below (filesMatchingPrinter/
+// filesMatchingCurrentFilters), which need the same per-file test but
+// keep or drop individual files rather than the whole item.
+function fileMatchesPrinter(file, printerSet) {
+  return !printerSet || printerSet.size === 0 || printerSet.has(printerLabel(file));
+}
 function itemMatchesPrinter(item, printerSet) {
   if (!printerSet || printerSet.size === 0) return true;
-  return item.files.some((f) => printerSet.has(printerLabel(f)));
+  return item.files.some((f) => fileMatchesPrinter(f, printerSet));
 }
 function itemMatchesTags(item, tagSet) {
   if (!tagSet || tagSet.size === 0) return true;
@@ -87,6 +96,36 @@ function fileMatchesKeywordInItem(item, file, query) {
   if (words.length === 0) return true;
   if (textIncludesAllWords(itemNameText(item), words)) return true;
   return textIncludesAllWords(fileSearchText(file), words);
+}
+// "Which of this item's files count" for the two grid-card metadata
+// values (grid.js's sortKeyForItem/buildItemCardMetaText) -- each
+// falls back a tier at a time rather than ever returning empty, same
+// reasoning as itemModal.js's view-mode file list (matchesPrinterOnly/
+// matchingFiles): an item can pass the ambient item-level filters
+// (itemMatchesPrinter/itemMatchesKeyword, which only require *some*
+// file to match each independently) while literally no single file
+// satisfies both at once, and the card still needs to show something
+// rather than going blank in that edge case.
+//
+// filesMatchingCurrentFilters is the "updated" timestamp's notion of
+// "showing" -- printer filter, narrowed further by the ambient
+// keyword search, matching what you'd actually see if you opened this
+// item's own modal right now.
+//
+// filesMatchingPrinter is print time's narrower notion -- printer
+// filter only. Deliberately ignores the keyword search: which files
+// physically fit the selected printer(s) doesn't depend on what text
+// you happen to be searching for.
+function filesMatchingCurrentFilters(item, printerSet) {
+  const printerOnly = item.files.filter((f) => fileMatchesPrinter(f, printerSet));
+  const combined = printerOnly.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
+  if (combined.length > 0) return combined;
+  if (printerOnly.length > 0) return printerOnly;
+  return item.files;
+}
+function filesMatchingPrinter(item, printerSet) {
+  const printerOnly = item.files.filter((f) => fileMatchesPrinter(f, printerSet));
+  return printerOnly.length > 0 ? printerOnly : item.files;
 }
 // Total matching *items* for one tag pill's count -- deliberately
 // mirrors the exact predicate render() uses to build visibleItems
@@ -278,6 +317,7 @@ function renderTagFilter() {
 const SORT_MODES = [
   { mode: 'recent', label: 'Recent' },
   { mode: 'name', label: 'Name' },
+  { mode: 'time', label: 'Print Time' },
 ];
 function renderSortFilter() {
   const el = document.getElementById('sort-filter');
@@ -296,4 +336,19 @@ function renderSortFilter() {
     };
     el.appendChild(btn);
   }
+
+  // Reverse modifier -- applies to whichever mode is active, so it's
+  // its own pill rather than one of the mode pills above. Toggles
+  // sortReverse (state.js), which grid.js's compareByMode folds into
+  // its comparison rather than this reversing the rendered array
+  // itself -- see that function for why the distinction matters.
+  const reverseBtn = document.createElement('button');
+  reverseBtn.textContent = 'Reverse';
+  reverseBtn.className = 'filter-pill' + (sortReverse ? ' active' : '');
+  reverseBtn.onclick = () => {
+    sortReverse = !sortReverse;
+    renderSortFilter();
+    render();
+  };
+  el.appendChild(reverseBtn);
 }

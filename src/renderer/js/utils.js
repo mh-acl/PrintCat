@@ -29,13 +29,18 @@ function textIncludesAllWords(text, words) {
 function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
-// Coarse "how long ago" phrasing for the sync-status footer -- doesn't
-// need to be precise to the second, just legible at a glance.
+// Coarse "how long ago" phrasing -- used by the sync-status footer and
+// (see grid.js's buildItemCardMetaText) the item card's "updated"
+// line. Doesn't need to be precise to the second, just legible at a
+// glance -- month/year buckets are calendar-approximate (30/365 days)
+// for the same reason.
 function formatRelativeTime(isoString) {
   const diffMs = Math.max(0, Date.now() - new Date(isoString).getTime());
   const minute = 60 * 1000;
   const hour = 60 * minute;
   const day = 24 * hour;
+  const month = 30 * day;
+  const year = 365 * day;
 
   if (diffMs < minute) return 'just now';
   if (diffMs < hour) {
@@ -46,8 +51,78 @@ function formatRelativeTime(isoString) {
     const n = Math.floor(diffMs / hour);
     return `${n} hour${n === 1 ? '' : 's'} ago`;
   }
-  const n = Math.floor(diffMs / day);
-  return `${n} day${n === 1 ? '' : 's'} ago`;
+  if (diffMs < month) {
+    const n = Math.floor(diffMs / day);
+    return `${n} day${n === 1 ? '' : 's'} ago`;
+  }
+  if (diffMs < year) {
+    const n = Math.floor(diffMs / month);
+    return `${n} month${n === 1 ? '' : 's'} ago`;
+  }
+  const n = Math.floor(diffMs / year);
+  return `${n} year${n === 1 ? '' : 's'} ago`;
+}
+// Parses PrusaSlicer's "estimated printing time (normal mode)" gcode
+// comment (e.g. "1h 23m 45s", "23m 45s", "45s", "1d 2h 3m 4s") into
+// total seconds. Sums whichever d/h/m/s components are present rather
+// than requiring all four, since PrusaSlicer omits leading zero
+// components. Returns null when nothing parseable is found (unknown
+// printTime, or a raw string in a format we don't recognize) so
+// callers can distinguish "no time" from "zero seconds" and exclude
+// it rather than let it masquerade as an instant print.
+function parsePrintTimeSeconds(raw) {
+  if (!raw) return null;
+  const d = raw.match(/(\d+)d/);
+  const h = raw.match(/(\d+)h/);
+  const m = raw.match(/(\d+)m(?!s)/);
+  const s = raw.match(/(\d+)s/);
+  if (!d && !h && !m && !s) return null;
+  return (
+    (d ? parseInt(d[1], 10) * 86400 : 0) +
+    (h ? parseInt(h[1], 10) * 3600 : 0) +
+    (m ? parseInt(m[1], 10) * 60 : 0) +
+    (s ? parseInt(s[1], 10) : 0)
+  );
+}
+// Print-time range across a *set of files* -- deliberately takes a
+// files array rather than an item, since callers pass different
+// filtered subsets of an item's files depending on purpose (grid.js's
+// buildItemCardMetaText/sortKeyForItem pass only the files that would
+// print on the currently selected printer(s) -- see filesMatchingPrinter
+// in filters.js -- not necessarily every file the item has). Files
+// with an unparseable/missing printTime are excluded rather than
+// treated as 0; returns null (not {min:0,max:0}) when none of the
+// given files has a usable printTime at all.
+function printTimeRangeSeconds(files) {
+  const times = (files || [])
+    .map((f) => parsePrintTimeSeconds(f.printTime))
+    .filter((t) => t != null);
+  if (!times.length) return null;
+  return { min: Math.min(...times), max: Math.max(...times) };
+}
+// The most recent addedAt (see indexer.js's per-file addedAt) among a
+// set of files, as epoch ms -- the basis for both the "Recent" sort
+// key and the card's "updated" clause (grid.js's sortKeyForItem/
+// buildItemCardMetaText), each called with whatever subset of the
+// item's files currently counts as "showing" (filters.js's
+// filesMatchingCurrentFilters). Files with no addedAt yet (never
+// added-to or backfilled) are excluded rather than treated as 0;
+// returns null when none of the given files has one.
+function latestAddedAtMs(files) {
+  const times = (files || [])
+    .map((f) => (f.addedAt ? new Date(f.addedAt).getTime() : null))
+    .filter((t) => t != null);
+  return times.length ? Math.max(...times) : null;
+}
+// Rounds to the nearest minute (per-second precision isn't meaningful
+// for browsing/sorting) and formats as e.g. "45m", "1hr", "1hr 15m".
+function formatDurationShort(totalSeconds) {
+  const totalMinutes = Math.round(totalSeconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}hr`;
+  return `${hours}hr ${minutes}m`;
 }
 function baseNameNoExt(filename) {
   const idx = filename.lastIndexOf('.');

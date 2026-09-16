@@ -148,6 +148,16 @@ class Indexer {
       // filename-derived" convention as the item-level displayName
       // above.
       metadataDisplayName: (metaPrintFiles[path.basename(file.path)] || {}).displayName || null,
+      // Per-print-file "added to catalog" timestamp -- set at add
+      // time (editSession.js's _resolveNewPrintFiles/addItem) or by
+      // the Tools-menu date backfill (editSession.js's
+      // backfillAddedDates), same override-map mechanism as
+      // metadataDisplayName above. null for a file neither has
+      // touched yet -- the renderer's item-card metadata line and
+      // "Print Time"/date sorting both treat that as "unknown" rather
+      // than falling back to the item-level importedAt, since a
+      // years-old item can still pick up a brand new print file.
+      addedAt: (metaPrintFiles[path.basename(file.path)] || {}).addedAt || null,
     }));
 
     return {

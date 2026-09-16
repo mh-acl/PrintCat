@@ -17,9 +17,19 @@ let selectedPrinters = new Set(); // empty = no restriction chosen ("All Printer
 let selectedTags = new Set(); // empty = no restriction chosen ("All Tags")
 let keywordQuery = ''; // raw text from the search box; '' = no restriction
 // Which order the grid displays items in -- 'recent' (default) sorts by
-// importedAt descending, 'name' sorts alphabetically by displayName. See
-// grid.js's compareByMode()/render() and filters.js's renderSortFilter().
+// each item's most recently added/updated print file (filtered by the
+// current printer/keyword filters -- see filters.js's
+// filesMatchingCurrentFilters and grid.js's sortKeyForItem), 'name' sorts
+// alphabetically by displayName, 'time' sorts by the item's shortest
+// print file's print time ascending (filtered by the current printer
+// filter only -- filters.js's filesMatchingPrinter). See grid.js's
+// compareByMode()/render() and filters.js's renderSortFilter().
 let sortMode = 'recent';
+// Flips compareByMode's comparison result (not the rendered array) --
+// see grid.js's compareByMode for why: it keeps "unknown value sorts
+// to the end" true regardless of direction, which a plain
+// Array.reverse() or array-reversal-based approach wouldn't.
+let sortReverse = false;
 let settings = { availablePrinters: [], hideUnavailable: false, gitRepoUrl: '', gitBranch: '' };
 let syncStatus = { configured: false, lastSuccessAt: null, inProgress: false, pausedForEdit: false };
 

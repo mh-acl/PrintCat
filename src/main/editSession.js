@@ -8,7 +8,7 @@ const { writeItemMetadata, METADATA_FILENAME } = require('./itemMetadata');
 const { parseFilename, parseGcodeMetadata } = require('./gcodeParser');
 const { detectOrigin: detectOriginInFolder } = require('./originLocation');
 const { uniqueFilename } = require('./uniqueFilename');
-const { isShallowRepo, unshallowRepo, computeAddedDate } = require('./dateBackfill');
+const { isShallowRepo, unshallowRepo, computeAddedDate, computeAddedDateForFile } = require('./dateBackfill');
 
 // Per-item git log call is fast (one small subprocess), but a repo
 // that's never been unshallowed before needs one much longer fetch
@@ -340,17 +340,19 @@ class EditSession {
   }
 
   // One-off catch-up recomputing importedAt (see itemMetadata.js) for
-  // every item passed in, via dateBackfill.js's git+filesystem
-  // heuristic -- see main.js's Tools-menu wiring for why this exists.
-  // Unlike backfillOrigins above, this deliberately does NOT skip
-  // items that already have a value: an existing importedAt may just
-  // be a "first time this item was ever edited by the app" artifact
-  // (writeItemMetadata only fills it in if missing on a normal save --
-  // see itemMetadata.js) rather than a trustworthy add date, so every
-  // item gets recomputed. Safe to re-run -- the heuristic converges on
-  // the same answer each time for a given item, since it only depends
-  // on git history and file mtimes, neither of which this backfill
-  // itself changes.
+  // every item passed in, and each of its print files' own addedAt
+  // (see itemMetadata.js's printFiles map), via dateBackfill.js's
+  // git+filesystem heuristic -- see main.js's Tools-menu wiring for
+  // why this exists. Unlike backfillOrigins above, this deliberately
+  // does NOT skip items/files that already have a value: an existing
+  // importedAt/addedAt may just be a "first time this app touched it"
+  // artifact (writeItemMetadata/the add-time stamping in
+  // _resolveNewPrintFiles/addItem only fill it in if missing -- see
+  // itemMetadata.js) rather than a trustworthy add date, so every
+  // item and file gets recomputed. Safe to re-run -- the heuristic
+  // converges on the same answer each time for a given item/file,
+  // since it only depends on git history and file mtimes, neither of
+  // which this backfill itself changes.
   //
   // Unshallows the local data-repo clone first if needed (see
   // dateBackfill.js) -- a one-time, permanent side effect on whichever
@@ -365,6 +367,20 @@ class EditSession {
     for (const item of items) {
       const { date, source } = await computeAddedDate(item.path, this.dataDir, GIT_LOG_TIMEOUT_MS);
 
+      // One computeAddedDateForFile call per print file, folded into
+      // the same printFiles map shape writeItemMetadata expects
+      // (merged onto, not replacing, any existing per-file
+      // displayName/images override -- see itemMetadata.js). filesDated
+      // is just for the per-item result summary below, not written
+      // anywhere itself.
+      const printFiles = {};
+      let filesDated = 0;
+      for (const file of item.files || []) {
+        const fileResult = await computeAddedDateForFile(file.path, this.dataDir, GIT_LOG_TIMEOUT_MS);
+        printFiles[path.basename(file.path)] = { addedAt: fileResult.date };
+        filesDated++;
+      }
+
       // displayName/tags/itemImage passed through unchanged -- same
       // reasoning as backfillOrigins above, since writeItemMetadata
       // fully replaces (rather than merges) those three fields.
@@ -373,6 +389,7 @@ class EditSession {
         tags: item.tags,
         itemImage: item.metadataItemImage,
         importedAt: date,
+        printFiles,
       });
 
       // Same type-preservation rule as backfillOrigins above: stays
@@ -398,7 +415,7 @@ class EditSession {
         changeEntry = { type: 'edit', name: item.displayName, bulk: 'backfillAddedDates' };
       }
       this.changes[item.path] = changeEntry;
-      results.push({ name: item.displayName, date, source });
+      results.push({ name: item.displayName, date, source, filesDated });
     }
 
     return results;
@@ -548,7 +565,14 @@ class EditSession {
         fields.images = names;
       }
       if (entry.displayName) fields.displayName = entry.displayName;
-      if (Object.keys(fields).length > 0) result[finalName] = fields;
+      // A brand new file is, by definition, being added right now --
+      // stamped unconditionally (not folded into the `if
+      // Object.keys(fields).length > 0` guard above/below it) so a
+      // new file with no image/name override yet still gets a real
+      // addedAt instead of showing as "unknown" until the next
+      // catalog-wide backfill run.
+      fields.addedAt = new Date().toISOString();
+      result[finalName] = fields;
     }
     return result;
   }
@@ -573,6 +597,39 @@ class EditSession {
       const filePath = path.join(dirPath, path.basename(name));
       if (await pathExists(filePath)) await fsp.unlink(filePath);
     }
+  }
+
+  // Every print file present in a brand new item's folder is, by
+  // definition, being added to the catalog right now -- whether it
+  // came from the picked source folder itself (never touches
+  // _resolveNewPrintFiles, so never gets stamped there) or was added
+  // via "+ Add print file(s)" during the same add-mode session
+  // (already stamped by _resolveNewPrintFiles above). This walks
+  // destDir's actual print files after everything's been copied and
+  // fills in addedAt for any that don't already have one from the
+  // latter path, so every file in a new item ends up with a real
+  // added date rather than "unknown" until the next catalog-wide
+  // backfill. Only ever fills in the gap (never overwrites an
+  // addedAt _resolveNewPrintFiles already set), and only used by
+  // addItem -- editItem's pre-existing files intentionally keep
+  // whatever addedAt they already have (see _resolveNewPrintFiles's
+  // comment above).
+  async _stampInitialAddedAt(destDir, printFiles) {
+    let entries;
+    try {
+      entries = await fsp.readdir(destDir, { withFileTypes: true });
+    } catch (err) {
+      return printFiles; // shouldn't happen right after copying into it, but don't crash the add over it
+    }
+    const now = new Date().toISOString();
+    const stamped = { ...printFiles };
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      if (!PRINTFILE_ADD_EXT.has(path.extname(entry.name).toLowerCase())) continue;
+      if (stamped[entry.name] && stamped[entry.name].addedAt) continue;
+      stamped[entry.name] = { ...(stamped[entry.name] || {}), addedAt: now };
+    }
+    return stamped;
   }
 
   async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops, newPrintFiles, trashedPrintFiles }) {
@@ -603,13 +660,13 @@ class EditSession {
     const resolvedPathToName = new Map(); // external path -> final filename, shared below
     const newPrintFilesResolved = await this._resolveNewPrintFiles(destDir, newPrintFiles, resolvedPathToName);
     await this._deleteTrashedPrintFiles(destDir, trashedPrintFiles);
-    const resolvedPrintFiles = {
+    const resolvedPrintFiles = await this._stampInitialAddedAt(destDir, {
       ...this._mergePrintFileNames(
         await this._resolveImages(destDir, printFileImages, resolvedPathToName),
         printFileNames
       ),
       ...newPrintFilesResolved,
-    };
+    });
     const resolvedItemImage = itemImage
       ? await this._resolveSingleImageRef(destDir, itemImage, resolvedPathToName)
       : '';
