@@ -20,6 +20,7 @@ const { promptForToken } = require('./provisionTokenWindow');
 const { EditSession } = require('./editSession');
 const { stripTrailingId } = require('./folderName');
 const { uniqueFilename } = require('./uniqueFilename');
+const { checkAndUpdateReleasePointer } = require('./releasePointer');
 
 // The single in-progress editing session, or null when a co-admin
 // hasn't entered edit mode. Only one at a time -- see
@@ -169,6 +170,15 @@ async function enterEditSession() {
   if (!editSession) {
     const token = await getOrProvisionToken();
     if (!token) return; // admin prompt cancelled/failed -- back out quietly, same as any other cancel in this flow
+
+    // Best-effort, non-blocking: bumps the data repo's root release
+    // pointer if this laptop is running a newer build than what's
+    // currently recorded -- see releasePointer.js. Pushed immediately
+    // (its own tiny commit), not staged alongside whatever the
+    // co-admin does in the session about to open, since a Cancel
+    // would otherwise wipe it along with any other uncommitted change.
+    await checkAndUpdateReleasePointer(DATA_DIR, token, settings.gitRepoUrl, settings.gitBranch);
+
     editSession = new EditSession(DATA_DIR, token);
   }
   mainWindow.webContents.send('editSession:entered');
