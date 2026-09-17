@@ -142,7 +142,10 @@ body {
   font-family: var(--font-body);
   background: var(--paper);
   color: var(--ink);
-  max-width: 900px;
+  /* Wide enough for the main grid to keep roughly its old ~900px of
+     working width now that the sidebar (.catalog-sidebar, filters.css)
+     sits alongside it rather than stacked above. */
+  max-width: 1180px;
   margin: 2em auto;
   line-height: 1.45;
 }

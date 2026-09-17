@@ -1,29 +1,9 @@
-/* Edit-mode visual state: smart-tag filter pills (Pending/Edited/
-   Trashed), pending-change badges/borders on grid cards, the
-   item-card trash/restore toggle and "needs attention" icon, the
-   Add-item/Backfill-origins buttons, and the bottom edit-session bar. */
-
-/* Edit mode -- see renderer.js's editModeActive/pendingChanges. Smart
-   tag pills reuse .filter-pill's shape but get their own colors so
-   they read as distinct from category/printer pills at a glance. */
-.filter-pill.smart-tag-add {
-  background: var(--status-add-bg);
-  border-color: var(--status-add-line);
-  color: var(--status-add);
-}
-.filter-pill.smart-tag-edit {
-  background: var(--status-edit-bg);
-  border-color: var(--status-edit-line);
-  color: var(--status-edit);
-}
-.filter-pill.smart-tag-delete {
-  background: var(--status-delete-bg);
-  border-color: var(--status-delete-line);
-  color: var(--status-delete);
-}
-.filter-pill.smart-tag.active {
-  font-weight: 700;
-}
+/* Edit-mode visual state: pending-change badges/borders on grid cards,
+   the item-card trash/restore toggle and "needs attention" icon, the
+   Add-item/Backfill-origins buttons, and the bottom edit-session bar.
+   (The Pending/Edited/Trashed status rows themselves moved to the
+   sidebar's .filter-option.smart-tag-* rules in filters.css, alongside
+   the printer/tag filters they used to sit next to as pills.) */
 .pending-badge {
   display: inline-block;
   font-family: var(--font-mono);

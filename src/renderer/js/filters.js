@@ -1,9 +1,40 @@
 'use strict';
 
 // Printer/tag/keyword filtering: predicate functions (itemMatches*)
-// plus the two filter-pill rows (renderPrinterFilter/renderTagFilter).
+// plus the sidebar filter option-lists (renderPrinterFilter/
+// renderTagFilter, the latter also driving the edit-mode-only status
+// list) and the sort-mode/direction control up top (renderSortFilter).
 // Depends on: state.js (selectedPrinters/selectedTags/keywordQuery/
 // editModeActive/selectedSmartTags/settings), utils.js.
+
+// Builds one checkbox/radio row for a sidebar filter list --
+// renderPrinterFilter (checkboxes, multi-select), renderTagFilter
+// (radios, single-select, both the tag list and the edit-mode status
+// list) all share this shape rather than each hand-rolling a <label>.
+function buildFilterOptionRow({ type, name, checked, labelText, countText, extraClass, onChange }) {
+  const label = document.createElement('label');
+  label.className = 'filter-option' + (extraClass ? ` ${extraClass}` : '');
+
+  const input = document.createElement('input');
+  input.type = type;
+  if (name) input.name = name;
+  input.checked = checked;
+  input.onchange = onChange;
+  label.appendChild(input);
+
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'filter-option-label';
+  labelSpan.textContent = labelText;
+  label.appendChild(labelSpan);
+
+  if (countText !== undefined) {
+    const countSpan = document.createElement('span');
+    countSpan.className = 'filter-option-count';
+    countSpan.textContent = countText;
+    label.appendChild(countSpan);
+  }
+  return label;
+}
 
 function onKeywordInput(e) {
   keywordQuery = e.target.value;
@@ -200,42 +231,54 @@ function renderPrinterFilter() {
   const allPrinters = Array.from(collectPrinters(allItems)).sort();
   const visiblePrinters = getVisiblePrinterOptions(allPrinters);
 
-  // Nothing to actually choose between -- hide the whole filter bar
-  // and just show that one printer's items directly.
+  // Nothing to actually choose between -- hide the whole sidebar
+  // section (heading included, not just the option list) and just
+  // show that one printer's items directly.
+  const section = el.closest('.filter-section');
   if (settings.hideUnavailable && visiblePrinters.length <= 1) {
-    el.style.display = 'none';
+    if (section) section.style.display = 'none';
     return;
   }
-  el.style.display = '';
+  if (section) section.style.display = '';
 
   // Drop any selected printer that's no longer a valid choice (e.g.
   // its last file was removed, or an admin setting hid it).
   selectedPrinters = new Set([...selectedPrinters].filter((p) => visiblePrinters.includes(p)));
 
-  const allBtn = document.createElement('button');
-  allBtn.textContent = 'All Printers';
-  allBtn.className = 'filter-pill' + (selectedPrinters.size === 0 ? ' active' : '');
-  allBtn.onclick = () => {
-    selectedPrinters = new Set();
-    renderPrinterFilter();
-    render();
-  };
-  el.appendChild(allBtn);
+  // "All Printers" isn't itself a printer to multi-select alongside the
+  // others -- it's a checked-when-nothing-else-is reset row, same
+  // behavior as the old pill (clicking it always clears the set, it's
+  // just also checked automatically once the set empties out).
+  el.appendChild(
+    buildFilterOptionRow({
+      type: 'checkbox',
+      checked: selectedPrinters.size === 0,
+      labelText: 'All Printers',
+      onChange: () => {
+        selectedPrinters = new Set();
+        renderPrinterFilter();
+        render();
+      },
+    })
+  );
 
   for (const printer of visiblePrinters) {
-    const btn = document.createElement('button');
-    btn.textContent = printer;
-    btn.className = 'filter-pill' + (selectedPrinters.has(printer) ? ' active' : '');
-    btn.onclick = () => {
-      if (selectedPrinters.has(printer)) {
-        selectedPrinters.delete(printer);
-      } else {
-        selectedPrinters.add(printer);
-      }
-      renderPrinterFilter();
-      render();
-    };
-    el.appendChild(btn);
+    el.appendChild(
+      buildFilterOptionRow({
+        type: 'checkbox',
+        checked: selectedPrinters.has(printer),
+        labelText: printer,
+        onChange: (e) => {
+          if (e.target.checked) {
+            selectedPrinters.add(printer);
+          } else {
+            selectedPrinters.delete(printer);
+          }
+          renderPrinterFilter();
+          render();
+        },
+      })
+    );
   }
 }
 function renderTagFilter() {
@@ -243,112 +286,169 @@ function renderTagFilter() {
   el.innerHTML = '';
 
   const tags = Array.from(collectTags(allItems)).sort();
-  // Bail out on the tag-pill portion alone when there are no tags yet
-  // -- the smart tag pills (edit mode) still need to render either way.
-  if (tags.length > 0) {
+  const tagSection = el.closest('.filter-section');
+  if (tags.length === 0) {
+    // Nothing to choose between yet -- hide the section entirely
+    // (heading included) rather than show an empty radio list.
+    if (tagSection) tagSection.style.display = 'none';
+  } else {
+    if (tagSection) tagSection.style.display = '';
+
     // Drop any selected tag that's no longer valid (e.g. its last item
     // was removed or untagged).
     selectedTags = new Set([...selectedTags].filter((t) => tags.includes(t)));
 
     const effective = effectivePrinterFilter();
 
-    const allBtn = document.createElement('button');
-    allBtn.textContent = 'All Tags';
-    allBtn.className = 'filter-pill' + (selectedTags.size === 0 ? ' active' : '');
-    allBtn.onclick = () => {
-      selectedTags = new Set();
-      renderTagFilter();
-      render();
-    };
-    el.appendChild(allBtn);
+    // True radio-group single-select: "All Tags" is one of the options
+    // rather than a separate reset control, so exactly one row is
+    // always checked. (Previously, clicking the already-active tag
+    // pill cleared it back to "All Tags" -- with real radios that's
+    // done by clicking "All Tags" itself instead, same as any other
+    // radio-button filter list.)
+    el.appendChild(
+      buildFilterOptionRow({
+        type: 'radio',
+        name: 'tag-filter-radio',
+        checked: selectedTags.size === 0,
+        labelText: 'All Tags',
+        onChange: () => {
+          selectedTags = new Set();
+          renderTagFilter();
+          render();
+        },
+      })
+    );
 
     for (const tag of tags) {
       const count = countItemsForTag(allItems, effective, tag, keywordQuery);
-      const btn = document.createElement('button');
-      btn.textContent = `${tag} (${count})`;
-      btn.className = 'filter-pill' + (selectedTags.has(tag) ? ' active' : '');
-      btn.onclick = () => {
-        // Single-select: clicking a tag switches the filter to just that
-        // tag, replacing whatever was selected before. Clicking the
-        // already-active tag clears back to "All Tags". (Previously this
-        // toggled the tag in/out of a multi-select OR set -- see
-        // ARCHITECTURE.md's "Tag filter: single-select" note.)
-        if (selectedTags.has(tag)) {
-          selectedTags = new Set();
-        } else {
-          selectedTags = new Set([tag]);
-        }
-        renderTagFilter();
-        render();
-      };
-      el.appendChild(btn);
+      el.appendChild(
+        buildFilterOptionRow({
+          type: 'radio',
+          name: 'tag-filter-radio',
+          checked: selectedTags.has(tag),
+          labelText: tag,
+          countText: `(${count})`,
+          onChange: () => {
+            selectedTags = new Set([tag]);
+            renderTagFilter();
+            render();
+          },
+        })
+      );
     }
   }
 
-  if (editModeActive) {
-    for (const tag of SMART_TAGS) {
-      const count = Object.values(pendingChanges).filter((c) => c.type === tag.type).length;
-      // A tag with nothing currently in that state would just filter
-      // the grid down to nothing if clicked -- skip showing it rather
-      // than offer a pill that's guaranteed to look "broken".
-      if (count === 0 && !selectedSmartTags.has(tag.type)) continue;
-
-      const btn = document.createElement('button');
-      btn.textContent = `${tag.label} (${count})`;
-      btn.className = `filter-pill smart-tag ${tag.className}` + (selectedSmartTags.has(tag.type) ? ' active' : '');
-      btn.onclick = () => {
-        if (selectedSmartTags.has(tag.type)) {
-          selectedSmartTags.delete(tag.type);
-        } else {
-          selectedSmartTags.add(tag.type);
-        }
-        renderTagFilter();
-        render();
-      };
-      el.appendChild(btn);
-    }
-  }
+  renderStatusFilter();
 }
-// Recent/Name sort control -- always exactly one active, unlike the
-// printer/tag pills above which support "none selected". Static aside
-// from its own active state, so it's rendered once at startup (see
-// renderer.js's init()) rather than needing a re-render hook on
-// allItems changes like the pill rows above.
+// Edit-mode-only Pending/Edited/Trashed rows -- split into their own
+// sidebar section (rather than sharing #tag-filter with real tags,
+// as the old smart-tag pills did) since they're a different filter
+// dimension. Still multi-select checkboxes, unlike the tag radios
+// above: any combination of statuses can be shown at once.
+function renderStatusFilter() {
+  const el = document.getElementById('status-filter');
+  const section = document.getElementById('status-filter-section');
+  if (!el || !section) return;
+  el.innerHTML = '';
+
+  if (!editModeActive) {
+    section.style.display = 'none';
+    return;
+  }
+
+  let shown = 0;
+  for (const tag of SMART_TAGS) {
+    const count = Object.values(pendingChanges).filter((c) => c.type === tag.type).length;
+    // A status with nothing currently in it would just filter the grid
+    // down to nothing if checked -- skip showing it rather than offer
+    // a row that's guaranteed to look "broken".
+    if (count === 0 && !selectedSmartTags.has(tag.type)) continue;
+    shown++;
+
+    el.appendChild(
+      buildFilterOptionRow({
+        type: 'checkbox',
+        checked: selectedSmartTags.has(tag.type),
+        labelText: tag.label,
+        countText: `(${count})`,
+        extraClass: tag.className,
+        onChange: (e) => {
+          if (e.target.checked) {
+            selectedSmartTags.add(tag.type);
+          } else {
+            selectedSmartTags.delete(tag.type);
+          }
+          renderStatusFilter();
+          render();
+        },
+      })
+    );
+  }
+  section.style.display = shown > 0 ? '' : 'none';
+}
+// Recent/Name/Print Time sort control -- always exactly one active,
+// unlike the printer/tag pills above which support "none selected".
+// Each mode has its own preferredReverse -- the direction it snaps to
+// whenever you switch into it, regardless of what direction whichever
+// mode was active before happened to be in -- plus its own inline
+// direction indicator, so the direction and the mode live on the same
+// button rather than a separate control. Rendered once at startup
+// (see renderer.js's init()) and again on every mode/direction change,
+// same as before.
 const SORT_MODES = [
-  { mode: 'recent', label: 'Recent' },
-  { mode: 'name', label: 'Name' },
-  { mode: 'time', label: 'Print Time' },
+  { mode: 'recent', label: 'Recent', preferredReverse: false },
+  { mode: 'name', label: 'Name', preferredReverse: false },
+  { mode: 'time', label: 'Print Time', preferredReverse: false },
 ];
+const SORT_DIRECTION_INDICATOR_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>';
 function renderSortFilter() {
   const el = document.getElementById('sort-filter');
   if (!el) return;
   el.innerHTML = '';
 
-  for (const { mode, label } of SORT_MODES) {
+  for (const { mode, label, preferredReverse } of SORT_MODES) {
+    const isActive = sortMode === mode;
+    // An inactive button's indicator shows the direction you'd land
+    // on by switching to it (its preferredReverse); the active
+    // button's indicator shows the direction actually in effect right
+    // now (sortReverse), which can differ from preferredReverse once
+    // it's been clicked a second time.
+    const reversed = isActive ? sortReverse : preferredReverse;
+
     const btn = document.createElement('button');
-    btn.textContent = label;
-    btn.className = 'filter-pill' + (sortMode === mode ? ' active' : '');
+    btn.type = 'button';
+    btn.className =
+      'filter-pill sort-mode-pill' + (isActive ? ' active' : '') + (reversed ? ' reversed' : '');
+    // Clicking the already-active mode reverses it in place; clicking
+    // a different mode switches to it at that mode's own preferred
+    // direction rather than carrying over whatever direction the
+    // previous mode was left in.
+    btn.title = isActive
+      ? `Sorted by ${label}, ${sortReverse ? 'reversed' : 'default'} order \u2014 click to reverse`
+      : `Sort by ${label}`;
+    btn.setAttribute('aria-label', btn.title);
     btn.onclick = () => {
-      if (sortMode === mode) return;
-      sortMode = mode;
+      if (isActive) {
+        sortReverse = !sortReverse;
+      } else {
+        sortMode = mode;
+        sortReverse = preferredReverse;
+      }
       renderSortFilter();
       render();
     };
+
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = label;
+    btn.appendChild(labelSpan);
+
+    const indicator = document.createElement('span');
+    indicator.className = 'sort-direction-indicator';
+    indicator.innerHTML = SORT_DIRECTION_INDICATOR_SVG;
+    btn.appendChild(indicator);
+
     el.appendChild(btn);
   }
-
-  // Reverse modifier -- applies to whichever mode is active, so it's
-  // its own pill rather than one of the mode pills above. Toggles
-  // sortReverse (state.js), which grid.js's compareByMode folds into
-  // its comparison rather than this reversing the rendered array
-  // itself -- see that function for why the distinction matters.
-  const reverseBtn = document.createElement('button');
-  reverseBtn.textContent = 'Reverse';
-  reverseBtn.className = 'filter-pill' + (sortReverse ? ' active' : '');
-  reverseBtn.onclick = () => {
-    sortReverse = !sortReverse;
-    renderSortFilter();
-    render();
-  };
-  el.appendChild(reverseBtn);
 }

@@ -1,5 +1,7 @@
-/* Keyword search box + printer/tag filter-pill rows above the main
-   grid. */
+/* Keyword search box + sort-mode/direction control (both still above
+   the main grid, in #top-filters), plus the printer/tag/status filter
+   lists, which now live in a right-hand sidebar column alongside the
+   grid rather than as pill rows above it -- see .catalog-layout. */
 
 .keyword-filter-wrap {
   display: flex;
@@ -26,17 +28,18 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
-#sort-filter,
-#printer-filter,
-#tag-filter {
+/* Sort-mode row (Recent/Name/Print Time pills) + the direction toggle
+   button right after them -- both still up top in #sort-filter. */
+/* Sort-mode row (Recent/Name/Print Time), each pill now carrying its
+   own inline direction indicator rather than a separate direction
+   button -- both still up top in #sort-filter. */
+#sort-filter {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.5em;
   justify-content: center;
   margin-bottom: 1em;
-}
-#tag-filter {
-  margin-bottom: 1.5em;
 }
 .filter-pill {
   padding: 0.45em 1em;
@@ -59,4 +62,135 @@
   border-color: var(--accent);
   color: white;
   font-weight: 600;
+}
+/* Sort-mode pills: label + a small chevron indicator sharing one
+   button, so switching mode and reversing direction are both actions
+   on the same control instead of a mode pill plus a separate
+   direction button. See filters.js's renderSortFilter for the
+   switch-vs-reverse click logic. */
+.filter-pill.sort-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+}
+.sort-direction-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Faint on an inactive pill (it's just previewing the direction
+     you'd land on by switching to it); full strength once that mode
+     is actually active. */
+  opacity: 0.45;
+  transition: transform 0.15s ease, opacity 0.12s ease;
+}
+.filter-pill.sort-mode-pill.active .sort-direction-indicator {
+  opacity: 1;
+}
+.filter-pill.sort-mode-pill.reversed .sort-direction-indicator svg {
+  transform: rotate(180deg);
+}
+/* The "a second click reverses" hint: only the active pill's click
+   reverses (an inactive pill's click switches mode instead), so only
+   the active pill nudges its chevron on hover -- a lightweight preview
+   of "this is about to flip" that an inactive pill deliberately
+   doesn't show, since hovering it doesn't have that effect. */
+.filter-pill.sort-mode-pill.active:hover .sort-direction-indicator svg {
+  transform: translateY(2px);
+}
+.filter-pill.sort-mode-pill.active.reversed:hover .sort-direction-indicator svg {
+  transform: rotate(180deg) translateY(-2px);
+}
+
+/* Right-hand filter sidebar (printer/tag/status), sitting alongside
+   the main grid instead of pill rows stacked above it. */
+.catalog-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 2em;
+}
+.catalog-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.catalog-sidebar {
+  flex: 0 0 15em;
+  width: 15em;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5em;
+  /* Stays visible while the grid scrolls beneath it. */
+  position: sticky;
+  top: 1em;
+}
+.filter-section-title {
+  font-family: var(--font-display);
+  font-size: 0.8em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  margin: 0 0 0.5em;
+}
+.filter-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+}
+.filter-option {
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  padding: 0.35em 0.4em;
+  border-radius: var(--radius-control);
+  font-size: 0.9em;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+/* Excludes the tinted status rows below -- their own background *is*
+   the meaningful color-coding, so a plain hover shouldn't blank it
+   out the way it does for the untinted printer/tag rows. */
+.filter-option:not([class*='smart-tag']):hover {
+  background: var(--line-soft);
+}
+/* Same "this one's active" emphasis the old .filter-pill.active pill
+   gave via background+weight, translated to a row: the checkbox/radio
+   itself already shows selection state, so this just bolds the label
+   text to match at a glance. Weight only, not color -- a status row's
+   color is its add/edit/delete tint and shouldn't be overridden here. */
+.filter-option:has(input:checked) {
+  font-weight: 600;
+}
+.filter-option input[type='checkbox'],
+.filter-option input[type='radio'] {
+  accent-color: var(--accent);
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  flex: 0 0 auto;
+}
+.filter-option-label {
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+.filter-option-count {
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  flex: 0 0 auto;
+}
+/* Status (smart-tag) rows keep the same add/edit/delete color coding
+   the old smart-tag pills used, just as a tinted row instead of a
+   pill background. */
+.filter-option.smart-tag-add {
+  background: var(--status-add-bg);
+  color: var(--status-add);
+}
+.filter-option.smart-tag-edit {
+  background: var(--status-edit-bg);
+  color: var(--status-edit);
+}
+.filter-option.smart-tag-delete {
+  background: var(--status-delete-bg);
+  color: var(--status-delete);
 }

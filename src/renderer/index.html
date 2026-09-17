@@ -33,10 +33,26 @@
       />
     </div>
     <div id="sort-filter"></div>
-    <div id="printer-filter"></div>
-    <div id="tag-filter"></div>
   </div>
-  <div id="listing"></div>
+  <div class="catalog-layout">
+    <div class="catalog-main">
+      <div id="listing"></div>
+    </div>
+    <aside class="catalog-sidebar">
+      <div class="filter-section">
+        <h2 class="filter-section-title">Printer</h2>
+        <div id="printer-filter" class="filter-option-list"></div>
+      </div>
+      <div class="filter-section">
+        <h2 class="filter-section-title">Tag</h2>
+        <div id="tag-filter" class="filter-option-list"></div>
+      </div>
+      <div id="status-filter-section" class="filter-section">
+        <h2 class="filter-section-title">Status</h2>
+        <div id="status-filter" class="filter-option-list"></div>
+      </div>
+    </aside>
+  </div>
   <div id="sync-footer" class="sync-footer">
     <div id="sync-status" class="sync-status"></div>
     <button
