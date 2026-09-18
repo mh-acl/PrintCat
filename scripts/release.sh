@@ -75,7 +75,7 @@ fi
 # zip for the update flow to fetch/unzip programmatically.
 npm run dist
 
-BUILT_ZIP=$(find dist -maxdepth 1 -name "*.zip" | head -n 1)
+BUILT_ZIP=$(find dist -maxdepth 1 -name "*.zip" | tail -n 1)
 if [ -z "$BUILT_ZIP" ]; then
   echo "No .zip artifact found in dist/ -- check electron-builder's mac.target config." >&2
   exit 1
