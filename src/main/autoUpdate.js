@@ -117,16 +117,31 @@ function getCurrentAppBundlePath() {
 
 // The actual swap can't safely happen while this process is still
 // running (see ARCHITECTURE.md's "Not yet implemented" note on this),
-// so it's handed off to a detached shell script that: waits for this
-// process's PID to actually exit, does a plain rm+mv, and -- only if
-// that fails, e.g. the install lives somewhere this account can't
-// write to without elevation -- retries the same rm+mv wrapped in
-// `osascript ... with administrator privileges`, which pops the native
-// macOS admin-auth prompt (the same underlying mechanism sudo-prompt
-// wraps elsewhere in this app, used directly here instead since
-// sudo-prompt itself needs a live Node process to invoke it, and by
-// this point the app has already quit). Then relaunches and cleans up
-// after itself, including deleting its own script file.
+// so it's handed off to a detached shell script that waits for this
+// process's PID to actually exit, then does the swap.
+//
+// Goes straight to the elevated `osascript ... with administrator
+// privileges` attempt rather than trying a plain rm+mv first and only
+// elevating on failure. That two-step version had a real failure
+// mode: `rm -rf` as a plain (non-admin) user could partially succeed
+// -- deleting the bundle's contents while failing to remove the
+// bundle directory itself, e.g. on a permissions error partway
+// through -- and only *then* hit the elevation fallback; if the
+// admin-auth dialog was cancelled at that point, the app was left
+// gutted with no way to recover. Going straight to the elevated
+// attempt means the entire rm+mv runs as a single privileged
+// `do shell script` (the same underlying mechanism sudo-prompt wraps
+// elsewhere in this app -- used directly here instead since
+// sudo-prompt needs a live Node process, and by this point the app
+// has already quit): if the person cancels the auth prompt, nothing
+// has been deleted yet, so `set -e` below just stops the script with
+// the old app fully intact. The cost is an auth prompt on every
+// install, even on laptops where the account could've written to
+// /Applications without it -- worth it to make cancellation safe.
+// A non-destructive rename-based swap (move the old bundle aside
+// first, only remove it after the new one is confirmed in place)
+// would remove the need for this tradeoff entirely; noted as a
+// follow-up, not done here.
 function buildInstallScript({ oldAppPath, newAppPath, stagingDir, zipPath, pid }) {
   const swapCmd = `rm -rf ${shQuote(oldAppPath)} && mv ${shQuote(newAppPath)} ${shQuote(oldAppPath)}`;
   const osaLine = `osascript -e "do shell script \\"${appleScriptEscape(swapCmd)}\\" with administrator privileges"`;
@@ -142,9 +157,7 @@ for i in $(seq 1 60); do
   sleep 0.5
 done
 
-if ! (${swapCmd}); then
-  ${osaLine}
-fi
+${osaLine}
 
 open ${shQuote(oldAppPath)}
 

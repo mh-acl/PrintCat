@@ -350,21 +350,33 @@ electron-builder's mac zip target packages it) → `installAndRelaunch()`.
 The actual swap can't safely happen while this process is still
 running, so `installAndRelaunch()` hands off to a generated, detached
 shell script (`buildInstallScript()`) and calls `app.quit()`
-immediately after spawning it. That script: waits (polling `kill -0`)
-for this process's own PID to actually exit, does a plain `rm -rf` +
-`mv` of the old bundle, and -- only if that fails, e.g. the install
-lives somewhere this account can't write to without elevation --
-retries the same swap wrapped in `osascript ... with administrator
-privileges`, which pops the native macOS admin-auth prompt. (Not
-`sudo-prompt`, used elsewhere in this app for the same kind of prompt
--- that library needs a live Node process to invoke it, and by this
-point the app has already quit; `osascript` is the same underlying
-mechanism sudo-prompt itself wraps.) Then relaunches via `open` and
-deletes the staging dir, the zip, and itself. All path interpolation
-into the generated script goes through `shQuote()`/`appleScriptEscape()`
-(tested against paths containing spaces, e.g. "Print Catalog.app",
-including the nested bash-inside-AppleScript-inside-bash quoting for
-the elevated-privileges fallback line).
+immediately after spawning it. That script waits (polling `kill -0`)
+for this process's own PID to actually exit, then swaps the bundle via
+a single privileged `osascript ... with administrator privileges` call
+-- the native macOS admin-auth prompt. (Not `sudo-prompt`, used
+elsewhere in this app for the same kind of prompt -- that library needs
+a live Node process to invoke it, and by this point the app has already
+quit; `osascript` is the same underlying mechanism sudo-prompt itself
+wraps.) Goes straight to the elevated attempt rather than trying a
+plain `rm -rf` + `mv` first and only elevating on failure -- an earlier
+version did that, and it had a real bug: a plain `rm -rf` as a non-admin
+user could partially succeed (bundle contents gone, directory itself
+left behind, e.g. on a permissions error partway through), and only
+*then* hit the elevation fallback -- so cancelling that auth prompt
+left the app gutted with no way back. Going straight to the elevated
+attempt means the whole `rm -rf && mv` runs as one privileged shell
+command: if the prompt is cancelled, nothing has been deleted yet, and
+`set -e` just stops the script with the old bundle fully intact. Costs
+an auth prompt on every install, even where it wasn't strictly needed
+-- worth it for cancellation safety. (Fixed but not done: a
+non-destructive rename-the-old-bundle-aside-first swap would remove
+the need for that tradeoff entirely.) After the swap, relaunches via
+`open` and deletes the staging dir, the zip, and itself. All path
+interpolation into the generated script goes through
+`shQuote()`/`appleScriptEscape()` (tested against paths containing
+spaces, e.g. "Print Catalog.app", including the nested
+bash-inside-AppleScript-inside-bash quoting for the elevated-privileges
+line).
 
 Any failure anywhere in the download/stage/install chain is caught in
 `checkForUpdateAndPrompt()` and shown as an error dialog rather than
@@ -1418,7 +1430,12 @@ artifact filenames). In order: bumps `VERSION`, `package.json`'s
 version, and `src/main/version.js`'s baked-in `APP_VERSION` (all three
 the same number); runs `npm run dist` (electron-builder, targets both
 `dmg` — manual installs — and `zip` — what the app-side update flow
-below fetches); renames the built zip to a stable, predictable
+below fetches); finds that build's zip in `dist/` by matching the
+version string just baked in, not by picking the first (or
+alphabetically-last, which breaks once versions hit double digits —
+`-10.0.0-` sorts before `-9.0.0-` as a string) `*.zip` it finds there,
+since a stale zip from a previous run left in `dist/` was otherwise
+silently pickable; renames it to a stable, predictable
 `PrintCat-v<version>.zip` (electron-builder's own filename embeds
 `productName` + full semver + `-mac`, not something worth having two
 places agree on); commits the bump; pushes; creates a GitHub Release
@@ -1457,11 +1474,12 @@ implemented: `main.js`'s `runCatalogSync()` calls
 `result.synced: true`, comparing the now-current
 `catalog-release.json` against this app's own `APP_VERSION`. If
 accepted, downloads the zip, unzips it, and hands off to a detached
-shell script that waits for this process to quit, swaps the bundle
-(falling back to an `osascript ... with administrator privileges`
-prompt if a plain move fails), relaunches, and cleans up after itself.
-Full design and the two open risks below are documented on
-`autoUpdate.js`'s entry above.
+shell script that waits for this process to quit, then swaps the
+bundle via a single elevated `osascript ... with administrator
+privileges` call (no plain-attempt-first -- see `autoUpdate.js`'s
+entry above for why that was a real corruption risk), relaunches, and
+cleans up after itself. Full design and the two open risks below are
+documented on `autoUpdate.js`'s entry above.
 
 ## Not yet implemented
 

@@ -75,9 +75,18 @@ fi
 # zip for the update flow to fetch/unzip programmatically.
 npm run dist
 
-BUILT_ZIP=$(find dist -maxdepth 1 -name "*.zip" | tail -n 1)
+# Match on the version string we just baked into package.json, rather
+# than trusting find's (filesystem-order-dependent) listing order --
+# a stale zip left in dist/ from a previous run could otherwise get
+# picked up silently. Not alphabetical-last either: once versions hit
+# double digits that sorts wrong ("...-10.0.0-..." < "...-9.0.0-..."
+# as strings). Excludes our own stable-named output pattern too, in
+# case a previous run's renamed copy is still sitting in dist/ from an
+# interrupted release. Fails loudly rather than guessing if there's no
+# match -- better to stop here than tag a release with the wrong build.
+BUILT_ZIP=$(find dist -maxdepth 1 -name "*.zip" ! -name "PrintCat-v*.zip" | grep -F -- "$NEW_VERSION.0.0" | head -n 1)
 if [ -z "$BUILT_ZIP" ]; then
-  echo "No .zip artifact found in dist/ -- check electron-builder's mac.target config." >&2
+  echo "No .zip artifact matching version $NEW_VERSION.0.0 found in dist/ -- check electron-builder's mac.target config, or clear stale files from dist/." >&2
   exit 1
 fi
 
@@ -91,14 +100,11 @@ RELEASE_ASSET="dist/PrintCat-v$NEW_VERSION.zip"
 cp "$BUILT_ZIP" "$RELEASE_ASSET"
 
 # 5. Commit the version bump
-echo Committing the version bump
 git add VERSION package.json src/main/version.js
-echo Pushing the version bump
 git commit -m "Bump version to v$NEW_VERSION"
 git push
 
 # 6. Tag + release, with the generated notes
-echo Creating release
 gh release create "v$NEW_VERSION" "$RELEASE_ASSET" \
   --title "v$NEW_VERSION" \
   --notes "$NOTES"
