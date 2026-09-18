@@ -85,6 +85,40 @@ function runCommand(cmd, args, timeoutMs) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Deliberately the real `rm -rf` (shelled out, same as unzip below)
+// rather than Node's fs.rm -- fs.rm only offers automatic ENOTEMPTY
+// retries via its maxRetries/retryDelay options, and those force it
+// onto an older internal fallback implementation (distinct from the
+// fast path used without them) that has known trouble with symlinks --
+// which a .app bundle is full of (e.g. Contents/Frameworks/*.framework
+// internals). In practice that fallback didn't just fail on this
+// staging dir, it hung: the returned promise never settled either way,
+// so nothing ever reached this function's caller's try/catch --
+// "failing silently" wasn't a caught-and-swallowed error, it was an
+// await that never returned. Shelling out avoids that implementation
+// entirely; the retry loop here is our own, for the same underlying
+// transient-lock scenario (see stageUpdate below) but without relying
+// on fs.rm's retry path to provide it.
+async function removeDirWithRetry(dirPath, maxRetries, retryDelayMs) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    await runCommand('rm', ['-rf', dirPath], UNZIP_TIMEOUT_MS);
+    try {
+      await fsp.access(dirPath);
+    } catch (err) {
+      return; // access() throwing means it's gone -- success
+    }
+    // Still there -- rm exited 0 but something got recreated mid-delete
+    // (the same Spotlight/Gatekeeper-scan race fs.rm's retries were
+    // meant to cover). Wait and try the whole rm -rf again.
+    if (attempt < maxRetries) await sleep(retryDelayMs);
+  }
+  throw new Error(`Could not remove ${dirPath} after ${maxRetries + 1} attempt(s)`);
+}
+
 // Unzips into a fixed-per-version staging dir (cleared first, same
 // retry-friendliness reasoning as downloadZip) and locates the
 // resulting .app bundle -- electron-builder's mac zip target zips the
@@ -94,22 +128,7 @@ function runCommand(cmd, args, timeoutMs) {
 // differently), rather than silently proceeding with a wrong path.
 async function stageUpdate(zipPath, version) {
   const stagingDir = path.join(app.getPath('temp'), `printcat-update-staging-v${version}`);
-  // maxRetries/retryDelay: a leftover staging dir from a previous
-  // failed attempt is a real, freshly-unzipped .app bundle -- macOS's
-  // Spotlight indexing (mdworker) and/or Gatekeeper's quarantine scan
-  // routinely touch a freshly-appeared .app the moment they see its
-  // Info.plist, which can recreate or briefly lock a file here between
-  // Node's internal readdir and its final rmdir, throwing ENOTEMPTY on
-  // an otherwise-successful recursive delete. This is exactly what
-  // these two options exist for (fs.rm retries automatically on
-  // ENOTEMPTY/EBUSY/EMFILE/ENFILE/EPERM) -- they default to zero
-  // retries unless asked for.
-  await fsp.rm(stagingDir, {
-    recursive: true,
-    force: true,
-    maxRetries: RM_MAX_RETRIES,
-    retryDelay: RM_RETRY_DELAY_MS,
-  });
+  await removeDirWithRetry(stagingDir, RM_MAX_RETRIES, RM_RETRY_DELAY_MS);
   await fsp.mkdir(stagingDir, { recursive: true });
 
   await runCommand('unzip', ['-oq', zipPath, '-d', stagingDir], UNZIP_TIMEOUT_MS);

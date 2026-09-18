@@ -343,15 +343,32 @@ or the next sync tick after a relaunch, offers it again. Accepting
 runs `downloadZip()` (buffers the whole response via `fetch`+
 `arrayBuffer()` rather than streaming -- simpler, fine for a one-off
 ~100-200MB download right before a quit) → `stageUpdate()` (clears any
-leftover staging dir from a previous failed attempt -- with
-`maxRetries`/`retryDelay` on that `fs.rm` call, since a freshly-
-unzipped `.app` there is exactly the kind of thing macOS's Spotlight
-indexing or Gatekeeper's quarantine scan can transiently lock,
-producing an otherwise-spurious `ENOTEMPTY` on an outer directory
-mid-delete -- hit in practice, not hypothetical), then shells out to
-macOS's built-in `unzip` into that dir and looks for exactly one
-top-level `*.app` entry, matching how electron-builder's mac zip
-target packages it) → `installAndRelaunch()`.
+leftover staging dir from a previous failed attempt via
+`removeDirWithRetry()`, then shells out to macOS's built-in `unzip`
+into that dir and looks for exactly one top-level `*.app` entry,
+matching how electron-builder's mac zip target packages it) →
+`installAndRelaunch()`.
+
+`removeDirWithRetry()` shells out to the real `rm -rf` rather than
+using Node's `fs.rm`, deliberately -- a freshly-unzipped `.app` bundle
+sitting in a leftover staging dir is exactly the kind of thing macOS's
+Spotlight indexing or Gatekeeper's quarantine scan can transiently
+touch, and an early version of this used `fs.rm`'s built-in
+`maxRetries`/`retryDelay` to retry through that. That backfired: those
+options force `fs.rm` onto an older internal fallback implementation
+(distinct from the fast path used without them) with known trouble
+around symlinks -- and a `.app` bundle is full of them (`.framework`
+internals in particular). In practice that fallback didn't error, it
+hung: the promise never settled either way, so nothing ever reached
+the caller's `catch` -- auto-update just silently did nothing forever,
+with only a stray `[DEP0180] fs.Stats constructor is deprecated`
+console warning (from that same legacy code path) as a clue, visible
+only when launched from a terminal. `removeDirWithRetry()` avoids that
+implementation entirely by shelling out, with its own plain retry loop
+(`rm -rf`, then check via `fs.access()` that the directory is actually
+gone before declaring success, since `rm`'s own exit code isn't a
+reliable enough signal on its own) for the same underlying transient-
+lock scenario.
 
 The actual swap can't safely happen while this process is still
 running, so `installAndRelaunch()` hands off to a generated, detached
