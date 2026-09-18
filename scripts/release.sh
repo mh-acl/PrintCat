@@ -91,11 +91,14 @@ RELEASE_ASSET="dist/PrintCat-v$NEW_VERSION.zip"
 cp "$BUILT_ZIP" "$RELEASE_ASSET"
 
 # 5. Commit the version bump
+echo Committing the version bump
 git add VERSION package.json src/main/version.js
+echo Pushing the version bump
 git commit -m "Bump version to v$NEW_VERSION"
 git push
 
 # 6. Tag + release, with the generated notes
+echo Creating release
 gh release create "v$NEW_VERSION" "$RELEASE_ASSET" \
   --title "v$NEW_VERSION" \
   --notes "$NOTES"
