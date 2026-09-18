@@ -20,7 +20,8 @@ out which files it needs without re-reading everything.
   `thumbnailCache.js`, `thumbnailResolver.js`, `settings.js`, `drives.js`,
   `gitSync.js`, `gitPush.js`, `tokenStore.js`, `provisionTokenWindow.js`,
   `editSession.js`, `itemMetadata.js`, `originLocation.js`, `syncState.js`,
-  `tools.js`, `usbWiperWindow.js`, `releasePointer.js`, `version.js`
+  `tools.js`, `usbWiperWindow.js`, `releasePointer.js`, `autoUpdate.js`,
+  `version.js`
 - **Preload (bridge)**: `preload.js`, `usbWiperPreload.js`,
   `provisionTokenPreload.js`
 - **Renderer (UI, no framework)**: `renderer.js`, `index.html`,
@@ -318,6 +319,65 @@ re-syncs from origin) and retry. (Multi-laptop conflicts from two
 co-admins editing at once are handled socially, not technically — only
 four people have edit access and they coordinate directly, so no
 merge/rebase UI is planned here.)
+
+**`autoUpdate.js`** — the reader/actor half of auto-update, called from
+`main.js`'s `runCatalogSync()` after every sync that completes with
+`result.synced: true` (covers both "pulled new data" and "already
+current" -- either way `catalog-release.json` is trustworthy). Fire-
+and-forget from that caller's point of view (never awaited -- a
+multi-minute download and an `app.quit()` shouldn't hold up anything
+sync-related), but internally guarded against overlap with itself via
+a module-level `checkInProgress` flag, since the timed auto-refresh
+could otherwise fire again while a previous check's dialog is still
+open.
+
+`checkForUpdate(dataDir)` compares `catalog-release.json` (already on
+disk from the sync that just ran) against `version.js`'s own
+`APP_VERSION`; a no-op if this app is already current or ahead. Skips
+entirely when `!app.isPackaged` (no real `.app` bundle to replace in a
+dev build). `checkForUpdateAndPrompt()` offers it via
+`dialog.showMessageBox` (Later/Install-and-Relaunch, matching
+`runTool()`'s confirm-dialog style above); "Later" is a same-session-
+only dismissal (`dismissedVersion`, not persisted) -- the next launch,
+or the next sync tick after a relaunch, offers it again. Accepting
+runs `downloadZip()` (buffers the whole response via `fetch`+
+`arrayBuffer()` rather than streaming -- simpler, fine for a one-off
+~100-200MB download right before a quit) → `stageUpdate()` (shells out
+to macOS's built-in `unzip` into a fixed per-version temp dir, then
+looks for exactly one top-level `*.app` entry, matching how
+electron-builder's mac zip target packages it) → `installAndRelaunch()`.
+
+The actual swap can't safely happen while this process is still
+running, so `installAndRelaunch()` hands off to a generated, detached
+shell script (`buildInstallScript()`) and calls `app.quit()`
+immediately after spawning it. That script: waits (polling `kill -0`)
+for this process's own PID to actually exit, does a plain `rm -rf` +
+`mv` of the old bundle, and -- only if that fails, e.g. the install
+lives somewhere this account can't write to without elevation --
+retries the same swap wrapped in `osascript ... with administrator
+privileges`, which pops the native macOS admin-auth prompt. (Not
+`sudo-prompt`, used elsewhere in this app for the same kind of prompt
+-- that library needs a live Node process to invoke it, and by this
+point the app has already quit; `osascript` is the same underlying
+mechanism sudo-prompt itself wraps.) Then relaunches via `open` and
+deletes the staging dir, the zip, and itself. All path interpolation
+into the generated script goes through `shQuote()`/`appleScriptEscape()`
+(tested against paths containing spaces, e.g. "Print Catalog.app",
+including the nested bash-inside-AppleScript-inside-bash quoting for
+the elevated-privileges fallback line).
+
+Any failure anywhere in the download/stage/install chain is caught in
+`checkForUpdateAndPrompt()` and shown as an error dialog rather than
+crashing the app or leaving it half-updated; the app just keeps
+running on its current version; and the next successful sync offers
+the update again.
+
+Known untested risk, not addressed here: whether Gatekeeper quarantines
+this download (unsigned/OCLP-built app) -- `fetch()` is a programmatic
+download rather than one attributed to a quarantine-aware app like
+Safari, which usually avoids the `com.apple.quarantine` xattr, but this
+hasn't been verified on an actual loaner laptop. Worth checking on the
+next real release before relying on this.
 
 **`releasePointer.js`** — `checkAndUpdateReleasePointer(dataDir, token,
 repoUrl, branch)`: compares this app's own compiled-in version
@@ -1391,22 +1451,37 @@ is currently no other trigger. Given four co-admins editing somewhat
 regularly, that's expected to happen quickly in practice, but it's a
 real gap if a release goes out and nobody edits for a while.
 
+**Download/install (`autoUpdate.js`)** — the other half, now also
+implemented: `main.js`'s `runCatalogSync()` calls
+`checkForUpdateAndPrompt()` after every sync that completes with
+`result.synced: true`, comparing the now-current
+`catalog-release.json` against this app's own `APP_VERSION`. If
+accepted, downloads the zip, unzips it, and hands off to a detached
+shell script that waits for this process to quit, swaps the bundle
+(falling back to an `osascript ... with administrator privileges`
+prompt if a plain move fails), relaunches, and cleans up after itself.
+Full design and the two open risks below are documented on
+`autoUpdate.js`'s entry above.
+
 ## Not yet implemented
 
-- Auto-update download/install: the app-side half of the release flow
-  that's still missing is everything *after* noticing the pointer is
-  newer — actually downloading the zip and installing it. Planned
-  design: ride along on the existing catalog sync (`gitSync.js`) to
-  check `catalog-release.json` against `version.js`'s `APP_VERSION`
-  (writing the pointer, above, is now implemented and separate from
-  this), and if newer, download the zip and prompt to relaunch. Known
-  open questions before building it: whether the zip can be swapped
-  onto a running app's own bundle in place (probably not — likely
-  needs a detached helper process that waits for quit, same pattern
-  Squirrel.Mac uses) and whether the unsigned/OCLP-built app triggers
-  Gatekeeper quarantine on a programmatic (non-browser) download —
-  untested, flagged as worth checking early since it could force a
-  design change.
+- Verifying auto-update actually works end-to-end on a real loaner
+  laptop: `autoUpdate.js` is written and unit-testable pieces of it
+  (the install-script quoting, the bundle-path derivation) have been
+  checked, but nothing about the download → unzip → swap → relaunch
+  chain has run for real yet. Specifically untested: whether
+  Gatekeeper quarantines the `fetch()`-downloaded zip on the
+  unsigned/OCLP-built app (a programmatic download, as opposed to one
+  from a quarantine-aware app like Safari, usually avoids the
+  `com.apple.quarantine` xattr, but this is unverified) — if it does,
+  the whole design likely needs revisiting (notarization, or a
+  documented one-time Gatekeeper bypass per laptop). Also untested:
+  the actual swap-while-quitting sequence on a real install (does
+  `kill -0` behave as expected for this app's own PID, does `open`
+  successfully relaunch a freshly-swapped bundle). Recommended first
+  real test: a trivial version bump (no catalog changes) released
+  through the normal flow, tried on one loaner laptop before trusting
+  it across all of them.
 - GUI for adding/editing/deleting catalog items: "Edit Print Catalog…"
   and `editSession.js` (see above) now cover add, edit, delete, image
   reconciliation (assigning images to print files, including the

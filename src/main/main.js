@@ -21,6 +21,7 @@ const { EditSession } = require('./editSession');
 const { stripTrailingId } = require('./folderName');
 const { uniqueFilename } = require('./uniqueFilename');
 const { checkAndUpdateReleasePointer } = require('./releasePointer');
+const { checkForUpdateAndPrompt } = require('./autoUpdate');
 
 // The single in-progress editing session, or null when a co-admin
 // hasn't entered edit mode. Only one at a time -- see
@@ -495,6 +496,16 @@ function runCatalogSync() {
     }
     syncInProgress = false;
     broadcastSyncStatus();
+
+    // Piggybacks on the sync that just finished, rather than its own
+    // network round-trip: catalog-release.json is only trustworthy
+    // once a real sync has pulled it, so this only fires on `synced`,
+    // not on a no-op or failed tick. Never awaited by the caller --
+    // this can involve a multi-minute download and an app.quit(), and
+    // shouldn't hold up anything else sync-related.
+    if (result.synced) {
+      checkForUpdateAndPrompt(DATA_DIR, mainWindow);
+    }
   });
 }
 
