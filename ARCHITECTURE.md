@@ -342,10 +342,16 @@ only dismissal (`dismissedVersion`, not persisted) -- the next launch,
 or the next sync tick after a relaunch, offers it again. Accepting
 runs `downloadZip()` (buffers the whole response via `fetch`+
 `arrayBuffer()` rather than streaming -- simpler, fine for a one-off
-~100-200MB download right before a quit) → `stageUpdate()` (shells out
-to macOS's built-in `unzip` into a fixed per-version temp dir, then
-looks for exactly one top-level `*.app` entry, matching how
-electron-builder's mac zip target packages it) → `installAndRelaunch()`.
+~100-200MB download right before a quit) → `stageUpdate()` (clears any
+leftover staging dir from a previous failed attempt -- with
+`maxRetries`/`retryDelay` on that `fs.rm` call, since a freshly-
+unzipped `.app` there is exactly the kind of thing macOS's Spotlight
+indexing or Gatekeeper's quarantine scan can transiently lock,
+producing an otherwise-spurious `ENOTEMPTY` on an outer directory
+mid-delete -- hit in practice, not hypothetical), then shells out to
+macOS's built-in `unzip` into that dir and looks for exactly one
+top-level `*.app` entry, matching how electron-builder's mac zip
+target packages it) → `installAndRelaunch()`.
 
 The actual swap can't safely happen while this process is still
 running, so `installAndRelaunch()` hands off to a generated, detached
@@ -1428,17 +1434,21 @@ file holds a bare incrementing integer, separate from `package.json`'s
 semver string (only kept in sync because electron-builder reads it for
 artifact filenames). In order: bumps `VERSION`, `package.json`'s
 version, and `src/main/version.js`'s baked-in `APP_VERSION` (all three
-the same number); runs `npm run dist` (electron-builder, targets both
-`dmg` — manual installs — and `zip` — what the app-side update flow
-below fetches); finds that build's zip in `dist/` by matching the
-version string just baked in, not by picking the first (or
-alphabetically-last, which breaks once versions hit double digits —
-`-10.0.0-` sorts before `-9.0.0-` as a string) `*.zip` it finds there,
-since a stale zip from a previous run left in `dist/` was otherwise
-silently pickable; renames it to a stable, predictable
-`PrintCat-v<version>.zip` (electron-builder's own filename embeds
-`productName` + full semver + `-mac`, not something worth having two
-places agree on); commits the bump; pushes; creates a GitHub Release
+the same number); runs `npm run clean` (just `rm -rf dist`, also
+available standalone for tidying up manually) then `npm run dist`
+(electron-builder, targets both `dmg` — manual installs — and `zip` —
+what the app-side update flow below fetches); finds that build's zip
+in `dist/` by matching the version string just baked in, not by
+picking the first (or alphabetically-last, which breaks once versions
+hit double digits — `-10.0.0-` sorts before `-9.0.0-` as a string)
+`*.zip` it finds there, since a stale zip from a previous run left in
+`dist/` was otherwise silently pickable (the `clean` step now
+prevents this from arising in the first place, but the matching logic
+stays as a second line of defense); renames it to a stable,
+predictable `PrintCat-v<version>.zip` (electron-builder's own filename
+embeds `productName` + full semver + `-mac`, not something worth
+having two places agree on); commits the bump; pushes; creates a
+GitHub Release
 on the tag with that renamed zip attached, with release notes
 generated from `git log <last-tag>..HEAD` (subject + full body per
 commit, deliberately generous blank lines between entries —

@@ -72,7 +72,9 @@ fi
 
 # 4. Package. electron-builder's mac target list (dmg + zip, see
 # package.json) produces both a normal installer for manual use and a
-# zip for the update flow to fetch/unzip programmatically.
+# zip for the update flow to fetch/unzip programmatically. Cleaned
+# first so dist/ never accumulates old .dmg/.zip files across releases.
+npm run clean
 npm run dist
 
 # Match on the version string we just baked into package.json, rather

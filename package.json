@@ -1,13 +1,14 @@
 {
   "name": "printcat",
   "productName": "Print Catalog",
-  "version": "7.0.0",
+  "version": "1.0.0",
   "description": "Print job catalog and management app for the makerspace's Prusa MK4S printers.",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "clean": "rm -rf dist"
   },
   "repository": {
     "type": "git",

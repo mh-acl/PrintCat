@@ -10,6 +10,8 @@ const { POINTER_FILENAME } = require('./releasePointer');
 
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000; // generous -- these are ~100MB+ Electron builds
 const UNZIP_TIMEOUT_MS = 60 * 1000;
+const RM_MAX_RETRIES = 5;
+const RM_RETRY_DELAY_MS = 200;
 
 // "Later" just means "not this session" -- there's no persisted
 // dismissal, so restarting the app (or the next natural sync tick
@@ -92,7 +94,22 @@ function runCommand(cmd, args, timeoutMs) {
 // differently), rather than silently proceeding with a wrong path.
 async function stageUpdate(zipPath, version) {
   const stagingDir = path.join(app.getPath('temp'), `printcat-update-staging-v${version}`);
-  await fsp.rm(stagingDir, { recursive: true, force: true });
+  // maxRetries/retryDelay: a leftover staging dir from a previous
+  // failed attempt is a real, freshly-unzipped .app bundle -- macOS's
+  // Spotlight indexing (mdworker) and/or Gatekeeper's quarantine scan
+  // routinely touch a freshly-appeared .app the moment they see its
+  // Info.plist, which can recreate or briefly lock a file here between
+  // Node's internal readdir and its final rmdir, throwing ENOTEMPTY on
+  // an otherwise-successful recursive delete. This is exactly what
+  // these two options exist for (fs.rm retries automatically on
+  // ENOTEMPTY/EBUSY/EMFILE/ENFILE/EPERM) -- they default to zero
+  // retries unless asked for.
+  await fsp.rm(stagingDir, {
+    recursive: true,
+    force: true,
+    maxRetries: RM_MAX_RETRIES,
+    retryDelay: RM_RETRY_DELAY_MS,
+  });
   await fsp.mkdir(stagingDir, { recursive: true });
 
   await runCommand('unzip', ['-oq', zipPath, '-d', stagingDir], UNZIP_TIMEOUT_MS);
