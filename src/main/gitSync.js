@@ -94,20 +94,53 @@ async function isValidRepo(targetDir, timeoutMs) {
 }
 
 /**
+ * Clones `branch` of `repoUrl` into a fresh temp directory next to
+ * `targetDir`, and only once that clone has fully succeeded, moves its
+ * contents into `targetDir` (clearing targetDir's existing contents first).
+ *
+ * This is deliberately NOT "empty targetDir, then clone into it": on a
+ * laptop where wifi shows "connected" before the internet is actually
+ * reachable, a clone can fail for the exact same reason a preceding fetch
+ * just failed. Cloning to a throwaway temp dir first means that failure
+ * mode leaves targetDir's existing (possibly stale, but non-empty) data
+ * completely untouched instead of wiping it out for nothing.
+ */
+async function freshClone(repoUrl, branch, targetDir, timeoutMs) {
+  const parentDir = path.dirname(targetDir);
+  const tmpDir = fs.mkdtempSync(path.join(parentDir, '.printcat-sync-'));
+  try {
+    await run('git', ['clone', '--depth', '1', '--branch', branch, repoUrl, tmpDir], { timeoutMs });
+    // Clone fully succeeded -- only now is it safe to touch targetDir.
+    emptyDirContents(targetDir);
+    for (const entry of fs.readdirSync(tmpDir)) {
+      fs.renameSync(path.join(tmpDir, entry), path.join(targetDir, entry));
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Syncs `targetDir` to match `branch` on `repoUrl` (public HTTPS, no auth).
  * Always resolves — never throws — so a launch-time sync attempt can
  * never block or crash the app. On any failure the caller should just
  * proceed with whatever is already on disk in targetDir.
  *
+ * - An existing, structurally-intact checkout -> `fetch` + `reset --hard
+ *   origin/<branch>` + `clean -fd`, so local drift (partial writes, stray
+ *   files, hand edits) is always discarded in favor of the remote — this
+ *   is a one-way mirror, not a two-way sync. If this fails (most commonly:
+ *   no real internet yet, even though wifi shows "connected") we just skip
+ *   this sync and leave targetDir exactly as it was -- this must NOT fall
+ *   through to the fresh-clone path below, since that path used to also
+ *   fail for the same reason and left an emptied targetDir behind.
  * - No existing clone, or an existing one that fails a local integrity
- *   check, or one whose fetch/reset fails -> falls back to wiping
- *   targetDir's contents and doing a fresh `git clone --depth 1`. This
- *   makes sync self-healing: a clone interrupted by a timeout or a crash
- *   gets fully replaced on the next launch instead of failing forever.
- * - Otherwise -> `fetch` + `reset --hard origin/<branch>` + `clean -fd`,
- *   so local drift (partial writes, stray files, hand edits) is always
- *   discarded in favor of the remote — this is a one-way mirror, not a
- *   two-way sync.
+ *   check (e.g. left behind by a previous sync that got killed mid-clone)
+ *   -> fresh clone via freshClone() above, which only replaces targetDir's
+ *   contents once the clone has actually succeeded. This makes sync
+ *   self-healing: a clone interrupted by a timeout or a crash gets fully
+ *   replaced on a later launch, without risking an empty targetDir if that
+ *   later attempt also fails offline.
  *
  * @param {object} opts
  * @param {string} opts.repoUrl - HTTPS URL of the public git repo.
@@ -127,39 +160,36 @@ async function syncCatalogRepo({ repoUrl, branch = 'main', targetDir, timeoutMs 
   const gitDir = path.join(targetDir, '.git');
 
   try {
-    let needsFreshClone = true;
-
-    if (fs.existsSync(gitDir)) {
-      if (await isValidRepo(targetDir, timeoutMs)) {
-        try {
-          await run('git', ['fetch', '--depth', '1', 'origin', branch], { cwd: targetDir, timeoutMs });
-          await run('git', ['reset', '--hard', `origin/${branch}`], { cwd: targetDir, timeoutMs });
-          await run('git', ['clean', '-fd'], { cwd: targetDir, timeoutMs });
-          needsFreshClone = false;
-        } catch (err) {
-          console.warn(
-            '[gitSync] existing clone failed to update, falling back to a fresh clone:',
-            err.message
-          );
-        }
-      } else {
-        console.warn(
-          '[gitSync] existing clone looks incomplete (likely interrupted mid-sync last time), falling back to a fresh clone'
-        );
+    if (fs.existsSync(gitDir) && (await isValidRepo(targetDir, timeoutMs))) {
+      try {
+        await run('git', ['fetch', '--depth', '1', 'origin', branch], { cwd: targetDir, timeoutMs });
+        await run('git', ['reset', '--hard', `origin/${branch}`], { cwd: targetDir, timeoutMs });
+        await run('git', ['clean', '-fd'], { cwd: targetDir, timeoutMs });
+        return { synced: true };
+      } catch (err) {
+        // No fresh-clone fallback here on purpose -- see the docstring above.
+        console.warn('[gitSync] catalog sync skipped, continuing with existing local data:', err.message);
+        return { synced: false, reason: 'error', error: err.message };
       }
     }
 
-    if (needsFreshClone) {
-      emptyDirContents(targetDir); // git clone requires an empty (or nonexistent) destination
-      await run('git', ['clone', '--depth', '1', '--branch', branch, repoUrl, targetDir], { timeoutMs });
+    if (fs.existsSync(gitDir)) {
+      console.warn(
+        '[gitSync] existing clone looks incomplete (likely interrupted mid-sync last time), attempting a fresh clone'
+      );
+    } else {
+      console.warn('[gitSync] no existing clone found, attempting a fresh clone');
     }
 
+    await freshClone(repoUrl, branch, targetDir, timeoutMs);
     return { synced: true };
   } catch (err) {
     // Covers: no internet, git not yet installed (first-run macOS stub
     // just triggers the Install Command Line Tools dialog and returns an
     // error immediately rather than hanging), auth failures, bad branch,
-    // timeout, etc. All of these are "skip and continue" cases.
+    // timeout, etc. All of these are "skip and continue" cases -- and now,
+    // thanks to freshClone()'s temp-dir-then-swap approach, none of them
+    // leave targetDir emptied out.
     console.warn('[gitSync] catalog sync skipped, continuing with existing local data:', err.message);
     return { synced: false, reason: 'error', error: err.message };
   }
