@@ -5,4 +5,4 @@
 // file, baked into the build so a running app knows its own version
 // without reading anything off disk. See releasePointer.js for what
 // it's compared against.
-module.exports = { APP_VERSION: 11 };
+module.exports = { APP_VERSION: 12 };
