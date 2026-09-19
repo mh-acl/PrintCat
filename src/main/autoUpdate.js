@@ -8,8 +8,23 @@ const { execFile, spawn } = require('child_process');
 const { APP_VERSION } = require('./version');
 const { POINTER_FILENAME } = require('./releasePointer');
 
-const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000; // generous -- these are ~100MB+ Electron builds
+// Max time with *no* bytes arriving (counted from the request itself,
+// then reset on every chunk) before the download is aborted as stalled.
+// Deliberately an idle timeout rather than a total-time cap: these are
+// ~100MB+ Electron builds that legitimately take minutes on slow wifi,
+// but the progress modal (see sendUpdateProgress below) has no dismiss
+// button, so a connection that just goes quiet has to fail into the
+// normal error dialog instead of leaving a frozen bar on screen forever.
+const DOWNLOAD_STALL_TIMEOUT_MS = 60 * 1000;
 const UNZIP_TIMEOUT_MS = 60 * 1000;
+// Progress events are throttled -- a fast download produces thousands
+// of small chunks, and there's no point sending the renderer more than
+// a handful of repaints a second.
+const PROGRESS_THROTTLE_MS = 100;
+// How long the final "closing to finish installing" message stays on
+// screen before app.quit(), so it can actually be read rather than
+// flashing by as the window disappears.
+const FINAL_MESSAGE_HOLD_MS = 1500;
 const RM_MAX_RETRIES = 5;
 const RM_RETRY_DELAY_MS = 200;
 
@@ -21,6 +36,23 @@ const RM_RETRY_DELAY_MS = 200;
 // re-asking is the safer default.
 let dismissedVersion = null;
 let checkInProgress = false;
+
+// Pushes a progress update to the main window's update modal (see
+// dialogs.js's handleUpdateProgress()). `stage` is one of:
+//   'downloading' -- also carries receivedBytes and totalBytes
+//                    (totalBytes is null when the server didn't say)
+//   'unzipping'
+//   'finishing'   -- the install script is spawned and the app is about
+//                    to quit; the admin-auth prompt comes next
+//   'closed'      -- dismiss the modal (failure path -- the native error
+//                    dialog is about to take over)
+// Safe to call with a missing/destroyed window (the update just
+// proceeds without visible feedback rather than throwing).
+function sendUpdateProgress(win, payload) {
+  if (!win || win.isDestroyed()) return;
+  if (win.webContents.isDestroyed()) return;
+  win.webContents.send('update:progress', payload);
+}
 
 function shQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
@@ -54,25 +86,93 @@ async function checkForUpdate(dataDir) {
 // Downloads the release zip into a fixed-per-version temp path
 // (overwritten if a previous attempt left one behind, so a retry
 // after a failed install doesn't need its own cleanup step first).
-// Buffers the whole response in memory before writing -- simpler than
-// piping a web ReadableStream to a Node fs stream, and fine for a
-// one-off ~100-200MB download that only happens right before a quit.
-async function downloadZip(releaseUrl, version) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
-  let response;
-  try {
-    response = await fetch(releaseUrl, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!response.ok) {
-    throw new Error(`Download failed: HTTP ${response.status} for ${releaseUrl}`);
-  }
-  const buf = Buffer.from(await response.arrayBuffer());
-
+// Streams the response body to disk chunk by chunk (each write awaited
+// before the next read, so backpressure comes for free) rather than
+// buffering ~100-200MB in memory -- reading it chunk by chunk is what
+// makes byte-level progress reporting possible in the first place.
+// `onProgress({ receivedBytes, totalBytes })` is called (throttled) as
+// data arrives, plus once at the end; totalBytes is null when the
+// server sent no usable Content-Length. A failed or aborted download
+// removes its partial file before throwing.
+async function downloadZip(releaseUrl, version, onProgress) {
   const zipPath = path.join(app.getPath('temp'), `printcat-update-v${version}.zip`);
-  await fsp.writeFile(zipPath, buf);
+  const controller = new AbortController();
+  let stalled = false;
+  let stallTimer = null;
+  const armStallTimer = () => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, DOWNLOAD_STALL_TIMEOUT_MS);
+  };
+
+  let fileHandle = null;
+  try {
+    armStallTimer(); // covers connecting + waiting for response headers
+    const response = await fetch(releaseUrl, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Download failed: HTTP ${response.status} for ${releaseUrl}`);
+    }
+    if (!response.body) {
+      throw new Error(`Download failed: empty response body for ${releaseUrl}`);
+    }
+
+    // Content-Length is only a trustworthy byte total when the body
+    // isn't content-encoded (fetch hands back *decoded* bytes, so a
+    // gzip'd response's header length wouldn't match what we count).
+    // GitHub serves release assets as-is, but don't rely on it.
+    const encoding = response.headers.get('content-encoding');
+    const declared = Number(response.headers.get('content-length'));
+    const totalBytes =
+      (!encoding || encoding === 'identity') && Number.isFinite(declared) && declared > 0
+        ? declared
+        : null;
+
+    fileHandle = await fsp.open(zipPath, 'w');
+    const reader = response.body.getReader();
+    let receivedBytes = 0;
+    let lastReportAt = 0;
+    onProgress({ receivedBytes, totalBytes });
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      armStallTimer();
+      await fileHandle.writeFile(value);
+      receivedBytes += value.length;
+      const now = Date.now();
+      if (now - lastReportAt >= PROGRESS_THROTTLE_MS) {
+        lastReportAt = now;
+        onProgress({ receivedBytes, totalBytes });
+      }
+    }
+
+    if (totalBytes !== null && receivedBytes !== totalBytes) {
+      throw new Error(`Download incomplete: got ${receivedBytes} of ${totalBytes} bytes`);
+    }
+    onProgress({ receivedBytes, totalBytes });
+  } catch (err) {
+    if (fileHandle) {
+      await fileHandle.close().catch(() => {});
+      fileHandle = null;
+    }
+    await fsp.unlink(zipPath).catch(() => {}); // don't leave a partial zip behind
+    if (stalled) {
+      throw new Error(
+        `Download stalled: no data received for ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} seconds`,
+      );
+    }
+    // fetch's own failures are terse ("fetch failed", "terminated") with
+    // the useful part -- DNS failure, connection reset -- on `cause`.
+    if (err && err.cause && err.cause.message) {
+      throw new Error(`Download failed: ${err.message} (${err.cause.message})`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(stallTimer);
+    if (fileHandle) await fileHandle.close().catch(() => {});
+  }
   return zipPath;
 }
 
@@ -203,7 +303,14 @@ rm -f "$0"
 `;
 }
 
-async function installAndRelaunch({ newAppPath, stagingDir, zipPath }) {
+// `onFinishing`, if given, is called once the install script is
+// spawned and the app is about to quit, so the caller can put its last
+// status message on screen. That message is then held for
+// FINAL_MESSAGE_HOLD_MS before app.quit() -- the spawned script just
+// polls for this PID to exit (up to ~30s), so the pause costs nothing
+// -- and the modal stays up until the process actually exits and the
+// script's admin-auth prompt takes over.
+async function installAndRelaunch({ newAppPath, stagingDir, zipPath, onFinishing }) {
   const oldAppPath = getCurrentAppBundlePath();
   const scriptPath = path.join(app.getPath('temp'), 'printcat-install-update.sh');
   const script = buildInstallScript({
@@ -216,15 +323,20 @@ async function installAndRelaunch({ newAppPath, stagingDir, zipPath }) {
   await fsp.writeFile(scriptPath, script, { mode: 0o755 });
 
   spawn('/bin/bash', [scriptPath], { detached: true, stdio: 'ignore' }).unref();
+  if (onFinishing) onFinishing();
+  await sleep(FINAL_MESSAGE_HOLD_MS);
   app.quit();
 }
 
 // Ties the pieces above to the UI: offers the update, and if accepted,
 // runs download -> stage -> install, quitting the app at the end.
-// Never throws -- a download/unzip failure just shows an error dialog
-// and leaves the app running on its current version; the next
-// successful catalog sync will offer it again (see runCatalogSync() in
-// main.js, the sole caller of this function).
+// While that runs, the main window shows a progress modal (driven by
+// the 'update:progress' pushes below -- see dialogs.js's
+// handleUpdateProgress()) that stays up until the app quits.
+// Never throws -- a download/unzip failure just closes that modal,
+// shows an error dialog, and leaves the app running on its current
+// version; the next successful catalog sync will offer it again (see
+// runCatalogSync() in main.js, the sole caller of this function).
 async function checkForUpdateAndPrompt(dataDir, mainWindow) {
   if (checkInProgress) return; // a dialog from a previous sync tick may still be open
   const candidate = await checkForUpdate(dataDir);
@@ -232,6 +344,8 @@ async function checkForUpdateAndPrompt(dataDir, mainWindow) {
   if (candidate.version === dismissedVersion) return;
 
   checkInProgress = true;
+  const report = (stage, extra = {}) =>
+    sendUpdateProgress(mainWindow, { stage, version: candidate.version, ...extra });
   try {
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'info',
@@ -247,12 +361,22 @@ async function checkForUpdateAndPrompt(dataDir, mainWindow) {
       return;
     }
 
-    const zipPath = await downloadZip(candidate.releaseUrl, candidate.version);
+    report('downloading', { receivedBytes: 0, totalBytes: null });
+    const zipPath = await downloadZip(candidate.releaseUrl, candidate.version, (progress) =>
+      report('downloading', progress),
+    );
+    report('unzipping');
     const { appPath, stagingDir } = await stageUpdate(zipPath, candidate.version);
-    await installAndRelaunch({ newAppPath: appPath, stagingDir, zipPath });
+    await installAndRelaunch({
+      newAppPath: appPath,
+      stagingDir,
+      zipPath,
+      onFinishing: () => report('finishing'),
+    });
     // installAndRelaunch calls app.quit() on success -- nothing after
     // this point runs.
   } catch (err) {
+    report('closed'); // take the progress modal down before the error dialog shows
     await dialog.showMessageBox(mainWindow, {
       type: 'error',
       title: 'Update failed',

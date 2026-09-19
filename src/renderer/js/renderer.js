@@ -15,6 +15,7 @@ async function init() {
   // leave a window where the message could arrive before we're
   // listening for it.
   window.catalogAPI.onOpenSettings((payload) => openSettingsDialog(payload || {}));
+  window.catalogAPI.onUpdateProgress(handleUpdateProgress);
   window.catalogAPI.onEditSessionEntered(() => {
     editModeActive = true;
     pendingChanges = {};

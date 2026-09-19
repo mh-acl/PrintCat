@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('catalogAPI', {
     ipcRenderer.on('sync:statusChanged', (event, status) => callback(status));
   },
   relaunch: () => ipcRenderer.invoke('app:relaunch'),
+  // Pushed by autoUpdate.js throughout an accepted update (download
+  // progress, unzip, final "closing" message, or a close on failure) --
+  // see dialogs.js's handleUpdateProgress().
+  onUpdateProgress: (callback) => {
+    ipcRenderer.on('update:progress', (event, payload) => callback(payload));
+  },
   onEditSessionEntered: (callback) => {
     ipcRenderer.on('editSession:entered', () => callback());
   },

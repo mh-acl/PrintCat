@@ -69,3 +69,56 @@ body.scroll-locked {
   color: var(--status-edit);
   font-weight: 600;
 }
+
+/* Auto-update progress modal (see dialogs.js's handleUpdateProgress()).
+   Composes the shared .modal-overlay/.modal-box shell above. Selectors
+   for the text lines are scoped under .update-progress-box so they
+   outrank the shell's generic `.modal-box p` rule. z-index sits above
+   every other modal, since this one has to stay on top of whatever was
+   open when the update started. */
+.update-progress-overlay {
+  z-index: 2000;
+}
+.update-progress-box {
+  width: 24em;
+  max-width: 90vw;
+  gap: 0.6em;
+}
+.update-progress-box .update-progress-status {
+  color: var(--ink);
+  font-weight: 500;
+  margin: 0;
+}
+.update-progress-box .update-progress-detail {
+  margin: 0;
+  min-height: 1.4em; /* reserve the line so the box doesn't resize as text appears */
+  font-size: 0.9em;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.update-progress-track {
+  position: relative;
+  height: 0.7em;
+  background: var(--line-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.update-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: inherit;
+  transition: width 0.15s linear;
+}
+/* No known total (unzip/finish steps, or a download with no
+   Content-Length): a fixed-width segment sweeping across the track. */
+.update-progress-track.indeterminate .update-progress-fill {
+  width: 35%;
+  transition: none;
+  animation: update-progress-sweep 1.2s ease-in-out infinite;
+}
+@keyframes update-progress-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}

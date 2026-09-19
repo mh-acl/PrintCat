@@ -340,14 +340,38 @@ dev build). `checkForUpdateAndPrompt()` offers it via
 `runTool()`'s confirm-dialog style above); "Later" is a same-session-
 only dismissal (`dismissedVersion`, not persisted) -- the next launch,
 or the next sync tick after a relaunch, offers it again. Accepting
-runs `downloadZip()` (buffers the whole response via `fetch`+
-`arrayBuffer()` rather than streaming -- simpler, fine for a one-off
-~100-200MB download right before a quit) → `stageUpdate()` (clears any
+runs `downloadZip()` (streams the `fetch` response body to a temp file
+chunk by chunk, reporting byte progress as it goes; aborts with a
+"stalled" error after 60s of no data, since the progress modal below
+has no dismiss button; removes its partial file on any failure) →
+`stageUpdate()` (clears any
 leftover staging dir from a previous failed attempt via
 `removeDirWithRetry()`, then shells out to macOS's built-in `unzip`
 into that dir and looks for exactly one top-level `*.app` entry,
 matching how electron-builder's mac zip target packages it) →
 `installAndRelaunch()`.
+
+**Progress modal.** From the moment the person accepts until the app
+quits, `checkForUpdateAndPrompt()` pushes `update:progress` events to
+the main window (via `sendUpdateProgress()`, safe on a missing/destroyed
+window), each `{ stage, version, ... }`: `downloading` (with
+`receivedBytes`/`totalBytes`, throttled to ~10/s; `totalBytes` is `null`
+when the server sent no usable `Content-Length` or the body is content-
+encoded), `unzipping`, `finishing` (install script spawned; held on
+screen for `FINAL_MESSAGE_HOLD_MS` before `app.quit()` so the "macOS
+will ask for an administrator password next" message is readable), and
+`closed` (failure path only -- sent just before the native "Update
+failed" dialog so the modal isn't left up behind it). Renderer side,
+`preload.js` exposes `onUpdateProgress`, `renderer.js`'s `init()`
+subscribes it to `dialogs.js`'s `handleUpdateProgress()`, which
+creates/updates/removes a `.modal-overlay` (`.update-progress-*` styles
+in `dialogs.css`): determinate bar while the total is known,
+indeterminate sweep otherwise (unzip, finishing, or a download with no
+total). It has no buttons and ignores Escape/backdrop clicks; every
+other body child is marked `inert` while it's up (restored on close) so
+keyboard focus can't reach the dimmed UI, and it takes a
+`lockBackgroundScroll()`. Any event creates the modal if absent, so a
+renderer that loaded mid-update picks up from the next push.
 
 `removeDirWithRetry()` shells out to the real `rm -rf` rather than
 using Node's `fs.rm`, deliberately -- a freshly-unzipped `.app` bundle
@@ -373,7 +397,8 @@ lock scenario.
 The actual swap can't safely happen while this process is still
 running, so `installAndRelaunch()` hands off to a generated, detached
 shell script (`buildInstallScript()`) and calls `app.quit()`
-immediately after spawning it. That script waits (polling `kill -0`)
+right after spawning it (after the brief `finishing` message hold
+described above). That script waits (polling `kill -0`)
 for this process's own PID to actually exit, then swaps the bundle via
 a single privileged `osascript ... with administrator privileges` call
 -- the native macOS admin-auth prompt. (Not `sudo-prompt`, used
@@ -547,7 +572,8 @@ renderer: `getTree`, `getItemThumbnail`, `getFileThumbnail`,
 `onCatalogUpdated`, `listDrives`, `saveFileToDrive`, `ejectDrive`,
 `isDrivePresent`, `getSettings`, `saveSettings`, `onOpenSettings`,
 `getSyncStatus`, `onSyncStatusChanged`, `relaunch` (used after a git
-repo/branch settings change — see `main.js` above), plus the
+repo/branch settings change — see `main.js` above), `onUpdateProgress`
+(auto-update progress modal — see `autoUpdate.js` above), plus the
 `editSession*` methods described with `editSession.js` below.
 `getPathForFile(file)` wraps Electron's `webUtils.getPathForFile` —
 the only supported way to get a real filesystem path back from a
