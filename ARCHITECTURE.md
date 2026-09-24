@@ -1465,6 +1465,53 @@ param on `writeItemMetadata()` that deletes those keys before the
 merge runs; both `editItem`/`addItem` pass `trashedPrintFiles` through
 to it alongside the file-deletion call.
 
+## Print-time filter ("under" a maximum)
+
+A right-sidebar section, "Print Time", sitting between Printer and Tag
+(`index.html`'s `#print-time-filter`, built once at startup by
+`filters.js`'s `renderPrintTimeFilter()` — not on every catalog update,
+since it has nothing catalog-derived to refresh and rebuilding it would
+tear the custom fields out from under a cursor mid-typing). Single-
+select radios: "Any length" (the reset), four presets (2 hours / 1 hour
+/ 30 minutes / 10 minutes, each labeled "Under …"), and a last custom row, `Under [__]h [__]m`
+(`buildCustomPrintTimeRow()`). Maximum only — no minimum or range. Despite the "Under" wording the limit is inclusive: a
+file at exactly the limit still passes.
+
+- **State** (`state.js`): `printTimeChoice` (`'any'`, a preset's minutes
+  as a string, or `'custom'`), `customPrintTimeInputs` (raw h/m text),
+  and `printTimeLimitMinutes` (null = no limit) — the one value the rest
+  of the renderer reads, derived only by `recomputePrintTimeLimit()`.
+  Kept in whole minutes and compared against each file's print time
+  *rounded to the nearest minute* (`utils.js`'s `printTimeWithinLimit`),
+  the same rounding `formatDurationShort` uses on the cards, so a file
+  displayed as "1hr 30m" can't be excluded by a 1h 30m limit. A file
+  with no parseable print time never passes an active limit.
+- **Custom fields:** digits only (a `beforeinput` guard plus an `input`
+  scrub for pastes); the filter applies live as you type, and the fields
+  are rewritten into normalized form (`normalizeHoursMinutes()`, e.g.
+  `0h 90m` → `1h 30m`) when focus leaves the *row* — tabbing from hours to
+  minutes deliberately doesn't count. Empty/zero isn't a limit of zero;
+  it's "nothing entered", so the fields clear and no filter applies.
+- **Matching is per file, jointly with the printer filter:** an item
+  shows only if some single file satisfies the selected printer(s) AND
+  the limit (`itemMatchesPrintTime`), not "some file fits the printer
+  and some other file is short enough". The limit also narrows the file
+  sets that drive an item card's print-time range/sort key
+  (`filesMatchingPrinterAndTime`, formerly `filesMatchingPrinter`), the
+  item modal's view-mode file list (`fileMatchesPrinterAndTime`), edit
+  mode's would-show grouping, the tag counts (`countItemsForTag`), and
+  the empty-state messages (grid and modal), so all of them agree with
+  what the grid actually shows.
+- **Auto-sort:** going from no limit to a limit switches the sort to
+  Print Time, longest first (`onPrintTimeFilterChanged()`), but only on
+  that transition — moving between presets or editing the custom time
+  afterward leaves a sort the person has since chosen alone. While a
+  limit is active, Print Time's sort key (`grid.js`'s `sortKeyForItem`)
+  is the *longest* file still within the limit
+  (`longestPrintTimeWithin`) instead of the usual shortest, so items
+  rank by the print closest to the limit without going over. Still one
+  fixed value per item regardless of direction.
+
 ## Release tooling (`scripts/release.sh`) and the release pointer
 
 Two separate halves, on two separate machines:

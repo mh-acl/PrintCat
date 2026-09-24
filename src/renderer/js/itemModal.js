@@ -6,7 +6,8 @@
 // still live -- called from openItemModal's view-mode render path, not
 // dead code).
 // Depends on: state.js, utils.js, filters.js (buildFilterMessage,
-// fileMatchesKeywordInItem, effectivePrinterFilter, printerLabel),
+// fileMatchesKeywordInItem, fileMatchesPrinter, fileMatchesPrintTime,
+// fileMatchesPrinterAndTime, effectivePrinterFilter, printerLabel),
 // grid.js (renderEmptyState), lightbox.js (cropRectFor, makeZoomButton),
 // settings.js (createTagInput), dialogs.js.
 // NOTE: openItemModal is ~700 lines on its own -- flagged as a future
@@ -770,28 +771,34 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     content.innerHTML = '';
     if (mode === 'view') {
       const effective = effectivePrinterFilter();
-      const matchesPrinterOnly = item.files.filter((f) => fileMatchesPrinter(f, effective));
-      const matchingFiles = matchesPrinterOnly.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
+      const matchesPrinterAndTime = item.files.filter((f) => fileMatchesPrinterAndTime(f, effective));
+      const matchingFiles = matchesPrinterAndTime.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
       if (matchingFiles.length === 0) {
         // Same reasoning as the main grid's empty state (buildGridEmptyMessage)
-        // -- check which active restriction (search text, printer filter)
-        // is actually responsible rather than always naming the same one.
+        // -- check which active restriction (search text, printer
+        // filter, print-time limit) is actually responsible rather
+        // than always naming the same one.
         const matchesKeywordOnly = item.files.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
         const message = buildFilterMessage(
           [
             {
               active: Boolean(keywordQuery),
-              wouldHelp: () => matchesPrinterOnly.length > 0,
+              wouldHelp: () => matchesPrinterAndTime.length > 0,
               suggestion: 'try a different search term, or clear the search box',
             },
             {
               active: effective && effective.size > 0,
-              wouldHelp: () => matchesKeywordOnly.length > 0,
+              wouldHelp: () => matchesKeywordOnly.some((f) => fileMatchesPrintTime(f, printTimeLimitMinutes)),
               suggestion: 'choose "All Printers" to see every version',
+            },
+            {
+              active: printTimeLimitMinutes != null,
+              wouldHelp: () => matchesKeywordOnly.some((f) => fileMatchesPrinter(f, effective)),
+              suggestion: 'choose a longer print time, or "Any length", to see longer prints',
             },
           ],
           'This item has no print files.',
-          'No print files here match both your search and the selected printer(s). Try loosening one of them.'
+          'No print files here match your search, the selected printer(s), and the print-time limit together. Try loosening one of them.'
         );
         content.appendChild(renderEmptyState(message));
       } else {
@@ -1487,7 +1494,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   // would, not a separately-maintained approximation of it.
   function fileWouldShowInBrowsing(pf) {
     const effective = effectivePrinterFilter();
-    if (!fileMatchesPrinter(pf, effective)) return false;
+    if (!fileMatchesPrinterAndTime(pf, effective)) return false;
     return fileMatchesKeywordInItem(item, pf, keywordQuery);
   }
 

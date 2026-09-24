@@ -1,7 +1,8 @@
 /* Keyword search box + sort-mode/direction control (both still above
-   the main grid, in #top-filters), plus the printer/tag/status filter
-   lists, which now live in a right-hand sidebar column alongside the
-   grid rather than as pill rows above it -- see .catalog-layout. */
+   the main grid, in #top-filters), plus the printer/print-time/tag/
+   status filter lists, which now live in a right-hand sidebar column
+   alongside the grid rather than as pill rows above it -- see
+   .catalog-layout. */
 
 .keyword-filter-wrap {
   display: flex;
@@ -178,6 +179,44 @@
   font-family: var(--font-mono);
   font-size: 0.85em;
   flex: 0 0 auto;
+}
+/* Print Time section's last row: (o) Under [__]h [__]m -- a radio plus
+   two number-only text fields (filters.js's buildCustomPrintTimeRow)
+   instead of a plain <label> row, so a click in a field doesn't count
+   as a click on the row's label. Tighter gaps than a normal
+   .filter-option so it fits the sidebar's fixed width on one line. */
+.filter-option.print-time-custom {
+  cursor: default;
+  gap: 0.3em;
+  flex-wrap: nowrap;
+}
+.filter-option.print-time-custom input[type='radio'] {
+  margin-right: 0.25em;
+}
+.print-time-unit {
+  color: var(--ink-soft);
+  flex: 0 0 auto;
+}
+.print-time-input {
+  flex: 0 0 auto;
+  width: 2.6em;
+  padding: 0.25em 0.3em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 1em;
+  text-align: right;
+  box-sizing: border-box;
+}
+.print-time-input::placeholder {
+  color: var(--ink-faint);
+}
+.print-time-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 /* Status (smart-tag) rows keep the same add/edit/delete color coding
    the old smart-tag pills used, just as a tinted row instead of a

@@ -1,11 +1,13 @@
 'use strict';
 
-// Printer/tag/keyword filtering: predicate functions (itemMatches*)
-// plus the sidebar filter option-lists (renderPrinterFilter/
-// renderTagFilter, the latter also driving the edit-mode-only status
-// list) and the sort-mode/direction control up top (renderSortFilter).
+// Printer/tag/keyword/print-time filtering: predicate functions
+// (itemMatches*/fileMatches*) plus the sidebar filter option-lists
+// (renderPrinterFilter/renderPrintTimeFilter/renderTagFilter, the
+// latter also driving the edit-mode-only status list) and the
+// sort-mode/direction control up top (renderSortFilter).
 // Depends on: state.js (selectedPrinters/selectedTags/keywordQuery/
-// editModeActive/selectedSmartTags/settings), utils.js.
+// printTimeChoice/printTimeLimitMinutes/editModeActive/
+// selectedSmartTags/settings), utils.js.
 
 // Builds one checkbox/radio row for a sidebar filter list --
 // renderPrinterFilter (checkboxes, multi-select), renderTagFilter
@@ -75,7 +77,7 @@ function collectTags(items) {
 // A single file's printer identity vs. the current filter -- the
 // shared building block behind itemMatchesPrinter (any-file-matches,
 // used to decide whether an item shows at all) and the "which files
-// count for this item" helpers below (filesMatchingPrinter/
+// count for this item" helpers below (filesMatchingPrinterAndTime/
 // filesMatchingCurrentFilters), which need the same per-file test but
 // keep or drop individual files rather than the whole item.
 function fileMatchesPrinter(file, printerSet) {
@@ -84,6 +86,38 @@ function fileMatchesPrinter(file, printerSet) {
 function itemMatchesPrinter(item, printerSet) {
   if (!printerSet || printerSet.size === 0) return true;
   return item.files.some((f) => fileMatchesPrinter(f, printerSet));
+}
+// Print-time filter ("under" a maximum only): a single file's print time vs. the
+// limit in whole minutes (null = no limit, everything passes). Files
+// with an unknown/unparseable print time fail an active limit -- see
+// utils.js's printTimeWithinLimit.
+function fileMatchesPrintTime(file, limitMinutes) {
+  if (limitMinutes == null) return true;
+  return printTimeWithinLimit(parsePrintTimeSeconds(file.printTime), limitMinutes);
+}
+// The two physical-fit tests together, using the limit currently in
+// effect (state.js's printTimeLimitMinutes): "could this file be
+// printed here, within the time I've got" -- the per-file counterpart
+// of itemMatchesPrintTime below, and what the item modal's file list
+// filters on alongside the keyword search.
+function fileMatchesPrinterAndTime(file, printerSet) {
+  return fileMatchesPrinter(file, printerSet) && fileMatchesPrintTime(file, printTimeLimitMinutes);
+}
+// An item passes the print-time filter if at least one of its files
+// satisfies the printer filter AND the time limit *at once* -- not
+// "some file matches the printer and some (possibly other) file is
+// short enough", which would let an item through on the strength of
+// a quick print for a printer that isn't even selected. With no limit
+// set this is always true, so the printer filter's own any-file-
+// matches test (itemMatchesPrinter) stays what decides that alone.
+// limitMinutes is a parameter (rather than read from state.js like
+// fileMatchesPrinterAndTime) so grid.js's buildGridEmptyMessage can ask
+// "would this match with the limit removed".
+function itemMatchesPrintTime(item, printerSet, limitMinutes) {
+  if (limitMinutes == null) return true;
+  return item.files.some(
+    (f) => fileMatchesPrinter(f, printerSet) && fileMatchesPrintTime(f, limitMinutes)
+  );
 }
 function itemMatchesTags(item, tagSet) {
   if (!tagSet || tagSet.size === 0) return true;
@@ -143,18 +177,26 @@ function fileMatchesKeywordInItem(item, file, query) {
 // keyword search, matching what you'd actually see if you opened this
 // item's own modal right now.
 //
-// filesMatchingPrinter is print time's narrower notion -- printer
-// filter only. Deliberately ignores the keyword search: which files
-// physically fit the selected printer(s) doesn't depend on what text
-// you happen to be searching for.
+// filesMatchingPrinterAndTime is print time's narrower notion --
+// printer filter plus the print-time limit (if one's set), no keyword.
+// Deliberately ignores the keyword search: which files physically fit
+// the selected printer(s), within the time you've got, doesn't depend
+// on what text you happen to be searching for. Both helpers fall back
+// tier by tier (printer+time, then printer alone, then every file)
+// rather than ever returning empty -- an item can only reach a card
+// with nothing under the limit in edit mode, where non-matching items
+// are shown anyway (see grid.js's render()).
 function filesMatchingCurrentFilters(item, printerSet) {
-  const printerOnly = item.files.filter((f) => fileMatchesPrinter(f, printerSet));
-  const combined = printerOnly.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
+  const strict = item.files.filter((f) => fileMatchesPrinterAndTime(f, printerSet));
+  const combined = strict.filter((f) => fileMatchesKeywordInItem(item, f, keywordQuery));
   if (combined.length > 0) return combined;
-  if (printerOnly.length > 0) return printerOnly;
-  return item.files;
+  if (strict.length > 0) return strict;
+  const printerOnly = item.files.filter((f) => fileMatchesPrinter(f, printerSet));
+  return printerOnly.length > 0 ? printerOnly : item.files;
 }
-function filesMatchingPrinter(item, printerSet) {
+function filesMatchingPrinterAndTime(item, printerSet) {
+  const strict = item.files.filter((f) => fileMatchesPrinterAndTime(f, printerSet));
+  if (strict.length > 0) return strict;
   const printerOnly = item.files.filter((f) => fileMatchesPrinter(f, printerSet));
   return printerOnly.length > 0 ? printerOnly : item.files;
 }
@@ -167,12 +209,15 @@ function filesMatchingPrinter(item, printerSet) {
 // count you'd actually land on. Not folded through itemMatchesTags
 // itself since the tag being counted is the one being tested, and not
 // itemMatchesSmartTags since that's edit-session-only and unrelated to
-// what a tag pill represents.
-function countItemsForTag(items, printerSet, tagValue, query) {
+// what a tag pill represents. The print-time limit is folded in for
+// the same reason as the printer filter and keyword: render() applies
+// it, so the count has to as well.
+function countItemsForTag(items, printerSet, tagValue, query, limitMinutes) {
   let total = 0;
   for (const item of items) {
     if (!(item.tags || []).includes(tagValue)) continue;
     if (!itemMatchesPrinter(item, printerSet)) continue;
+    if (!itemMatchesPrintTime(item, printerSet, limitMinutes)) continue;
     if (!itemMatchesKeyword(item, query)) continue;
     total++;
   }
@@ -281,6 +326,195 @@ function renderPrinterFilter() {
     );
   }
 }
+// Print Time sidebar section: "under" a maximum only (no minimum, no
+// range) -- a single-select radio group like the tag list, with "Any
+// length" as the reset option, four presets, and a last "custom" row
+// with number-only hours/minutes fields (buildCustomPrintTimeRow).
+// Rendered once at startup (renderer.js's init()) rather than on every
+// catalog update: it has nothing catalog-derived to refresh, and
+// rebuilding it would tear the custom fields out from under a cursor
+// mid-typing. Radio checked-state is left to the browser's native
+// radio-group behavior (shared `name`) after that.
+const PRINT_TIME_PRESETS = [
+  { minutes: 120, label: 'Under 2 hours' },
+  { minutes: 60, label: 'Under 1 hour' },
+  { minutes: 30, label: 'Under 30 minutes' },
+  { minutes: 10, label: 'Under 10 minutes' },
+];
+const PRINT_TIME_RADIO_NAME = 'print-time-filter-radio';
+// Derives state.js's printTimeLimitMinutes from the selected choice
+// (+ the custom fields' contents, when custom's the choice). A custom
+// selection with both fields empty/zero is "nothing entered yet", not
+// a limit of zero minutes that would match nothing.
+function recomputePrintTimeLimit() {
+  if (printTimeChoice === 'any') {
+    printTimeLimitMinutes = null;
+  } else if (printTimeChoice === 'custom') {
+    const { totalMinutes } = normalizeHoursMinutes(
+      customPrintTimeInputs.hours,
+      customPrintTimeInputs.minutes
+    );
+    printTimeLimitMinutes = totalMinutes > 0 ? totalMinutes : null;
+  } else {
+    printTimeLimitMinutes = parseInt(printTimeChoice, 10);
+  }
+}
+// Called after any change to printTimeChoice/customPrintTimeInputs.
+// No-ops when the effective limit didn't actually change (e.g. picking
+// custom while its fields are still empty). Going from no limit to a
+// limit also switches the sort to Print Time, longest first -- so the
+// files closest to the limit without going over land at the top (see
+// grid.js's sortKeyForItem) -- but only on that transition: once
+// a limit is active, moving between presets or editing the custom time
+// leaves whatever sort the person has since chosen alone. Tag counts
+// are refreshed too, since they fold the limit in (countItemsForTag).
+function onPrintTimeFilterChanged() {
+  const previous = printTimeLimitMinutes;
+  recomputePrintTimeLimit();
+  if (printTimeLimitMinutes === previous) return;
+
+  if (previous == null) {
+    sortMode = 'time';
+    sortReverse = true;
+    renderSortFilter();
+  }
+  renderTagFilter();
+  render();
+}
+function buildPrintTimeInput(ariaLabel, maxLength, value) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'numeric';
+  input.autocomplete = 'off';
+  input.maxLength = maxLength;
+  input.placeholder = '0';
+  input.value = value;
+  input.className = 'print-time-input';
+  input.setAttribute('aria-label', ariaLabel);
+  // Digits only, not just at typing time: beforeinput stops a typed
+  // non-digit before it lands (no flicker), and the input handler
+  // scrubs whatever still got through -- pastes, drops -- since
+  // beforeinput doesn't reliably carry the inserted text for those.
+  input.addEventListener('beforeinput', (e) => {
+    if (e.data && /\D/.test(e.data)) e.preventDefault();
+  });
+  input.addEventListener('input', () => {
+    const digits = input.value.replace(/\D/g, '');
+    if (digits !== input.value) input.value = digits;
+  });
+  return input;
+}
+// The last row: (o) Under [__]h [__]m. Typing (or just focusing a
+// field) selects the custom option and applies whatever's entered as
+// you go; the fields are rewritten into normalized form (e.g. 0h 90m
+// -> 1h 30m) once focus leaves the row entirely -- not on tabbing from
+// the hours field to the minutes field, which would rewrite the
+// minutes field out from under the person about to type in it.
+function buildCustomPrintTimeRow() {
+  const row = document.createElement('div');
+  row.className = 'filter-option print-time-custom';
+
+  const radio = document.createElement('input');
+  radio.type = 'radio';
+  radio.name = PRINT_TIME_RADIO_NAME;
+  radio.checked = printTimeChoice === 'custom';
+  radio.setAttribute('aria-label', 'Custom print time limit');
+  row.appendChild(radio);
+
+  const prefix = document.createElement('span');
+  prefix.className = 'print-time-unit';
+  prefix.textContent = 'Under';
+  row.appendChild(prefix);
+
+  const hoursInput = buildPrintTimeInput('Custom limit, hours', 2, customPrintTimeInputs.hours);
+  row.appendChild(hoursInput);
+  const hoursUnit = document.createElement('span');
+  hoursUnit.className = 'print-time-unit';
+  hoursUnit.textContent = 'h';
+  row.appendChild(hoursUnit);
+
+  const minutesInput = buildPrintTimeInput('Custom limit, minutes', 3, customPrintTimeInputs.minutes);
+  row.appendChild(minutesInput);
+  const minutesUnit = document.createElement('span');
+  minutesUnit.className = 'print-time-unit';
+  minutesUnit.textContent = 'm';
+  row.appendChild(minutesUnit);
+
+  const activateCustom = () => {
+    customPrintTimeInputs = { hours: hoursInput.value, minutes: minutesInput.value };
+    if (printTimeChoice !== 'custom') {
+      printTimeChoice = 'custom';
+      radio.checked = true;
+    }
+    onPrintTimeFilterChanged();
+  };
+  const normalizeInputs = () => {
+    const { totalMinutes, hours, minutes } = normalizeHoursMinutes(
+      hoursInput.value,
+      minutesInput.value
+    );
+    // Zero/empty isn't a usable limit -- clear both fields back to
+    // their blank placeholders rather than leave a stray "0h 0m".
+    hoursInput.value = totalMinutes > 0 ? String(hours) : '';
+    minutesInput.value = totalMinutes > 0 ? String(minutes) : '';
+    customPrintTimeInputs = { hours: hoursInput.value, minutes: minutesInput.value };
+    onPrintTimeFilterChanged();
+  };
+
+  radio.addEventListener('change', () => {
+    activateCustom();
+    hoursInput.focus();
+  });
+  for (const input of [hoursInput, minutesInput]) {
+    input.addEventListener('focus', activateCustom);
+    input.addEventListener('input', activateCustom);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        input.blur(); // -> focusout below does the normalizing
+      }
+    });
+  }
+  row.addEventListener('focusout', (e) => {
+    if (row.contains(e.relatedTarget)) return;
+    normalizeInputs();
+  });
+
+  return row;
+}
+function renderPrintTimeFilter() {
+  const el = document.getElementById('print-time-filter');
+  if (!el) return;
+  el.innerHTML = '';
+
+  el.appendChild(
+    buildFilterOptionRow({
+      type: 'radio',
+      name: PRINT_TIME_RADIO_NAME,
+      checked: printTimeChoice === 'any',
+      labelText: 'Any length',
+      onChange: () => {
+        printTimeChoice = 'any';
+        onPrintTimeFilterChanged();
+      },
+    })
+  );
+  for (const preset of PRINT_TIME_PRESETS) {
+    el.appendChild(
+      buildFilterOptionRow({
+        type: 'radio',
+        name: PRINT_TIME_RADIO_NAME,
+        checked: printTimeChoice === String(preset.minutes),
+        labelText: preset.label,
+        onChange: () => {
+          printTimeChoice = String(preset.minutes);
+          onPrintTimeFilterChanged();
+        },
+      })
+    );
+  }
+  el.appendChild(buildCustomPrintTimeRow());
+}
 function renderTagFilter() {
   const el = document.getElementById('tag-filter');
   el.innerHTML = '';
@@ -321,7 +555,7 @@ function renderTagFilter() {
     );
 
     for (const tag of tags) {
-      const count = countItemsForTag(allItems, effective, tag, keywordQuery);
+      const count = countItemsForTag(allItems, effective, tag, keywordQuery, printTimeLimitMinutes);
       el.appendChild(
         buildFilterOptionRow({
           type: 'radio',

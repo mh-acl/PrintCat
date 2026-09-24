@@ -55,23 +55,30 @@ function renderSyncStatus() {
 }
 // Builds the "nothing matches" message for the main grid, checking each
 // currently-active restriction (search text, tag filter, printer filter,
-// and -- in edit mode -- the Pending/Edited/Trashed smart-tag filter)
+// print-time limit, and -- in edit mode -- the Pending/Edited/Trashed
+// smart-tag filter)
 // individually to see which one(s) are actually responsible for the
 // empty grid, rather than always blaming the same one.
-// In edit mode, search/tag/printer are never actually the reason
+// In edit mode, search/tag/printer/print-time are never actually the reason
 // the grid is empty anymore -- render() no longer filters by them
 // there, only sorts/marks (see below) -- so their entries are skipped
 // as "active" restrictions there; only the smart-tag filter, or a
 // genuinely empty catalog, can produce an empty grid in edit mode.
 function buildGridEmptyMessage(effectivePrinters, editMode) {
-  const wouldMatchWithout = (overrides) =>
-    allItems.some(
+  const wouldMatchWithout = (overrides) => {
+    const printers = overrides.printers ?? effectivePrinters;
+    // 'maxMinutes' in overrides, not ??: null is itself the override
+    // value here ("no limit"), which ?? would mistake for "not overridden".
+    const maxMinutes = 'maxMinutes' in overrides ? overrides.maxMinutes : printTimeLimitMinutes;
+    return allItems.some(
       (item) =>
-        itemMatchesPrinter(item, overrides.printers ?? effectivePrinters) &&
+        itemMatchesPrinter(item, printers) &&
+        itemMatchesPrintTime(item, printers, maxMinutes) &&
         itemMatchesTags(item, overrides.tags ?? selectedTags) &&
         itemMatchesSmartTags(item, overrides.smartTags ?? selectedSmartTags) &&
         itemMatchesKeyword(item, overrides.keyword ?? keywordQuery)
     );
+  };
 
   return buildFilterMessage(
     [
@@ -91,6 +98,11 @@ function buildGridEmptyMessage(effectivePrinters, editMode) {
         suggestion: 'choose "All Printers"',
       },
       {
+        active: !editMode && printTimeLimitMinutes != null,
+        wouldHelp: () => wouldMatchWithout({ maxMinutes: null }),
+        suggestion: 'choose a longer print time, or "Any length"',
+      },
+      {
         active: selectedSmartTags.size > 0,
         wouldHelp: () => wouldMatchWithout({ smartTags: new Set() }),
         suggestion: 'clear the Pending/Edited/Trashed filter',
@@ -101,12 +113,17 @@ function buildGridEmptyMessage(effectivePrinters, editMode) {
   );
 }
 // True if this item would actually appear under plain (non-edit-mode)
-// browsing rules -- printer/tag/keyword, but deliberately not the
+// browsing rules -- printer/print-time/tag/keyword, but deliberately not the
 // Pending/Edited/Trashed smart-tag filter, which is an edit-mode tool
 // for finding changes rather than a "would a visitor see this" check
 // and stays a strict filter regardless (see render() below).
 function itemWouldShowInBrowsing(item, effective) {
-  return itemMatchesPrinter(item, effective) && itemMatchesTags(item, selectedTags) && itemMatchesKeyword(item, keywordQuery);
+  return (
+    itemMatchesPrinter(item, effective) &&
+    itemMatchesPrintTime(item, effective, printTimeLimitMinutes) &&
+    itemMatchesTags(item, selectedTags) &&
+    itemMatchesKeyword(item, keywordQuery)
+  );
 }
 // Numeric sort key per mode ('name' is handled separately in
 // compareByMode below, as a string compare rather than a numeric
@@ -125,8 +142,8 @@ function itemWouldShowInBrowsing(item, effective) {
 //
 // 'time' is fixed to the shortest print time (printTimeRangeSeconds's
 // .min) among the files that would currently print on the selected
-// printer(s) -- filesMatchingPrinter (filters.js), deliberately not
-// narrowed by keyword (see that function's comment) -- no matter
+// printer(s) -- filesMatchingPrinterAndTime (filters.js), deliberately
+// not narrowed by keyword (see that function's comment) -- no matter
 // which direction is active. That's a deliberate choice over using
 // .min ascending / .max descending: that would make Reverse change
 // what an item is being sorted *by*, not just the order, which would
@@ -135,13 +152,26 @@ function itemWouldShowInBrowsing(item, effective) {
 // set) is still shown on every card regardless of sort (see
 // buildItemCardMetaText) so that information isn't lost, just moved
 // from the sort key to the display.
+//
+// The one exception: while the print-time filter is active (state.js's
+// printTimeLimitMinutes), the 'time' key becomes the *longest* file
+// still within the limit instead -- what the filter's auto-sort
+// (filters.js's onPrintTimeFilterChanged) exists to surface is the
+// prints closest to the limit without going over, and an item with a
+// 20m file and a 1h55m file under a 2h limit should rank by its 1h55m
+// option, not its 20m one. It's still a single fixed value per item
+// regardless of direction, so Reverse keeps its plain meaning.
 function sortKeyForItem(item) {
   const effective = effectivePrinterFilter();
   if (sortMode === 'recent') {
     return latestAddedAtMs(filesMatchingCurrentFilters(item, effective));
   }
   if (sortMode === 'time') {
-    const range = printTimeRangeSeconds(filesMatchingPrinter(item, effective));
+    const files = filesMatchingPrinterAndTime(item, effective);
+    if (printTimeLimitMinutes != null) {
+      return longestPrintTimeWithin(files, printTimeLimitMinutes);
+    }
+    const range = printTimeRangeSeconds(files);
     return range ? range.min : null;
   }
   return null;
@@ -172,7 +202,8 @@ function compareByMode(a, b) {
 }
 // Item card's metadata line (see renderItemCard) -- print-time range
 // across the files that would currently print on the selected
-// printer(s) (filesMatchingPrinter), plus a relative "updated"
+// printer(s), within the print-time limit if one's set
+// (filesMatchingPrinterAndTime), plus a relative "updated"
 // timestamp derived from the most recent addedAt among the files that
 // would currently show (filesMatchingCurrentFilters) -- see
 // sortKeyForItem above for why those two file sets differ. Shown
@@ -186,7 +217,7 @@ function buildItemCardMetaText(item) {
   const effective = effectivePrinterFilter();
   const parts = [];
 
-  const range = printTimeRangeSeconds(filesMatchingPrinter(item, effective));
+  const range = printTimeRangeSeconds(filesMatchingPrinterAndTime(item, effective));
   if (range) {
     parts.push(
       range.min === range.max
@@ -249,7 +280,7 @@ function render() {
     const card = renderItemCard(item);
     if (editModeActive && !itemWouldShowInBrowsing(item, effective)) {
       card.classList.add('listing-filtered-out');
-      card.title = "Wouldn't be shown right now under the current search/printer/tag filter";
+      card.title = "Wouldn't be shown right now under the current search/printer/print-time/tag filter";
     }
     itemGrid.appendChild(card);
   }

@@ -91,6 +91,7 @@ async function init() {
 
   renderSortFilter();
   renderPrinterFilter();
+  renderPrintTimeFilter();
   renderTagFilter();
   render();
 }

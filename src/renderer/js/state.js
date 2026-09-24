@@ -22,14 +22,31 @@ let keywordQuery = ''; // raw text from the search box; '' = no restriction
 // filesMatchingCurrentFilters and grid.js's sortKeyForItem), 'name' sorts
 // alphabetically by displayName, 'time' sorts by the item's shortest
 // print file's print time ascending (filtered by the current printer
-// filter only -- filters.js's filesMatchingPrinter). See grid.js's
-// compareByMode()/render() and filters.js's renderSortFilter().
+// filter and print-time limit, not the keyword -- filters.js's
+// filesMatchingPrinterAndTime; while a print-time limit is active it
+// instead uses the longest file still within that limit, see grid.js's
+// sortKeyForItem). See grid.js's compareByMode()/render() and
+// filters.js's renderSortFilter().
 let sortMode = 'recent';
 // Flips compareByMode's comparison result (not the rendered array) --
 // see grid.js's compareByMode for why: it keeps "unknown value sorts
 // to the end" true regardless of direction, which a plain
 // Array.reverse() or array-reversal-based approach wouldn't.
 let sortReverse = false;
+// Print-time filter ("under" a maximum only -- no minimum/range): which choice is
+// selected in the sidebar's Print Time section ('any', a preset's
+// minutes as a string like '120', or 'custom'), the raw text in the
+// custom h/m fields, and the resulting limit in whole minutes that the
+// rest of the renderer actually reads (null = no limit). The limit is
+// derived from the other two by filters.js's recomputePrintTimeLimit()
+// -- nothing else should assign it directly. Kept in minutes, not
+// seconds, because the card shows print times rounded to the nearest
+// minute and the filter compares on that same rounded value (see
+// utils.js's printTimeWithinLimit) so a file displayed as "1hr 30m"
+// always passes a 1h 30m limit.
+let printTimeChoice = 'any';
+let customPrintTimeInputs = { hours: '', minutes: '' };
+let printTimeLimitMinutes = null;
 let settings = { availablePrinters: [], hideUnavailable: false, gitRepoUrl: '', gitBranch: '' };
 let syncStatus = { configured: false, lastSuccessAt: null, inProgress: false, pausedForEdit: false };
 

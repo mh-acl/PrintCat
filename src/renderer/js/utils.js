@@ -88,7 +88,7 @@ function parsePrintTimeSeconds(raw) {
 // files array rather than an item, since callers pass different
 // filtered subsets of an item's files depending on purpose (grid.js's
 // buildItemCardMetaText/sortKeyForItem pass only the files that would
-// print on the currently selected printer(s) -- see filesMatchingPrinter
+// print on the currently selected printer(s) -- see filesMatchingPrinterAndTime
 // in filters.js -- not necessarily every file the item has). Files
 // with an unparseable/missing printTime are excluded rather than
 // treated as 0; returns null (not {min:0,max:0}) when none of the
@@ -99,6 +99,41 @@ function printTimeRangeSeconds(files) {
     .filter((t) => t != null);
   if (!times.length) return null;
   return { min: Math.min(...times), max: Math.max(...times) };
+}
+// True if a print time (seconds, as returned by parsePrintTimeSeconds)
+// is within a limit given in whole minutes. Compares on the time
+// rounded to the nearest minute -- the same rounding formatDurationShort
+// uses for what the item cards display -- rather than exact seconds, so
+// a file that reads "1hr 30m" on its card can't be excluded by a
+// "1h 30m" limit just because its real time is 1h 30m 20s. A null
+// (unknown) time is never within a limit: it can't be verified, and
+// (same reasoning as printTimeRangeSeconds) shouldn't pass as an
+// instant print.
+function printTimeWithinLimit(seconds, limitMinutes) {
+  if (seconds == null) return false;
+  return Math.round(seconds / 60) <= limitMinutes;
+}
+// The longest print time (seconds) among a set of files that's still
+// within a limit -- i.e. "closest to the limit without going over",
+// the sort key grid.js's sortKeyForItem uses for Print Time sorting
+// while the print-time filter is active. Returns null when no file
+// qualifies.
+function longestPrintTimeWithin(files, limitMinutes) {
+  const times = (files || [])
+    .map((f) => parsePrintTimeSeconds(f.printTime))
+    .filter((t) => printTimeWithinLimit(t, limitMinutes));
+  return times.length ? Math.max(...times) : null;
+}
+// Normalizes a raw hours/minutes pair (digit strings, either possibly
+// empty) into whole minutes and a canonical split, e.g. 0h 90m ->
+// {totalMinutes: 90, hours: 1, minutes: 30}. Both fields empty (or
+// zero) yields totalMinutes 0 -- callers treat that as "no limit
+// entered", not a limit of zero.
+function normalizeHoursMinutes(hoursText, minutesText) {
+  const h = parseInt(hoursText, 10) || 0;
+  const m = parseInt(minutesText, 10) || 0;
+  const totalMinutes = h * 60 + m;
+  return { totalMinutes, hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 };
 }
 // The most recent addedAt (see indexer.js's per-file addedAt) among a
 // set of files, as epoch ms -- the basis for both the "Recent" sort

@@ -1,5 +1,5 @@
 TODO:
-- filter by maximum print time, ie under an hour, under 25 minutes, etc
+- ~~filter by maximum print time, ie under an hour, under 25 minutes, etc~~
 - ~~asynchronously try to sync print files from github on launch~~
   - after that, try to sync every 24 hours
   - if there's a failure, try to sync again in 2 minutes, then every 10 minutes until successful
