@@ -725,9 +725,10 @@ fall through to the old filename-convention chain (an override image
 in the item folder matching the file's longname, then shortname), then
 its own embedded gcode thumbnail (extracted + cached on demand), then
 nothing. An item with no `metadata.json` image assignments yet behaves
-exactly as before this existed. Item-level thumbnail: an explicit
-`thumb.*` file, else the first print file that resolves to a real
-thumbnail.
+exactly as before this existed. Item-level thumbnail: the primary
+explicit item image (`metadataItemImage`, first of `itemImages` — see
+"Item photos" below), else an explicit `thumb.*` file, else the first
+print file that resolves to a real thumbnail.
 When extracting an embedded gcode thumbnail, the cache file's
 extension (`.png`/`.jpg`) is picked from `parseGcodeMetadata()`'s
 `thumbnailMimeType`, via an `EXT_BY_MIME` map, rather than assumed to
@@ -1427,6 +1428,43 @@ claims non-image drags, highlights the whole file-card grid
 per-card `.drop-target-active` treatment, so it can't read as one
 specific card being chosen), and adds any dropped print files the same
 way the add-tile's own drop does.
+
+## Item photos (multiple images per item)
+
+An item can hold several images, not just one. `metadata.json` stores
+them as `itemImages` (ordered filenames in the item's own folder,
+primary first) and still writes `itemImage` (the first entry, a plain
+string) alongside it, so a laptop that hasn't auto-updated yet keeps
+showing the right primary image; `itemMetadata.js`'s
+`normalizeItemImages()`/`itemImagesFromMetadata()` accept either shape
+on read and dedupe. The indexer exposes `metadataItemImages` (the whole
+list) and `metadataItemImage` (its first entry) — `thumbnailResolver.js`
+and everything else that only needs the primary keeps reading the
+latter. `writeItemMetadata` fully replaces the list on every write (like
+`displayName`/`tags`), so any metadata-only bulk write (`backfillOrigins`,
+`backfillAddedDates`) has to pass `itemImages: item.metadataItemImages`
+through or it clears them all.
+
+In the item modal's edit mode the draft holds `itemImageRefs` (ImageRefs,
+primary first). The extra images are managed on an **Item photos card**
+(`buildItemPhotosCard()`, `itemModal.js`) — always the first card in the
+file list, built from the same `buildFileEntry()` shell and image-chip
+row as a print file. It's a target in the same three ways a print file is
+(a click-selected target via its checkbox, drag-and-drop, the gallery's
+assign arrow), and every assignment *appends* (deduped). The first chip
+is outlined as the main image; clicking any other chip promotes it, and
+each chip has its own remove button. The topbar chip stays the primary
+thumbnail: it shows only the main image, has its own target checkbox
+(mirroring the card's — both are the single `'item'` target in
+`selectedTargets`), and grows a "+N" badge when there are extras that
+scrolls to and flashes the card (`focusItemPhotosCard()`). The chip's
+remove button removes the *main* image (the next one takes its place).
+
+View mode renders a hidden twin of the card (`renderHiddenItemPhotosCard()`,
+`display: none`, same `view-transition-name: item-photos-card`) — same
+"present but collapsed" convention as the hidden gallery column. View
+mode shows no extra photos anywhere in the modal header; a carousel of
+the extras on the main-grid card is a separate, not-yet-built pass.
 
 ## Print-file level trashing (shipped)
 

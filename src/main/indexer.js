@@ -13,7 +13,7 @@ const fsp = fs.promises;
 const path = require('path');
 const { parseFilename, parseGcodeMetadata } = require('./gcodeParser');
 const { stripTrailingId } = require('./folderName');
-const { readItemMetadata, METADATA_FILENAME } = require('./itemMetadata');
+const { readItemMetadata, itemImagesFromMetadata, METADATA_FILENAME } = require('./itemMetadata');
 
 const GCODE_EXT = new Set(['.gcode', '.bgcode']);
 const PROJECT_EXT = new Set(['.3mf']);
@@ -131,6 +131,7 @@ class Indexer {
     // or one never edited since) still works exactly as before.
     const metadata = await readItemMetadata(dir);
     const metaPrintFiles = (metadata && metadata.printFiles) || {};
+    const metadataItemImages = itemImagesFromMetadata(metadata);
 
     // Per-file image assignments are attached via a shallow copy rather
     // than mutating the cached parse entry directly -- the gcode parse
@@ -190,7 +191,13 @@ class Indexer {
       // filename-convention detection above -- takes precedence over
       // it in thumbnailResolver.resolveItemThumbnail, same relationship
       // per-file metadataImages already has over filename matching.
-      metadataItemImage: (metadata && metadata.itemImage) || null,
+      // Ordered list of every explicitly assigned item-level image
+      // (see itemMetadata.js's normalizeItemImages), primary first --
+      // metadataItemImage above/below is just its first entry, kept as
+      // its own field since most readers (thumbnailResolver.js, the
+      // bulk metadata tools) only care about the primary one.
+      metadataItemImages,
+      metadataItemImage: metadataItemImages[0] || null,
       imageFiles, // all images present in this folder, for per-file overrides
       // { [imageFilename]: { thumb?: cropRect, full?: cropRect } } -- see
       // itemMetadata.js. Exposed as the raw map rather than resolved

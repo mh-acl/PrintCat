@@ -268,28 +268,9 @@ function buildFileEntry(opts) {
   (chips || []).forEach((chipData) => {
     const chip = document.createElement('span');
     chip.className = 'print-file-image-chip';
-    // Optional per-chip extras, only ever passed by the item photos
-    // card (buildItemPhotosCard) so far: `primary` outlines the chip
-    // that's the item's main image, `title` is a hover hint, and
-    // `onClick` makes the whole chip a button (edit mode only -- the
-    // view-mode twin is inert like everything else in it).
-    if (chipData.primary) chip.classList.add('print-file-image-chip-primary');
     const chipImg = document.createElement('img');
     chipImg.src = chipData.src;
-    if (chipData.title) chip.title = chipData.title;
     chip.appendChild(chipImg);
-    if (editable && chipData.onClick) {
-      chip.classList.add('print-file-image-chip-clickable');
-      chip.tabIndex = 0;
-      chip.setAttribute('role', 'button');
-      chip.onclick = chipData.onClick;
-      chip.onkeydown = (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          chipData.onClick();
-        }
-      };
-    }
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'icon icon-close';
@@ -344,18 +325,16 @@ function createDraftFromItem(item) {
     displayName: item.displayName || item.name,
     tags: item.tags ? [...item.tags] : [],
     origin: item.origin ? { ...item.origin } : {},
-    // Ordered item-level images, primary first -- the whole explicit
-    // metadata.json list wins, same as the main process's
-    // resolveItemThumbnail does for the primary -- but fall back to
-    // the thumb.* filename convention (item.explicitThumb) before
+    // Explicit metadata.json assignment wins, same as the main
+    // process's resolveItemThumbnail -- but fall back to the
+    // thumb.* filename convention (item.explicitThumb) before
     // giving up, so legacy items assigned that way don't lose their
     // image just because edit mode never used to look for it.
-    itemImageRefs:
-      item.metadataItemImages && item.metadataItemImages.length > 0
-        ? item.metadataItemImages.map((name) => ({ kind: 'existing', name }))
-        : item.explicitThumb
-          ? [{ kind: 'existing', name: item.explicitThumb }]
-          : [],
+    itemImageRef: item.metadataItemImage
+      ? { kind: 'existing', name: item.metadataItemImage }
+      : item.explicitThumb
+        ? { kind: 'existing', name: item.explicitThumb }
+        : null,
     printFiles: item.files.map((f) => {
       const key = f.path.split(/[\\/]/).pop();
       const explicitImages = (f.metadataImages || []).map((name) => ({ kind: 'existing', name }));
@@ -467,7 +446,7 @@ function createDraftFromPicked(picked) {
     // precedence as createDraftFromItem above -- there's no
     // metadata.json yet for a freshly-scanned folder, so this only
     // ever resolves via picked.explicitThumb.
-    itemImageRefs: picked.explicitThumb ? [{ kind: 'existing', name: picked.explicitThumb }] : [],
+    itemImageRef: picked.explicitThumb ? { kind: 'existing', name: picked.explicitThumb } : null,
     printFiles: picked.printFiles.map((f) => {
       // Same longname/shortname filename-matching fallback as
       // createDraftFromItem above -- a freshly-scanned folder can
@@ -585,7 +564,6 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   let editTagsField = null; // the edit-mode tag chip input, so Save can read its current tags
   let refreshEditFilesArea = () => {}; // rebuilds just the file cards + gallery, set by buildEditRoot()
   let thumbChipHolder = null; // set fresh by renderTopBar() each render; refreshEditFilesArea() (buildEditRoot) targets whatever this currently points to
-  let itemPhotosCardEl = null; // the current edit-mode Item photos card, set by refreshEditFilesArea() -- the topbar chip's "+N" badge scrolls to it (focusItemPhotosCard)
   let sourceDir = item ? item.path : null; // becomes known for 'add' once the folder's picked, below
   let folderPath = item ? item.path : null; // raw fs path, not a URL -- see imageRefSrc/fileUrl
   // Set alongside openModalHandle below (both the 'add' and non-'add'
@@ -674,7 +652,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       // pattern as everywhere else in this modal (per-file checkbox,
       // print button, image chips). The remove button specifically
       // only appears when item.metadataItemImage is set, mirroring
-      // buildItemThumbChip's own condition (draft.itemImageRefs[0], which
+      // buildItemThumbChip's own condition (draft.itemImageRef, which
       // is just this same field wrapped into draft form) exactly --
       // edit mode never shows a real remove button for a "borrowed
       // preview" thumbnail (no explicit assignment, just the first-
@@ -721,20 +699,6 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
         removePlaceholder.disabled = true;
         removePlaceholder.tabIndex = -1;
         chip.appendChild(removePlaceholder);
-      }
-      // Inert twin of buildItemThumbChip's "+N" badge, present under
-      // the same condition (more than one explicit item image) --
-      // same shape-parity reasoning as the remove placeholder above.
-      // Deliberately never shown in view mode: the extra photos only
-      // surface on the main-grid card, not in this header.
-      if ((item.metadataItemImages || []).length > 1) {
-        const countPlaceholder = document.createElement('button');
-        countPlaceholder.type = 'button';
-        countPlaceholder.className = 'item-modal-chip-count print-file-action-hidden';
-        countPlaceholder.textContent = `+${item.metadataItemImages.length - 1}`;
-        countPlaceholder.disabled = true;
-        countPlaceholder.tabIndex = -1;
-        chip.appendChild(countPlaceholder);
       }
 
       const heading = document.createElement('h2');
@@ -869,13 +833,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
 
   function assignSingleTargetImage(targetId, ref) {
     if (targetId === 'item') {
-      // Appends (skipping a duplicate), same as a print file -- the
-      // item can hold several images now, primary first. Making a
-      // different one the primary is a separate action on the Item
-      // photos card's chips (buildItemPhotosCard), not something
-      // assigning again does.
-      if (draft.itemImageRefs.some((r) => imageRefEquals(r, ref))) return;
-      draft.itemImageRefs.push(ref);
+      draft.itemImageRef = ref;
     } else {
       const pf = draft.printFiles.find((f) => f.key === targetId);
       if (!pf || pf.images.some((r) => imageRefEquals(r, ref))) return;
@@ -892,35 +850,6 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   // batch-photo-sharing workflow).
   function assignImageToTargets(ref) {
     for (const targetId of selectedTargets) assignSingleTargetImage(targetId, ref);
-  }
-
-  // Drop handler body shared by the two item-level drop targets (the
-  // topbar chip and the Item photos card): real OS image files are
-  // added to the pool and assigned, an in-app gallery drag assigns
-  // that pool image by its index -- same two payloads
-  // buildPrintFileCard's own card-level ondrop handles.
-  function assignDroppedImages(targetId, e) {
-    const files = e.dataTransfer.files;
-    if (files && files.length > 0) {
-      for (const f of files) {
-        if (!isImageFileName(f.name)) continue;
-        assignSingleTargetImage(targetId, addExternalToPoolDraft(window.catalogAPI.getPathForFile(f), f.name));
-      }
-    } else {
-      const idx = Number(e.dataTransfer.getData('text/plain'));
-      if (!Number.isNaN(idx) && draft.poolImages[idx]) assignSingleTargetImage(targetId, draft.poolImages[idx]);
-    }
-  }
-
-  // Scrolls the Item photos card into view and flashes it -- what the
-  // topbar chip's "+N" badge does, since the extra photos live on that
-  // card rather than in the header.
-  function focusItemPhotosCard() {
-    if (!itemPhotosCardEl) return;
-    itemPhotosCardEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    itemPhotosCardEl.classList.remove('item-photos-flash');
-    void itemPhotosCardEl.offsetWidth; // force a reflow so re-adding the class restarts the animation
-    itemPhotosCardEl.classList.add('item-photos-flash');
   }
 
   // --- Edit-mode crop helpers --------------------------------------------
@@ -1066,7 +995,16 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     chip.ondrop = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      assignDroppedImages('item', e);
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        const f = files[0];
+        if (isImageFileName(f.name)) {
+          assignSingleTargetImage('item', addExternalToPoolDraft(window.catalogAPI.getPathForFile(f), f.name));
+        }
+      } else {
+        const idx = Number(e.dataTransfer.getData('text/plain'));
+        if (!Number.isNaN(idx) && draft.poolImages[idx]) assignSingleTargetImage('item', draft.poolImages[idx]);
+      }
     };
 
     const selectToggle = document.createElement('input');
@@ -1089,177 +1027,55 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     img.alt = 'Item image';
     frame.appendChild(img);
 
-    // The chip only ever shows the primary image (index 0) -- the rest
-    // live on the Item photos card (buildItemPhotosCard), with a "+N"
-    // badge here pointing at it.
-    const primaryRef = draft.itemImageRefs[0] || null;
-    if (primaryRef) {
-      img.src = imageRefSrc(primaryRef, folderPath);
-      applyImageCrop(img, frame, getDraftCrop(primaryRef, 'thumb'), { useDefault: true });
+    if (draft.itemImageRef) {
+      img.src = imageRefSrc(draft.itemImageRef, folderPath);
+      applyImageCrop(img, frame, getDraftCrop(draft.itemImageRef, 'thumb'), { useDefault: true });
 
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'item-modal-chip-remove icon icon-close';
-      removeBtn.title =
-        draft.itemImageRefs.length > 1
-          ? 'Remove the main item image (the next one takes its place)'
-          : 'Remove item image';
+      removeBtn.title = 'Remove item image';
       removeBtn.onclick = (e) => {
         e.stopPropagation();
-        draft.itemImageRefs.shift();
+        draft.itemImageRef = null;
         refreshEditFilesArea();
       };
       chip.appendChild(removeBtn);
-
-      if (draft.itemImageRefs.length > 1) {
-        const countBtn = document.createElement('button');
-        countBtn.type = 'button';
-        countBtn.className = 'item-modal-chip-count';
-        countBtn.textContent = `+${draft.itemImageRefs.length - 1}`;
-        countBtn.title = 'Show all item photos';
-        countBtn.setAttribute('aria-label', 'Show all item photos');
-        countBtn.onclick = (e) => {
-          e.stopPropagation();
-          focusItemPhotosCard();
-        };
-        chip.appendChild(countBtn);
-      }
+    } else if (mode === 'edit' && item) {
+      // No explicit item-level assignment in the draft (no
+      // metadataItemImage, no thumb.* convention match) -- but that
+      // doesn't mean the item has no thumbnail: resolveItemThumbnail
+      // (thumbnailResolver.js, via this same getItemThumbnail IPC)
+      // has a third fallback tier below those two -- the first print
+      // file that resolves to a real thumbnail, including an embedded
+      // gcode thumbnail generated/cached in the main process. That's
+      // exactly what the grid card already shows for this same item
+      // (see grid.js's identical getItemThumbnail call), so without
+      // this the editor showed the "no thumbnail" placeholder for the
+      // common case of an item with no *explicit* image, even though
+      // one is clearly visible everywhere else. This tier can't be
+      // computed client-side the way the other two are (it depends on
+      // gcode parsing and the on-disk thumbnail cache), so it's
+      // resolved async via IPC, same as grid.js's card thumbnail.
+      // Deliberately no crop/remove controls here -- there's no real
+      // assignment in the draft to act on, only a borrowed preview.
+      window.catalogAPI
+        .getItemThumbnail(item)
+        .then((thumb) => {
+          img.src = thumb ? fileUrl(thumb) : 'nothumb.svg';
+        })
+        .catch(() => {
+          img.src = 'nothumb.svg';
+        });
     } else {
-      showBorrowedItemThumbnail(img);
+      // Add-mode: no catalog entry exists yet for this folder, so
+      // there's no IPC-resolvable fallback to ask for -- this mirrors
+      // createDraftFromPicked's two-tier (explicitThumb + per-file
+      // filename match) client-side-only resolution.
+      img.src = 'nothumb.svg';
     }
 
     return chip;
-  }
-
-  // Fills an item-level image slot (the topbar chip's <img>, the Item
-  // photos card's thumbnail) when the draft has no explicit item image.
-  // No explicit assignment in the draft (no metadataItemImages, no
-  // thumb.* convention match) doesn't mean the item has no thumbnail:
-  // resolveItemThumbnail (thumbnailResolver.js, via this same
-  // getItemThumbnail IPC) has a third fallback tier below those two --
-  // the first print file that resolves to a real thumbnail, including
-  // an embedded gcode thumbnail generated/cached in the main process.
-  // That's exactly what the grid card already shows for this same item
-  // (see grid.js's identical getItemThumbnail call), so without this
-  // the editor showed the "no thumbnail" placeholder for the common
-  // case of an item with no *explicit* image, even though one is
-  // clearly visible everywhere else. This tier can't be computed
-  // client-side the way the other two are (it depends on gcode parsing
-  // and the on-disk thumbnail cache), so it's resolved async via IPC,
-  // same as grid.js's card thumbnail. Deliberately no crop/remove
-  // controls on it -- there's no real assignment in the draft to act
-  // on, only a borrowed preview. Add-mode has no catalog entry yet for
-  // this folder, so there's no IPC-resolvable fallback to ask for --
-  // that path mirrors createDraftFromPicked's client-side-only
-  // resolution (explicitThumb + per-file filename match) and just
-  // shows the placeholder.
-  function showBorrowedItemThumbnail(img) {
-    img.src = 'nothumb.svg';
-    if (mode !== 'edit' || !item) return;
-    window.catalogAPI
-      .getItemThumbnail(item)
-      .then((thumb) => {
-        img.src = thumb ? fileUrl(thumb) : 'nothumb.svg';
-        if (thumb) img.title = "Preview borrowed from a print file -- not an assigned item photo";
-      })
-      .catch(() => {
-        img.src = 'nothumb.svg';
-      });
-  }
-
-  // The item's own photos, laid out as the first card in the file list
-  // -- same .print-file-entry shell and image-chip row a print file
-  // gets (buildFileEntry), and the same three ways to assign to it: a
-  // click-selected target (its checkbox, kept in sync with the topbar
-  // chip's, since both are the one 'item' target), drag-and-drop, and
-  // the gallery's assign arrow. The chips are every assigned image in
-  // order; the first is the main image (outlined), and clicking any
-  // other one promotes it. The topbar chip and the main-grid card show
-  // only that main image for now.
-  function buildItemPhotosCard() {
-    const refs = draft.itemImageRefs;
-
-    const thumbWrap = document.createElement('div');
-    thumbWrap.className = 'file-thumb-wrap crop-frame';
-    const img = document.createElement('img');
-    img.alt = 'Item photos';
-    thumbWrap.appendChild(img);
-    if (refs.length > 0) {
-      img.src = imageRefSrc(refs[0], folderPath);
-      applyImageCrop(img, thumbWrap, getDraftCrop(refs[0], 'thumb'), { useDefault: true });
-    } else {
-      showBorrowedItemThumbnail(img);
-    }
-
-    const nameEl = document.createElement('h3');
-    nameEl.className = 'file-name';
-    nameEl.textContent = 'Item photos';
-
-    const card = buildFileEntry({
-      editable: true,
-      selected: selectedTargets.has('item'),
-      onToggleSelect: (checked) => {
-        if (checked) selectedTargets.add('item');
-        else selectedTargets.delete('item');
-        refreshEditFilesArea();
-      },
-      thumbWrap,
-      nameEl,
-      subtitleText:
-        refs.length === 0
-          ? 'No item photos yet'
-          : refs.length === 1
-            ? '1 photo'
-            : `${refs.length} photos, click one to make it the main image`,
-      metaLines: [],
-      chips: refs.map((ref, idx) => ({
-        src: imageRefSrc(ref, folderPath),
-        primary: idx === 0,
-        title: idx === 0 ? 'Main image' : 'Make this the main image',
-        onClick:
-          idx === 0
-            ? null
-            : () => {
-                refs.splice(idx, 1);
-                refs.unshift(ref);
-                refreshEditFilesArea();
-              },
-        onRemove: () => {
-          refs.splice(idx, 1);
-          refreshEditFilesArea();
-        },
-      })),
-    });
-    card.classList.add('item-photos-card');
-    // Same name the hidden view-mode twin gets (renderHiddenItemPhotosCard)
-    // so the browser can pair them across the mode switch.
-    card.style.viewTransitionName = 'item-photos-card';
-
-    // Same drag claiming rules as buildPrintFileCard's card-level
-    // handlers, minus the trashed check (this card can't be trashed) --
-    // see dragIsImage for why anything that isn't an image drag is
-    // left alone to bubble up to the file-area drop zone instead.
-    card.ondragover = (e) => {
-      if (!dragIsImage(e)) return;
-      e.preventDefault();
-      e.stopPropagation();
-    };
-    card.ondragenter = (e) => {
-      if (!dragIsImage(e)) return;
-      card.classList.add('drop-target-active');
-    };
-    card.ondragleave = (e) => {
-      if (!card.contains(e.relatedTarget)) card.classList.remove('drop-target-active');
-    };
-    card.ondrop = (e) => {
-      if (!dragIsImage(e)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      card.classList.remove('drop-target-active');
-      assignDroppedImages('item', e);
-    };
-
-    return card;
   }
 
   function buildPrintFileCard(pf) {
@@ -1560,7 +1376,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
         ? `Click the assign icon on an image to assign it to ${selectedTargets.size} selected target${
             selectedTargets.size === 1 ? '' : 's'
           }.`
-        : 'Select the item photos and/or one or more print files, then click the assign icon on an image to assign it. Drag-and-drop also works.';
+        : 'Select the item image and/or one or more print files, then click the assign icon on an image to assign it. Drag-and-drop also works.';
     col.appendChild(helpIcon);
 
     const grid = document.createElement('div');
@@ -1792,10 +1608,6 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
               return aShows === bShows ? 0 : aShows ? -1 : 1;
             })
           : draft.printFiles;
-      // Always first, ahead of the print files' relevance sort -- it's
-      // the item's own card, not one of the files.
-      itemPhotosCardEl = buildItemPhotosCard();
-      filesCol.appendChild(itemPhotosCardEl);
       for (const pf of files) {
         const card = buildPrintFileCard(pf);
         if (mode === 'edit' && !fileWouldShowInBrowsing(pf)) {
@@ -1833,7 +1645,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       printFileImages,
       printFileNames,
       origin: draft.origin,
-      itemImages: draft.itemImageRefs,
+      itemImage: draft.itemImageRef,
       // { path, images, displayName } descriptors -- editSession.js
       // copies each one in (resolving collisions), then resolves its
       // own images/displayName under whatever final name it actually
@@ -2116,9 +1928,6 @@ function renderItemDetail(item) {
   filesCol.className = 'item-detail-files';
   body.appendChild(filesCol);
 
-  // Present but hidden -- see renderHiddenItemPhotosCard below.
-  filesCol.appendChild(renderHiddenItemPhotosCard());
-
   for (const file of item.files) {
     const thumbWrap = document.createElement('div');
     thumbWrap.className = 'file-thumb-wrap crop-frame';
@@ -2213,37 +2022,6 @@ function renderItemDetail(item) {
   body.appendChild(renderHiddenGalleryColumn());
 
   return wrap;
-}
-// View mode's structural counterpart to buildItemPhotosCard (edit mode
-// only, openItemModal) -- same purpose as renderHiddenGalleryColumn
-// below: the card is part of both modes' file-list structure, but
-// only means anything while editing (view mode shows the item's main
-// image in the topbar chip, and there's nowhere to show the rest), so
-// this is just the same buildFileEntry shell, empty and collapsed.
-// Same view-transition-name as the real card so the two pair up
-// across the mode switch.
-function renderHiddenItemPhotosCard() {
-  const thumbWrap = document.createElement('div');
-  thumbWrap.className = 'file-thumb-wrap crop-frame';
-  const img = document.createElement('img');
-  img.alt = 'Item photos';
-  thumbWrap.appendChild(img);
-
-  const nameEl = document.createElement('h3');
-  nameEl.className = 'file-name';
-  nameEl.textContent = 'Item photos';
-
-  const card = buildFileEntry({
-    editable: false,
-    thumbWrap,
-    nameEl,
-    subtitleText: null,
-    metaLines: [],
-    chips: [],
-  });
-  card.classList.add('item-photos-card', 'item-photos-card-hidden');
-  card.style.viewTransitionName = 'item-photos-card';
-  return card;
 }
 // View mode's structural counterpart to buildGalleryColumn (edit mode
 // only, openItemModal) -- part of an ongoing effort to keep the two

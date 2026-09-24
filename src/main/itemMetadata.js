@@ -55,6 +55,31 @@ function sanitizeCropRect(rect) {
   };
 }
 
+// Item-level images are an ordered list of filenames in the item's own
+// folder: index 0 is the primary image (the one the grid card and the
+// modal's topbar chip show), the rest are extras -- a future carousel
+// on the grid card is expected to cycle through them. Stored as
+// `itemImages` (array), with `itemImage` (the first entry, a plain
+// string) still written alongside it: the app auto-updates on every
+// laptop but not simultaneously, and an older build only knows
+// `itemImage`, so keeping it means a laptop that hasn't updated yet
+// still shows the right primary image instead of silently losing it.
+// Reads accept either shape (an item last written before this existed
+// only has `itemImage`). Deduped and stripped of empties either way,
+// so a hand-edited or partially-written file can't poison the list.
+function normalizeItemImages(itemImages, itemImage) {
+  const list = Array.isArray(itemImages) ? itemImages : itemImage ? [itemImage] : [];
+  return [...new Set(list.filter((name) => typeof name === 'string' && name))];
+}
+
+// The item's image list as saved in an already-parsed metadata.json
+// (or null/undefined for an item with none) -- what indexer.js exposes
+// as metadataItemImages.
+function itemImagesFromMetadata(metadata) {
+  if (!metadata) return [];
+  return normalizeItemImages(metadata.itemImages, metadata.itemImage);
+}
+
 // Writes displayName/tags, preserving importedAt across edits (set
 // once, on the item's first write) and always refreshing
 // lastEditedAt. An explicit `importedAt` argument overrides that
@@ -97,6 +122,15 @@ function sanitizeCropRect(rect) {
 // "reset to default" affordance in the cropper tool), rather than
 // requiring the caller to delete the whole filename entry.
 //
+// `itemImages` (plain filename array, optional) is the item-level image
+// list described above normalizeItemImages; `itemImage` (single
+// filename) is still accepted as shorthand for a one-entry list, for
+// any caller that hasn't moved to the array. Like displayName/tags,
+// this is fully replaced rather than merged -- see the write below --
+// so a caller doing a metadata-only write on an existing item has to
+// pass the item's current list through (bulk tools do, via
+// item.metadataItemImages) or it gets cleared.
+//
 // removePrintFiles (plain filename array, optional) drops those keys
 // from the merged printFiles map before the merge above runs, for a
 // print file that's being deleted from the item's folder entirely
@@ -106,7 +140,7 @@ function sanitizeCropRect(rect) {
 // forever, even though the file itself is gone.
 async function writeItemMetadata(
   itemDir,
-  { displayName, tags, printFiles, origin, itemImage, imageCrops, removePrintFiles, importedAt }
+  { displayName, tags, printFiles, origin, itemImage, itemImages, imageCrops, removePrintFiles, importedAt }
 ) {
   const existing = await readItemMetadata(itemDir);
   const now = new Date().toISOString();
@@ -143,6 +177,8 @@ async function writeItemMetadata(
     }
   }
 
+  const mergedItemImages = normalizeItemImages(itemImages, itemImage);
+
   const merged = {
     schemaVersion: SCHEMA_VERSION,
     displayName: displayName || '',
@@ -151,15 +187,19 @@ async function writeItemMetadata(
     lastEditedAt: now,
     ...(Object.keys(mergedPrintFiles).length > 0 ? { printFiles: mergedPrintFiles } : {}),
     ...(hasOrigin ? { origin: mergedOrigin } : {}),
-    // Item-level image (distinct from any per-print-file image
-    // override in printFiles above) -- a single filename in this
-    // item's own folder, or omitted entirely when none is set. Always
-    // fully replaced from what's passed in, same as displayName/tags
-    // above rather than merged like printFiles/origin: the editor
-    // always sends the item image field's complete current state on
-    // every save, so an explicit clear (itemImage: '') correctly drops
-    // the key instead of preserving a stale value.
-    ...(itemImage ? { itemImage } : {}),
+    // Item-level images (distinct from any per-print-file image
+    // override in printFiles above) -- ordered filenames in this
+    // item's own folder, primary first; both keys omitted entirely
+    // when none are set. Always fully replaced from what's passed in,
+    // same as displayName/tags above rather than merged like
+    // printFiles/origin: the editor always sends the item images'
+    // complete current state on every save, so an explicit clear
+    // (itemImages: []) correctly drops the keys instead of preserving
+    // a stale value. `itemImage` (first entry only) is kept for older
+    // builds -- see normalizeItemImages.
+    ...(mergedItemImages.length > 0
+      ? { itemImage: mergedItemImages[0], itemImages: mergedItemImages }
+      : {}),
     ...(Object.keys(mergedImageCrops).length > 0 ? { imageCrops: mergedImageCrops } : {}),
   };
 
@@ -167,4 +207,10 @@ async function writeItemMetadata(
   return merged;
 }
 
-module.exports = { readItemMetadata, writeItemMetadata, METADATA_FILENAME, sanitizeCropRect };
+module.exports = {
+  readItemMetadata,
+  writeItemMetadata,
+  itemImagesFromMetadata,
+  METADATA_FILENAME,
+  sanitizeCropRect,
+};

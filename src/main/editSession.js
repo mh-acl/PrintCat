@@ -308,11 +308,12 @@ class EditSession {
         tags: item.tags,
         origin: { url: detected.url, creatorName: detected.creatorName, creatorUrl: detected.creatorUrl },
         // Passed through unchanged, same reasoning as displayName/tags
-        // above -- writeItemMetadata's itemImage field fully replaces
+        // above -- writeItemMetadata's itemImages field fully replaces
         // rather than merges (see itemMetadata.js), so omitting it here
-        // would silently clear any item-level image a co-admin had
-        // already assigned via the editor.
-        itemImage: item.metadataItemImage,
+        // would silently clear every item-level image a co-admin had
+        // already assigned via the editor (the whole list, not just
+        // the primary one).
+        itemImages: item.metadataItemImages,
       });
 
       // Marked the same way editItem() marks a change -- 'edit' unless
@@ -381,13 +382,13 @@ class EditSession {
         filesDated++;
       }
 
-      // displayName/tags/itemImage passed through unchanged -- same
+      // displayName/tags/itemImages passed through unchanged -- same
       // reasoning as backfillOrigins above, since writeItemMetadata
       // fully replaces (rather than merges) those three fields.
       await writeItemMetadata(item.path, {
         displayName: item.displayName,
         tags: item.tags,
-        itemImage: item.metadataItemImage,
+        itemImages: item.metadataItemImages,
         importedAt: date,
         printFiles,
       });
@@ -462,6 +463,23 @@ class EditSession {
       resolvedPathToName.set(ref.path, finalName);
     }
     return resolvedPathToName.get(ref.path);
+  }
+
+  // Resolves the item-level image list -- ImageRefs in display order,
+  // primary first -- to final filenames in destDir, through the same
+  // shared resolvedPathToName map as every other image in this save
+  // (so an external image assigned to both the item and a print file
+  // is only copied once). `itemImage` (one ref) is still accepted as a
+  // fallback for a caller that hasn't moved to the array; an empty or
+  // missing list resolves to [] (writeItemMetadata then drops the
+  // keys, i.e. clears the assignment).
+  async _resolveItemImageRefs(destDir, itemImages, itemImage, resolvedPathToName) {
+    const refs = Array.isArray(itemImages) ? itemImages : itemImage ? [itemImage] : [];
+    const names = [];
+    for (const ref of refs) {
+      names.push(await this._resolveSingleImageRef(destDir, ref, resolvedPathToName));
+    }
+    return names;
   }
 
   // Renderer-side crop identities (see renderer.js's refIdentity) are
@@ -632,7 +650,7 @@ class EditSession {
     return stamped;
   }
 
-  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops, newPrintFiles, trashedPrintFiles }) {
+  async addItem(sourceDir, { name, tags, printFileImages, printFileNames, origin, itemImage, itemImages, imageCrops, newPrintFiles, trashedPrintFiles }) {
     const folderName = path.basename(sourceDir);
     const destDir = path.join(this.dataDir, folderName);
 
@@ -667,15 +685,13 @@ class EditSession {
       ),
       ...newPrintFilesResolved,
     });
-    const resolvedItemImage = itemImage
-      ? await this._resolveSingleImageRef(destDir, itemImage, resolvedPathToName)
-      : '';
+    const resolvedItemImages = await this._resolveItemImageRefs(destDir, itemImages, itemImage, resolvedPathToName);
     const writtenMetadata = await writeItemMetadata(destDir, {
       displayName: name,
       tags,
       printFiles: resolvedPrintFiles,
       origin,
-      itemImage: resolvedItemImage,
+      itemImages: resolvedItemImages,
       imageCrops: this._resolveImageCrops(imageCrops, resolvedPathToName),
       removePrintFiles: trashedPrintFiles,
     });
@@ -691,7 +707,7 @@ class EditSession {
     return this.changes;
   }
 
-  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin, itemImage, imageCrops, newPrintFiles, trashedPrintFiles }) {
+  async editItem(itemPath, { name, tags, printFileImages, printFileNames, origin, itemImage, itemImages, imageCrops, newPrintFiles, trashedPrintFiles }) {
     // No category anymore, so nothing ever needs to move the item's
     // folder on an edit -- itemPath stays itemPath, only its
     // metadata.json changes.
@@ -726,15 +742,13 @@ class EditSession {
       ),
       ...newPrintFilesResolved,
     };
-    const resolvedItemImage = itemImage
-      ? await this._resolveSingleImageRef(itemPath, itemImage, resolvedPathToName)
-      : '';
+    const resolvedItemImages = await this._resolveItemImageRefs(itemPath, itemImages, itemImage, resolvedPathToName);
     const writtenMetadata = await writeItemMetadata(itemPath, {
       displayName: name,
       tags,
       printFiles: resolvedPrintFiles,
       origin,
-      itemImage: resolvedItemImage,
+      itemImages: resolvedItemImages,
       imageCrops: this._resolveImageCrops(imageCrops, resolvedPathToName),
       removePrintFiles: trashedPrintFiles,
     });

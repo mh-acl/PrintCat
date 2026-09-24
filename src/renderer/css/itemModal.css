@@ -543,6 +543,31 @@
   font-size: 0.75em;
   cursor: pointer;
 }
+/* "+N" badge on the topbar item chip (buildItemThumbChip), shown when
+   the item has more than one image -- bottom-right, opposite the
+   remove button, and clicking it scrolls to the Item photos card.
+   A pill rather than the remove button's circle since it carries text. */
+.item-modal-chip-count {
+  position: absolute;
+  right: -0.5em;
+  bottom: -0.5em;
+  z-index: 1;
+  min-width: 1.6em;
+  height: 1.6em;
+  padding: 0 0.35em;
+  box-sizing: border-box;
+  border-radius: 0.8em;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-soft);
+  font-size: 0.7em;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.item-modal-chip-count:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
 .item-modal-origin-row {
   display: flex;
   align-items: center;
@@ -1164,6 +1189,9 @@
 }
 .print-file-image-chips {
   display: flex;
+  /* wrap: an item can have several photos (see .item-photos-card),
+     more than fit in one 14em-wide row. */
+  flex-wrap: wrap;
   gap: 0.3em;
 }
 /* View mode's hidden twin of the row above -- split out from the
@@ -1202,4 +1230,50 @@
   background: var(--paper-raised);
   font-size: 0.75em;
   cursor: pointer;
+}
+/* Item photos card (buildItemPhotosCard, itemModal.js): the item's own
+   images, laid out as the first card in the edit-mode file list --
+   .print-file-entry's shell and chip row, plus a few chip variants.
+   The first chip is the item's main image (outlined in the accent
+   color, same treatment as a selected target so it reads as "the
+   chosen one"); any other chip is a button that promotes it. */
+.print-file-image-chip-primary img {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+.print-file-image-chip-clickable {
+  cursor: pointer;
+}
+.print-file-image-chip-clickable:hover img,
+.print-file-image-chip-clickable:focus-visible img {
+  border-color: var(--accent);
+}
+/* This card never has print stats -- buildFileEntry always emits an
+   (empty) .file-meta block for shape parity with a real file card,
+   whose border-top would otherwise show as a stray divider. */
+.item-photos-card .file-meta {
+  display: none;
+}
+/* View mode's hidden twin (renderHiddenItemPhotosCard) -- same
+   present-but-collapsed treatment as .item-detail-gallery-collapsed.
+   display: none also keeps it out of the file list's grid, so it
+   doesn't take up a cell view mode's cards would otherwise use. */
+.item-photos-card-hidden {
+  display: none;
+}
+/* Brief highlight when the topbar chip's "+N" badge sends you here
+   (focusItemPhotosCard). A box-shadow ring rather than a border/
+   background change, so it can't be mistaken for .selected or
+   .drop-target-active, and doesn't shift layout. */
+@keyframes item-photos-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  30% {
+    box-shadow: 0 0 0 0.25em var(--accent);
+  }
+}
+.item-photos-card.item-photos-flash {
+  animation: item-photos-flash 0.9s ease;
 }
