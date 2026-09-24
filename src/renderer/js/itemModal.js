@@ -8,7 +8,8 @@
 // Depends on: state.js, utils.js, filters.js (buildFilterMessage,
 // fileMatchesKeywordInItem, fileMatchesPrinter, fileMatchesPrintTime,
 // fileMatchesPrinterAndTime, effectivePrinterFilter, printerLabel),
-// grid.js (renderEmptyState), lightbox.js (cropRectFor, makeZoomButton),
+// grid.js (renderEmptyState), lightbox.js (cropRectFor, makeZoomButton,
+// makeThumbCycleButtons, buildLightboxGallery),
 // settings.js (createTagInput), dialogs.js.
 // NOTE: openItemModal is ~700 lines on its own -- flagged as a future
 // internal split once stage 2/3 of the modal work lands (see
@@ -2180,9 +2181,20 @@ function renderItemDetail(item) {
           // always reads the crop for whichever image cycling has
           // currently put on screen, not just the first one.
           let currentPath = thumbPath;
+          // Index into imagePaths (below) of whichever photo is on
+          // screen -- the lightbox carousel opens on it. 0 is right
+          // to start with for the reason given just before the cycle
+          // buttons below.
+          let currentIndex = 0;
+          const imagePaths = (file.metadataImages || []).map((imgName) => `${item.path}/${imgName}`);
           applyImageCrop(img, thumbWrap, cropRectFor(item, currentPath, 'thumb'), { useDefault: true });
           thumbWrap.appendChild(
-            makeZoomButton(() => img.src, img.alt, () => cropRectFor(item, currentPath, 'full'))
+            makeZoomButton(
+              () => img.src,
+              img.alt,
+              () => cropRectFor(item, currentPath, 'full'),
+              () => buildLightboxGallery(item, imagePaths, currentIndex, img.alt)
+            )
           );
           // metadataImages[0] is guaranteed to be the thumbPath we just
           // resolved above whenever this list is non-empty (see
@@ -2191,9 +2203,9 @@ function renderItemDetail(item) {
           // here to attach these means makeThumbCycleButtons never has
           // to reconcile a mismatch between the two -- index 0 always
           // matches what's already on screen.
-          const imagePaths = (file.metadataImages || []).map((imgName) => `${item.path}/${imgName}`);
-          for (const btn of makeThumbCycleButtons(imagePaths, img, thumbWrap, item, (path) => {
+          for (const btn of makeThumbCycleButtons(imagePaths, img, thumbWrap, item, (path, index) => {
             currentPath = path;
+            currentIndex = index;
           })) {
             thumbWrap.appendChild(btn);
           }

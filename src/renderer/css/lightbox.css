@@ -36,10 +36,10 @@ a.listing .thumb-slot:hover .thumb-zoom-btn,
   border-color: var(--accent);
   color: white;
 }
-/* Prev/next buttons for a print file with more than one assigned
-   image -- see makeThumbCycleButtons (lightbox.js), file-row only
-   (item-card .thumb-slot has no per-file image list to cycle
-   through). Same bubble look as .thumb-zoom-btn above (circular,
+/* Prev/next buttons for a print file or item with more than one
+   assigned image -- see makeThumbCycleButtons (lightbox.js), used by
+   the item-modal file rows (.file-thumb-wrap) and the main-grid item
+   cards (a.listing .thumb-slot). Same bubble look as .thumb-zoom-btn above (circular,
    paper-raised, same hover-reveal-on-.file-thumb-wrap:hover pattern),
    positioned on the left/right edges at vertical center instead of
    the bottom-right corner. Only a plain opacity fade on reveal, not
@@ -68,7 +68,8 @@ a.listing .thumb-slot:hover .thumb-zoom-btn,
   box-shadow: 0 1px 3px rgba(33, 30, 27, 0.25);
   transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
-.file-thumb-wrap:hover .file-thumb-cycle-btn {
+.file-thumb-wrap:hover .file-thumb-cycle-btn,
+a.listing .thumb-slot:hover .file-thumb-cycle-btn {
   opacity: 1;
 }
 .file-thumb-cycle-btn:hover {
@@ -127,4 +128,115 @@ a.listing .thumb-slot:hover .thumb-zoom-btn,
   background: var(--accent);
   border-color: var(--accent);
   color: white;
+}
+/* --- Gallery (carousel) mode -- see openImageLightboxGallery
+   (lightbox.js). Opened for a print file / item with more than one
+   photo: the overlay becomes a column of [stage][thumbnail strip], with
+   prev/next arrows pinned to the stage's edges and the close button
+   pinned to the overlay's corner (all three stay put as photos of
+   different shapes swap in, unlike the plain viewer's close button,
+   which rides on the photo's own corner). The plain single-image
+   lightbox above is untouched. */
+.image-lightbox-gallery-mode {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 1em;
+  padding: 2.5em 0 1em;
+  box-sizing: border-box;
+}
+/* The 90vw/90vh clamps on the plain viewer's box/img are switched off
+   here: openImageLightboxGallery sizes the photo to the measured stage
+   instead (inline max-width/max-height for an uncropped photo; an
+   explicit box size, per buildLightboxImageBox, for a cropped one).
+   Left on, the 90vw clamp could squash a cropped photo's explicitly-
+   sized box out of its aspect ratio on a wide window. */
+.image-lightbox-gallery-mode .image-lightbox-box {
+  max-width: none;
+  max-height: none;
+}
+.image-lightbox-gallery-mode .image-lightbox-box img {
+  max-width: none;
+  max-height: none;
+}
+.image-lightbox-stage {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-lightbox-close-fixed {
+  top: 0.8em;
+  right: 0.8em;
+}
+.image-lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.6em;
+  height: 2.6em;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 1.2em;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(33, 30, 27, 0.25);
+}
+.image-lightbox-nav:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.image-lightbox-nav-prev {
+  left: 0.6em;
+}
+.image-lightbox-nav-next {
+  right: 0.6em;
+}
+/* Thumbnail strip. justify-content: center alone would make an
+   overflowing strip unreachable on its left side, so the first/last
+   thumbnails take auto margins instead -- centers when it fits,
+   scrolls normally from the start when it doesn't. */
+.image-lightbox-strip {
+  flex: none;
+  display: flex;
+  gap: 0.5em;
+  padding: 0.3em 1em;
+  overflow-x: auto;
+  cursor: default;
+}
+.image-lightbox-strip > :first-child {
+  margin-left: auto;
+}
+.image-lightbox-strip > :last-child {
+  margin-right: auto;
+}
+.image-lightbox-thumb {
+  flex: none;
+  box-sizing: border-box;
+  width: 4.5em;
+  height: 4.5em;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 0.4em;
+  background: var(--paper);
+  overflow: hidden;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.12s ease, border-color 0.12s ease;
+}
+.image-lightbox-thumb:hover {
+  opacity: 1;
+}
+.image-lightbox-thumb.active {
+  border-color: var(--accent);
+  opacity: 1;
 }

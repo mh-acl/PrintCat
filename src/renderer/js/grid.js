@@ -4,7 +4,7 @@
 // grid-level empty state / sync-status footer.
 // Depends on: state.js, utils.js, filters.js (buildFilterMessage,
 // effectivePrinterFilter, itemMatchesKeyword), lightbox.js (cropRectFor,
-// makeZoomButton).
+// makeZoomButton, makeThumbCycleButtons, buildLightboxGallery).
 
 // Footer note (plus the refresh-now button next to it) showing how
 // fresh the catalog data is. The whole footer is hidden entirely when
@@ -374,10 +374,38 @@ function renderItemCard(item) {
       // Only offer zoom when there's a real image -- not for the
       // generic "no thumbnail" placeholder graphic.
       if (thumb) {
-        applyImageCrop(img, mediaSlot, cropRectFor(item, thumb, 'thumb'), { useDefault: true });
+        // Tracked separately from thumb (which stays fixed to whatever
+        // was first resolved) so the zoom button below always reads
+        // the crop -- and the lightbox carousel's starting photo --
+        // for whichever image cycling has currently put on screen.
+        let currentPath = thumb;
+        let currentIndex = 0;
+        applyImageCrop(img, mediaSlot, cropRectFor(item, currentPath, 'thumb'), { useDefault: true });
+
+        // Same photo list makeThumbCycleButtons/the lightbox carousel
+        // work from for a print file (see the file-row loop in
+        // itemModal.js), just item-level: metadataItemImages[0] is
+        // guaranteed to be the thumb we just resolved whenever this
+        // list is non-empty (thumbnailResolver.js's resolveItemThumbnail
+        // checks metadataItemImage first, unconditionally), so index 0
+        // always matches what's already on screen. An item with 0-1
+        // assigned photos gets no cycle buttons and a plain lightbox.
+        const imagePaths = (item.metadataItemImages || []).map((name) => `${item.path}/${name}`);
+
         mediaSlot.appendChild(
-          makeZoomButton(() => img.src, img.alt, () => cropRectFor(item, thumb, 'full'))
+          makeZoomButton(
+            () => img.src,
+            img.alt,
+            () => cropRectFor(item, currentPath, 'full'),
+            () => buildLightboxGallery(item, imagePaths, currentIndex, img.alt)
+          )
         );
+        for (const btn of makeThumbCycleButtons(imagePaths, img, mediaSlot, item, (path, index) => {
+          currentPath = path;
+          currentIndex = index;
+        })) {
+          mediaSlot.appendChild(btn);
+        }
       }
     })
     // A rejected lookup (e.g. the file vanished mid-scan during a

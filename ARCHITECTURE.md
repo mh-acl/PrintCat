@@ -1283,6 +1283,44 @@ button click to dismiss, but a lightbox reads better with backdrop-click
 and Escape support, so it got its own overlay/box CSS classes rather than
 reusing `.drive-picker-overlay`.
 
+### Photo carousels (thumbnail cycling + lightbox gallery)
+
+A print file or an item can have more than one assigned photo
+(`file.metadataImages` / `item.metadataItemImages`, primary first). Both
+places a thumbnail is shown outside the editor — the item-modal view-mode
+file rows and the main-grid item cards (`renderItemCard()`, `grid.js`) —
+show the rest of them through the same two `lightbox.js` helpers:
+
+- `makeThumbCycleButtons(imagePaths, img, thumbWrap, item, onChange)` —
+  prev/next bubbles on the thumbnail's left/right edges
+  (`.file-thumb-cycle-btn`, revealed on hover of `.file-thumb-wrap` /
+  `a.listing .thumb-slot`) that swap the `<img>` in place, re-applying that
+  photo's `thumb` crop. Returns no buttons for 0–1 photos. `imagePaths[0]`
+  is always what the thumbnail resolver already picked
+  (`resolveFileThumbnail`/`resolveItemThumbnail` check the explicit
+  metadata list first), so cycling starts at index 0 with nothing to
+  reconcile. `onChange(path, index)` keeps the caller's zoom button pointed
+  at whichever photo is on screen.
+- `makeZoomButton(getSrc, alt, getCropRect, getGallery)` — `getGallery` is
+  optional and read at click time; `buildLightboxGallery(item, imagePaths,
+  index, alt)` builds it (null for fewer than two photos).
+
+`openImageLightbox(src, alt, cropRect, gallery)` with a gallery (2+ photos)
+delegates to `openImageLightboxGallery()`: the same overlay in
+`.image-lightbox-gallery-mode` — a column of a flexible **stage** (current
+photo centered, prev/next arrows pinned to the stage's edges, close button
+pinned to the overlay corner) and a **thumbnail strip** along the bottom
+(square `thumb` crops, current photo outlined in the accent color, scrolls
+horizontally and keeps the current thumbnail in view). Arrows wrap around;
+clicking a thumbnail jumps to it; left/right arrow keys do the same as the
+arrows; a window resize re-measures the stage and re-shows the current
+photo. Each photo change rebuilds the `.image-lightbox-box` via
+`buildLightboxImageBox()` (shared with the plain single-image viewer),
+sized to the measured stage — inline max-width/height for an uncropped
+photo, an explicit box at the crop's aspect ratio for one with a saved
+`full` crop. With no gallery (0–1 photos) the lightbox is the plain viewer
+described above, unchanged.
+
 ## Print-file display name (pencil-icon rename)
 
 Print files can now have their own display name, independent of the
@@ -1463,8 +1501,10 @@ remove button removes the *main* image (the next one takes its place).
 View mode renders a hidden twin of the card (`renderHiddenItemPhotosCard()`,
 `display: none`, same `view-transition-name: item-photos-card`) — same
 "present but collapsed" convention as the hidden gallery column. View
-mode shows no extra photos anywhere in the modal header; a carousel of
-the extras on the main-grid card is a separate, not-yet-built pass.
+mode shows no extra photos anywhere in the modal header; the extras
+are browsable on the main-grid card instead (see "Photo carousels" under
+Thumbnail zoom above: cycle buttons on the card thumbnail, plus a lightbox
+carousel opened from its zoom button).
 
 ## Print-file level trashing (shipped)
 
