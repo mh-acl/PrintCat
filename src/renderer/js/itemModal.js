@@ -948,7 +948,12 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       mode,
       existingRect: getDraftCrop(ref, mode),
       onSave(rect) {
-        applyImageCrop(imgEl, frameEl, rect, { useDefault: mode === 'thumb' });
+        // Only a thumb crop is visible on the pool chip itself (it
+        // always renders that image's 'thumb' crop) -- a 'full' crop
+        // only shows up in the lightbox, so applying its rect to this
+        // square frame would misdraw the chip until the rebuild below
+        // catches up.
+        if (mode === 'thumb') applyImageCrop(imgEl, frameEl, rect, { useDefault: true });
         setDraftCrop(ref, mode, rect);
       },
     });
@@ -961,9 +966,16 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   function makeCropAdjustButton(ref, mode, imgEl, frameEl) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'image-crop-adjust-btn icon icon-crop';
-    btn.title = mode === 'thumb' ? 'Adjust thumbnail crop' : 'Adjust framing';
-    btn.setAttribute('aria-label', mode === 'thumb' ? 'Adjust thumbnail crop' : 'Adjust framing');
+    // 'thumb' -> crop glyph, bottom-left; 'full' -> zoom glyph (the
+    // same one as the view-mode button that opens the lightbox this
+    // crop controls), bottom-center. See cropper.css.
+    const label = mode === 'thumb' ? 'Adjust thumbnail crop' : 'Adjust zoomed-in framing';
+    btn.className =
+      mode === 'thumb'
+        ? 'image-crop-adjust-btn icon icon-crop'
+        : 'image-crop-adjust-btn image-crop-adjust-btn-full icon icon-zoom-in';
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
     btn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1594,6 +1606,11 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       // corner mirrors the existing assign button (bottom-right, see
       // .item-modal-assign-btn below), so the two sit side by side.
       cell.appendChild(makeCropAdjustButton(ref, 'thumb', thumb, frame));
+      // Second crop for the same image: the free-form framing used in
+      // the zoomed-in lightbox view (see lightbox.js's cropRectFor(...,
+      // 'full')). Same rationale as above for living on the pool cell
+      // rather than per assignment.
+      cell.appendChild(makeCropAdjustButton(ref, 'full', thumb, frame));
 
       const assignBtn = document.createElement('button');
       assignBtn.type = 'button';

@@ -147,6 +147,14 @@
 .image-crop-adjust-btn:hover {
   background: var(--paper);
 }
+/* Second crop-adjust badge (lightbox framing, see makeCropAdjustButton
+   in itemModal.js), centered between the thumbnail-crop badge
+   (bottom-left) and the assign button (bottom-right). Doubled class
+   for specificity rather than relying on source order against the
+   base rule above's `left`. */
+.image-crop-adjust-btn.image-crop-adjust-btn-full {
+  left: calc(50% - 0.8em);
+}
 /* Sizing moved off .item-modal-gallery-thumb's <img> onto the element
    itself (now the .crop-frame wrapper, not the img -- see
    buildGalleryColumn) so applyImageCrop's frame has an actual size to

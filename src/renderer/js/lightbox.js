@@ -41,6 +41,59 @@ function makeZoomButton(getSrc, altText, getCropRect, getGallery) {
   };
   return btn;
 }
+// The photos an item's card carousel (and its lightbox) cycles
+// through: the item's own assigned photos first (metadataItemImages,
+// primary first), then the assigned photos (metadataImages) of the
+// print files passed in `files`, in file order -- de-duplicated by
+// filename, so a photo assigned to the item *and* one or more print
+// files (or to several print files, the batch-photo-sharing case)
+// appears once. The file photos are merged in here at view time only
+// -- nothing about this is written to metadata.json, so the item's own
+// list (what the editor shows and saves) is untouched.
+//
+// `files` is the caller's notion of which print files are currently
+// visible -- the card passes filesMatchingCurrentFilters(item, ...)
+// (filters.js: the printer filter, print-time limit and keyword
+// search, i.e. the files you'd see on opening the item), so a photo
+// that only belongs to a file the current filters hide doesn't show up
+// in the carousel. Defaults to every file of the item.
+//
+// thumbPath is whatever getItemThumbnail resolved for the card. When
+// the item has its own photos that's always the first entry, but not
+// otherwise: it may be a print file's photo (found in the list
+// wherever it landed), or something that isn't in the list at all -- a
+// filename-matched image, a gcode-embedded thumbnail render, or a photo
+// of a file the current filters hide (the resolver looks at every file,
+// not just the visible ones). In those cases it's put at the front of
+// the list, so the card keeps
+// showing exactly what it showed before this merging existed and the
+// photos are simply reachable by cycling on from it. Returns
+// { imagePaths, startIndex } -- startIndex is where thumbPath sits, for
+// makeThumbCycleButtons/buildLightboxGallery to start from; a list of
+// one entry (nothing to cycle) just comes back as-is.
+function itemCarouselImages(item, thumbPath, files = item.files) {
+  const seen = new Set();
+  const names = [];
+  const add = (name) => {
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+  };
+  (item.metadataItemImages || []).forEach(add);
+  for (const file of files || []) (file.metadataImages || []).forEach(add);
+
+  const imagePaths = names.map((name) => `${item.path}/${name}`);
+  // Tolerate doubled slashes -- thumbPath comes from path.join in the
+  // main process, the list entries from a template string above.
+  const norm = (p) => p.replace(/\/{2,}/g, '/');
+  let startIndex = imagePaths.findIndex((p) => norm(p) === norm(thumbPath));
+  if (startIndex === -1) {
+    imagePaths.unshift(thumbPath);
+    startIndex = 0;
+  }
+  return { imagePaths, startIndex };
+}
 // Builds the `gallery` argument openImageLightbox takes, from the same
 // plain list of absolute image paths makeThumbCycleButtons cycles
 // through, plus the index of whichever one is currently on screen.
@@ -74,18 +127,22 @@ function buildLightboxGallery(item, imagePaths, index, altText) {
 // metadataImages[0] / metadataItemImage first, unconditionally,
 // whenever that list is non-empty) -- so this only ever needs to run
 // after that initial resolution has already happened (see the call
-// sites), and never needs to touch it itself. onChange(path, index)
-// fires after every cycle so the caller can keep its zoom button's
-// crop/gallery lookups pointed at the photo actually on screen.
+// sites), and never needs to touch it itself -- except for the item
+// card, whose list also folds in its print files' photos (see
+// itemCarouselImages below) and so can't promise the resolved
+// thumbnail is entry 0; it passes startIndex, the position of
+// whatever is already on screen. onChange(path, index) fires after
+// every cycle so the caller can keep its zoom button's crop/gallery
+// lookups pointed at the photo actually on screen.
 // Uses the icon font (icon-chevron-left/icon-chevron-right) -- added
 // to the printcat-icons.woff2 subset alongside icon-add/icon-help/
 // icon-target/icon-target-check; .file-thumb-cycle-btn (lightbox.css)
 // doesn't need to change either way, same as .thumb-zoom-btn above
 // already handles icon-vs-text content.
-function makeThumbCycleButtons(imagePaths, img, thumbWrap, item, onChange) {
+function makeThumbCycleButtons(imagePaths, img, thumbWrap, item, onChange, startIndex = 0) {
   if (imagePaths.length <= 1) return [];
 
-  let index = 0;
+  let index = startIndex;
   function show(newIndex) {
     index = (newIndex + imagePaths.length) % imagePaths.length;
     const path = imagePaths[index];

@@ -1321,6 +1321,27 @@ photo, an explicit box at the crop's aspect ratio for one with a saved
 `full` crop. With no gallery (0–1 photos) the lightbox is the plain viewer
 described above, unchanged.
 
+The item card's carousel is fed by `itemCarouselImages(item, thumbPath,
+files)` (`lightbox.js`), which merges the item's own photos
+(`metadataItemImages`) with the photos (`metadataImages`) of the print files
+passed in `files`, item photos first, then files in order, de-duplicated by
+filename. The card passes `filesMatchingCurrentFilters(item,
+effectivePrinterFilter())` (`filters.js`) — the files the item's modal would
+list right now under the printer filter, print-time limit and keyword
+search (with that helper's usual fallback tiers) — so photos belonging only
+to hidden files stay out; the list is computed when the card is rendered,
+and a filter change re-renders the grid. The merge happens at view time
+only — nothing is written to `metadata.json`, so the item's own photo list
+(what the editor shows and saves) is unchanged. Because the resolved card
+thumbnail is then not necessarily entry 0 (an item with no photos of its
+own shows a print file's photo, a filename-matched image, or the gcode's
+embedded thumbnail; the resolver looks at every file, not just the visible
+ones), `itemCarouselImages` also returns `startIndex`, and
+prepends the thumbnail to the list if it isn't already in it, so the card
+looks exactly as it did before and cycling proceeds from it
+(`makeThumbCycleButtons`' optional `startIndex` argument). The print-file
+rows are unaffected: each still cycles only its own photos.
+
 ## Print-file display name (pencil-icon rename)
 
 Print files can now have their own display name, independent of the

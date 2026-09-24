@@ -4,7 +4,8 @@
 // grid-level empty state / sync-status footer.
 // Depends on: state.js, utils.js, filters.js (buildFilterMessage,
 // effectivePrinterFilter, itemMatchesKeyword), lightbox.js (cropRectFor,
-// makeZoomButton, makeThumbCycleButtons, buildLightboxGallery).
+// makeZoomButton, makeThumbCycleButtons, buildLightboxGallery,
+// itemCarouselImages).
 
 // Footer note (plus the refresh-now button next to it) showing how
 // fresh the catalog data is. The whole footer is hidden entirely when
@@ -367,6 +368,11 @@ function renderItemCard(item) {
   img.alt = item.displayName || item.name;
   mediaSlot.appendChild(img);
 
+  // Read now, not inside the .then below: the filters this card was
+  // rendered under are the ones its carousel should reflect (a filter
+  // change re-renders the grid and builds new cards anyway).
+  const visibleFiles = filesMatchingCurrentFilters(item, effectivePrinterFilter());
+
   window.catalogAPI
     .getItemThumbnail(item)
     .then((thumb) => {
@@ -379,18 +385,19 @@ function renderItemCard(item) {
         // the crop -- and the lightbox carousel's starting photo --
         // for whichever image cycling has currently put on screen.
         let currentPath = thumb;
-        let currentIndex = 0;
         applyImageCrop(img, mediaSlot, cropRectFor(item, currentPath, 'thumb'), { useDefault: true });
 
-        // Same photo list makeThumbCycleButtons/the lightbox carousel
-        // work from for a print file (see the file-row loop in
-        // itemModal.js), just item-level: metadataItemImages[0] is
-        // guaranteed to be the thumb we just resolved whenever this
-        // list is non-empty (thumbnailResolver.js's resolveItemThumbnail
-        // checks metadataItemImage first, unconditionally), so index 0
-        // always matches what's already on screen. An item with 0-1
-        // assigned photos gets no cycle buttons and a plain lightbox.
-        const imagePaths = (item.metadataItemImages || []).map((name) => `${item.path}/${name}`);
+        // The carousel covers the item's own photos *plus* the photos
+        // of its currently-visible print files (the same set the
+        // item's modal would list right now -- filesMatchingCurrentFilters,
+        // filters.js), de-duplicated -- merged at view time only,
+        // nothing written to metadata.json (see lightbox.js's
+        // itemCarouselImages, which also explains why the card's
+        // current thumbnail isn't necessarily entry 0 anymore). An
+        // item whose merged list has 0-1 photos gets no cycle buttons
+        // and a plain lightbox.
+        const { imagePaths, startIndex } = itemCarouselImages(item, thumb, visibleFiles);
+        let currentIndex = startIndex;
 
         mediaSlot.appendChild(
           makeZoomButton(
@@ -400,10 +407,17 @@ function renderItemCard(item) {
             () => buildLightboxGallery(item, imagePaths, currentIndex, img.alt)
           )
         );
-        for (const btn of makeThumbCycleButtons(imagePaths, img, mediaSlot, item, (path, index) => {
-          currentPath = path;
-          currentIndex = index;
-        })) {
+        for (const btn of makeThumbCycleButtons(
+          imagePaths,
+          img,
+          mediaSlot,
+          item,
+          (path, index) => {
+            currentPath = path;
+            currentIndex = index;
+          },
+          startIndex
+        )) {
           mediaSlot.appendChild(btn);
         }
       }
