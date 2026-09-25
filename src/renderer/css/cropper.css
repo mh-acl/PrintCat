@@ -35,16 +35,76 @@
   margin: 0;
   color: var(--ink);
 }
+/* Thumbnail / Full view tabs. Underline style, accent on the active
+   one. A dot after the label marks a tab that has a crop set (saved,
+   or edited in this dialog and not saved yet). */
+.crop-modal-tabs {
+  display: flex;
+  gap: 0.25em;
+  border-bottom: 1px solid var(--line-soft);
+}
+.modal-box .crop-modal-tab {
+  font-family: var(--font-body);
+  font-size: 0.95em;
+  padding: 0.4em 0.9em;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.modal-box .crop-modal-tab:hover {
+  color: var(--ink);
+  background: transparent;
+}
+.modal-box .crop-modal-tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+.crop-modal-tab.has-crop::after {
+  content: '';
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  margin-left: 0.5em;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+/* .modal-box p (dialogs.css) is centered with a bottom margin; this
+   line wants to read as a left-aligned caption under the tabs. */
+.modal-box .crop-modal-hint {
+  margin: 0;
+  text-align: left;
+  font-size: 0.85em;
+  color: var(--ink-soft);
+}
 .crop-modal-imgwrap {
+  position: relative;
   width: 100%;
   height: min(60vh, 480px);
   background: var(--ink);
   border-radius: var(--radius-control);
   overflow: hidden;
 }
-/* Cropper.js sizes its own canvas to the wrapper -- just make sure the
+/* One pane per tab, stacked on top of each other, each hosting its own
+   Cropper instance. The inactive one is hidden with visibility rather
+   than display:none -- Cropper measures its container, and a
+   display:none one is 0x0 -- so both stay laid out at full size and
+   keep their zoom/pan while the other tab is showing. */
+.crop-modal-pane {
+  position: absolute;
+  inset: 0;
+}
+.crop-modal-pane-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+/* Cropper.js sizes its own canvas to the pane -- just make sure the
    source <img> doesn't render at native size before Cropper attaches. */
-.crop-modal-imgwrap img {
+.crop-modal-pane img {
   display: block;
   max-width: 100%;
 }
@@ -87,12 +147,17 @@
   border-color: var(--line-soft);
   background: transparent;
 }
+.crop-modal-reset:disabled,
+.crop-modal-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .crop-modal-save {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--paper-raised);
 }
-.crop-modal-save:hover {
+.crop-modal-save:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
@@ -125,8 +190,9 @@
   max-height: none !important;
 }
 /* --- Crop-adjust trigger --- one control per pool image (see "Available
-   images" in buildGalleryColumn), setting that image's default crop --
-   used everywhere the image is later assigned, rather than a separate
+   images" in buildGalleryColumn), opening the two-tab crop dialog
+   (thumbnail + full view) for that image -- the crops are used
+   everywhere the image is later assigned, rather than a separate
    control per assignment. Bottom-left overhang mirrors the existing
    .item-modal-assign-btn's bottom-right overhang on the same cell. */
 .image-crop-adjust-btn {
@@ -146,14 +212,6 @@
 }
 .image-crop-adjust-btn:hover {
   background: var(--paper);
-}
-/* Second crop-adjust badge (lightbox framing, see makeCropAdjustButton
-   in itemModal.js), centered between the thumbnail-crop badge
-   (bottom-left) and the assign button (bottom-right). Doubled class
-   for specificity rather than relying on source order against the
-   base rule above's `left`. */
-.image-crop-adjust-btn.image-crop-adjust-btn-full {
-  left: calc(50% - 0.8em);
 }
 /* Sizing moved off .item-modal-gallery-thumb's <img> onto the element
    itself (now the .crop-frame wrapper, not the img -- see

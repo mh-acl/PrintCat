@@ -68,7 +68,42 @@ function defaultCropRect(naturalWidth, naturalHeight, aspect = THUMB_ASPECT) {
 function applyImageCrop(imgEl, frameEl, cropRect, opts = {}) {
   const { aspect = THUMB_ASPECT, useDefault = false } = opts;
 
+  // Every call stamps the <img> with its own token, so a deferred
+  // retry from an earlier call (see waitForFrameSize below) can't
+  // land after a newer call for the same <img> and overwrite it with
+  // a stale crop -- e.g. a crop edited while an older one was still
+  // waiting for its frame to get laid out.
+  const token = {};
+  imgEl._cropToken = token;
+
+  let sizeObserver = null;
+  const stopWaiting = () => {
+    if (sizeObserver) {
+      sizeObserver.disconnect();
+      sizeObserver = null;
+    }
+  };
+  // A frame with no size yet -- built detached and not appended to the
+  // document yet, or display:none -- can't be positioned against.
+  // That's not a rare case: the item modal rebuilds its chips and file
+  // cards as detached DOM on every re-render, and an image the browser
+  // already has cached reports `complete` immediately, so this used to
+  // run its "already loaded" path synchronously against a 0x0 frame,
+  // bail out, and never retry (the `load` event it would otherwise
+  // have waited for had already come and gone). The crop was silently
+  // dropped for exactly those re-rendered elements. Instead, watch the
+  // frame and position as soon as it actually has a size.
+  const waitForFrameSize = () => {
+    if (sizeObserver || typeof ResizeObserver === 'undefined') return;
+    sizeObserver = new ResizeObserver(() => position());
+    sizeObserver.observe(frameEl);
+  };
+
   const position = () => {
+    if (imgEl._cropToken !== token) {
+      stopWaiting();
+      return; // superseded by a newer applyImageCrop call on this <img>
+    }
     const naturalW = imgEl.naturalWidth;
     const naturalH = imgEl.naturalHeight;
     if (!naturalW || !naturalH) return; // not loaded yet
@@ -89,7 +124,11 @@ function applyImageCrop(imgEl, frameEl, cropRect, opts = {}) {
 
     const frameW = frameEl.clientWidth;
     const frameH = frameEl.clientHeight;
-    if (!frameW || !frameH) return;
+    if (!frameW || !frameH) {
+      waitForFrameSize();
+      return;
+    }
+    stopWaiting();
 
     const cropPxW = rect.w * naturalW;
     const cropPxH = rect.h * naturalH;

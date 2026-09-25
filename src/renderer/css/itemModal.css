@@ -523,6 +523,26 @@
   border-color: var(--accent);
   border-width: 2px;
 }
+/* The chip's photo sits inside a .crop-frame: applyImageCrop oversizes
+   and translates the <img> within it, so the border, rounded corners
+   and selected outline above have to live on the frame -- on the <img>
+   they'd be drawn around the oversized, mostly clipped image instead of
+   at the chip's edge (and the selected state would vanish whenever a
+   crop is applied). Same idea as .item-modal-gallery-thumb, which is
+   itself the frame. */
+.item-modal-thumb-chip .crop-frame {
+  border-radius: 0.3em;
+  border: 1px solid var(--line);
+}
+.item-modal-thumb-chip.selected .crop-frame {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+.item-modal-thumb-chip .crop-frame img,
+.item-modal-thumb-chip.selected .crop-frame img {
+  border: 0;
+  border-radius: 0;
+}
 .item-modal-target-select {
   position: absolute;
   top: -0.4em;
@@ -1193,6 +1213,8 @@
      more than fit in one 14em-wide row. */
   flex-wrap: wrap;
   gap: 0.3em;
+  /* Containing block for .print-file-chip-drop-line below. */
+  position: relative;
 }
 /* View mode's hidden twin of the row above -- split out from the
    shared .print-file-action-hidden (still used for the print button
@@ -1241,11 +1263,66 @@
   border-color: var(--accent);
   border-width: 2px;
 }
+/* Edit-mode chips wrap the <img> in a .crop-frame (see buildFileEntry)
+   so its thumbnail crop can be applied -- the border, rounded corners
+   and the primary/hover outlines then have to sit on the frame rather
+   than the oversized <img> inside it (same reasoning as
+   .item-modal-thumb-chip .crop-frame). */
+.print-file-image-chip .crop-frame {
+  display: block;
+  width: 2.5em;
+  height: 2.5em;
+  border-radius: 0.3em;
+  border: 1px solid var(--line);
+}
+.print-file-image-chip .crop-frame img,
+.print-file-image-chip-primary .crop-frame img,
+.print-file-image-chip-clickable:hover .crop-frame img,
+.print-file-image-chip-clickable:focus-visible .crop-frame img {
+  border: 0;
+  border-radius: 0;
+}
+.print-file-image-chip-primary .crop-frame {
+  border-color: var(--accent);
+  border-width: 2px;
+}
 .print-file-image-chip-clickable {
   cursor: pointer;
 }
+/* Drag-to-reorder (buildFileEntry, itemModal.js). Two classes so this
+   wins over .print-file-image-chip-clickable's pointer above -- a chip
+   that's both clickable (promote) and draggable reads as draggable. */
+.print-file-image-chip.print-file-image-chip-draggable {
+  cursor: grab;
+}
+.print-file-image-chip.print-file-image-chip-dragging {
+  opacity: 0.35;
+}
+/* Off-screen holder for the drag ghost (setChipDragImage in
+   itemModal.js) -- only exists for the instant the browser snapshots it. */
+.print-file-chip-drag-ghost {
+  position: fixed;
+  top: -1000px;
+  left: -1000px;
+  pointer-events: none;
+}
+/* The dividing line showing where the dragged chip will land. Sits in
+   the middle of the gap between two chips (positioned from JS against
+   .print-file-image-chips), so it doesn't take part in the flex layout
+   and never shifts anything while the drag moves around. */
+.print-file-chip-drop-line {
+  position: absolute;
+  display: none;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 2;
+}
 .print-file-image-chip-clickable:hover img,
-.print-file-image-chip-clickable:focus-visible img {
+.print-file-image-chip-clickable:focus-visible img,
+.print-file-image-chip-clickable:hover .crop-frame,
+.print-file-image-chip-clickable:focus-visible .crop-frame {
   border-color: var(--accent);
 }
 /* This card never has print stats -- buildFileEntry always emits an

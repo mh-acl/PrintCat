@@ -210,6 +210,90 @@ function printFileTransitionName(fileOrPf) {
   const key = fileOrPf.key || fileOrPf.path.split(/[\\/]/).pop();
   return 'print-file-' + key.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
+// --- Image-chip reordering (drag and drop) -------------------------------
+// The little assigned-image chips at the bottom of a card (a print file's
+// photos, the Item photos card) can be dragged to reorder within their
+// own row. This uses its own drag payload type rather than the
+// 'text/plain' one the gallery's pool images use, so a chip drag can
+// never be mistaken for "assign this pool image" (dragIsImage in
+// openItemModal keys off 'text/plain') or for a print-file drag (the
+// file list's own drop zone treats any drag it doesn't recognize as
+// one -- see dragIsChipReorder's use there).
+const CHIP_REORDER_DRAG_TYPE = 'application/x-printcat-chip-reorder';
+// dataTransfer contents aren't readable during dragover (browser
+// security model, same as dragIsImage's note), so which row a chip
+// drag came from and which chip it is lives here instead: only one
+// drag can be in flight at a time.
+let activeChipDrag = null; // { rowEl, from } while a chip is being dragged
+
+function dragIsChipReorder(e) {
+  return e.dataTransfer.types.includes(CHIP_REORDER_DRAG_TYPE);
+}
+
+// Moves list[from] so it lands at insert position `insertAt` -- an
+// index into the list *as it was before the move* (0 = before the
+// first item, list.length = after the last), which is what the drop
+// indicator naturally points at. Removing the item first shifts every
+// later position down by one, hence the adjustment.
+function moveListItem(list, from, insertAt) {
+  const [moved] = list.splice(from, 1);
+  list.splice(insertAt > from ? insertAt - 1 : insertAt, 0, moved);
+}
+
+// Which gap in a chip row the pointer is nearest to: { index, side,
+// insertAt } where `index` is the chip it's hovering (or the closest
+// one, for the flex gap / empty space around the chips -- vertical
+// distance is weighted heavily so a wrapped row picks a chip in its
+// own line) and `side` is which half of it the pointer is in.
+function chipDropPosition(rowEl, x, y) {
+  const chipEls = [...rowEl.querySelectorAll(':scope > .print-file-image-chip')];
+  let best = null;
+  let bestDist = Infinity;
+  chipEls.forEach((el, index) => {
+    const r = el.getBoundingClientRect();
+    const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+    const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+    const dist = dy * 4 + dx;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = { index, el, rect: r };
+    }
+  });
+  if (!best) return null;
+  const side = x < best.rect.left + best.rect.width / 2 ? 'before' : 'after';
+  return {
+    index: best.index,
+    el: best.el,
+    side,
+    insertAt: side === 'before' ? best.index : best.index + 1,
+  };
+}
+
+// The drag ghost for a chip: just its cropped thumbnail. Left to
+// itself the browser snapshots the dragged element from the page, and
+// what comes along with the chip is unpredictable -- bits of the
+// neighboring chips and the text above the row were showing up in it.
+// So the ghost is supplied explicitly: a copy of the chip's crop frame
+// (the square, cropped image -- not the remove button that overhangs its
+// corner), parked off-screen for the moment the browser takes its
+// snapshot, then removed. It's sized in the chip's own font-size since
+// the frame's dimensions are in em.
+function setChipDragImage(e, chip) {
+  const source = chip.querySelector('.crop-frame') || chip.querySelector('img');
+  if (!source || typeof e.dataTransfer.setDragImage !== 'function') return;
+  const rect = source.getBoundingClientRect();
+  const ghost = document.createElement('div');
+  ghost.className = 'print-file-image-chip print-file-chip-drag-ghost';
+  ghost.style.fontSize = getComputedStyle(chip).fontSize;
+  ghost.appendChild(source.cloneNode(true));
+  document.body.appendChild(ghost);
+  // Keep the ghost under the pointer at the spot it was grabbed.
+  const offsetX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+  const offsetY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+  e.dataTransfer.setDragImage(ghost, offsetX, offsetY);
+  setTimeout(() => ghost.remove(), 0);
+}
+
 function buildFileEntry(opts) {
   const {
     editable,
@@ -219,7 +303,8 @@ function buildFileEntry(opts) {
     nameEl,
     subtitleText,
     metaLines,
-    chips, // array of { src, onRemove }
+    chips, // array of { src, onRemove, thumbCrop? } -- see buildFileEntry's chip loop
+    onReorderChips, // (from, insertAt) => void, edit mode only -- see moveListItem
     onPrintClick,
   } = opts;
 
@@ -266,7 +351,74 @@ function buildFileEntry(opts) {
 
   const chipsEl = document.createElement('div');
   chipsEl.className = 'print-file-image-chips' + (editable ? '' : ' print-file-image-chips-hidden');
-  (chips || []).forEach((chipData) => {
+
+  // Drag-to-reorder: only in edit mode, only with something to reorder.
+  const reorderable = editable && typeof onReorderChips === 'function' && (chips || []).length > 1;
+  // The dividing line shown where the dragged chip will land -- one
+  // absolutely positioned element in the row (see .print-file-chip-drop-
+  // line), moved around by showDropLine, rather than per-chip styling,
+  // so it sits in the middle of the gap between two chips (or at the
+  // row's start/end) even when the row wraps.
+  let dropLine = null;
+  const hideDropLine = () => {
+    if (dropLine) dropLine.style.display = 'none';
+  };
+  const showDropLine = (pos) => {
+    if (!dropLine) {
+      dropLine = document.createElement('div');
+      dropLine.className = 'print-file-chip-drop-line';
+      chipsEl.appendChild(dropLine);
+    }
+    const rowRect = chipsEl.getBoundingClientRect();
+    const r = pos.el.getBoundingClientRect();
+    const gap = parseFloat(getComputedStyle(chipsEl).columnGap) || 4;
+    const edge = pos.side === 'before' ? r.left - gap / 2 : r.right + gap / 2;
+    dropLine.style.left = `${edge - rowRect.left - 1}px`;
+    dropLine.style.top = `${r.top - rowRect.top}px`;
+    dropLine.style.height = `${r.height}px`;
+    dropLine.style.display = 'block';
+  };
+  // Where a drop at this pointer position would actually change
+  // something -- null when it'd land the chip right back where it was
+  // (its own slot, or the slot just after it), in which case no line is
+  // shown either, so the indicator only ever promises a real move.
+  const effectiveDropPosition = (e) => {
+    if (!activeChipDrag || activeChipDrag.rowEl !== chipsEl) return null;
+    const pos = chipDropPosition(chipsEl, e.clientX, e.clientY);
+    if (!pos) return null;
+    const { from } = activeChipDrag;
+    if (pos.insertAt === from || pos.insertAt === from + 1) return null;
+    return pos;
+  };
+  if (reorderable) {
+    chipsEl.ondragover = (e) => {
+      if (!activeChipDrag || activeChipDrag.rowEl !== chipsEl) return; // not ours
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+      const pos = effectiveDropPosition(e);
+      if (pos) showDropLine(pos);
+      else hideDropLine();
+    };
+    chipsEl.ondragleave = (e) => {
+      if (!chipsEl.contains(e.relatedTarget)) hideDropLine();
+    };
+    chipsEl.ondrop = (e) => {
+      if (!activeChipDrag || activeChipDrag.rowEl !== chipsEl) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const pos = effectiveDropPosition(e);
+      const { from } = activeChipDrag;
+      // Cleared here, not left to the chip's dragend: the reorder below
+      // rebuilds this whole row, and a dragend on a chip that's no
+      // longer in the document isn't reliably delivered.
+      activeChipDrag = null;
+      hideDropLine();
+      if (pos) onReorderChips(from, pos.insertAt);
+    };
+  }
+
+  (chips || []).forEach((chipData, chipIndex) => {
     const chip = document.createElement('span');
     chip.className = 'print-file-image-chip';
     // Optional per-chip extras, only ever passed by the item photos
@@ -278,7 +430,19 @@ function buildFileEntry(opts) {
     const chipImg = document.createElement('img');
     chipImg.src = chipData.src;
     if (chipData.title) chip.title = chipData.title;
-    chip.appendChild(chipImg);
+    if ('thumbCrop' in chipData) {
+      // Edit-mode chips show the image's thumbnail crop (rect or null
+      // for the default centered square), same as every other place
+      // that image shows as a thumbnail. The view-mode twins below
+      // are hidden and just skip this.
+      const chipFrame = document.createElement('span');
+      chipFrame.className = 'crop-frame';
+      chipFrame.appendChild(chipImg);
+      chip.appendChild(chipFrame);
+      applyImageCrop(chipImg, chipFrame, chipData.thumbCrop, { useDefault: true });
+    } else {
+      chip.appendChild(chipImg);
+    }
     if (editable && chipData.onClick) {
       chip.classList.add('print-file-image-chip-clickable');
       chip.tabIndex = 0;
@@ -289,6 +453,28 @@ function buildFileEntry(opts) {
           e.preventDefault();
           chipData.onClick();
         }
+      };
+    }
+    if (reorderable) {
+      chip.draggable = true;
+      chip.classList.add('print-file-image-chip-draggable');
+      // The <img> is draggable by default and would start its own
+      // (image/URL) drag instead of the chip's.
+      chipImg.draggable = false;
+      chip.ondragstart = (e) => {
+        e.stopPropagation();
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData(CHIP_REORDER_DRAG_TYPE, String(chipIndex));
+        activeChipDrag = { rowEl: chipsEl, from: chipIndex };
+        setChipDragImage(e, chip);
+        // Dimmed a tick later -- doing it synchronously would bake the
+        // faded look into the drag ghost image too.
+        requestAnimationFrame(() => chip.classList.add('print-file-image-chip-dragging'));
+      };
+      chip.ondragend = () => {
+        activeChipDrag = null;
+        chip.classList.remove('print-file-image-chip-dragging');
+        hideDropLine();
       };
     }
     const removeBtn = document.createElement('button');
@@ -710,7 +896,13 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       window.catalogAPI
         .getItemThumbnail(item)
         .then((thumb) => {
-          if (thumb) img.src = fileUrl(thumb);
+          if (!thumb) return;
+          img.src = fileUrl(thumb);
+          // Same crop the grid card applies to this exact thumbnail
+          // (cropRectFor picks the filename back out of the resolved
+          // path; null means no crop saved, or not a photo at all,
+          // and useDefault falls back to the centered square).
+          applyImageCrop(img, frame, cropRectFor(item, thumb, 'thumb'), { useDefault: true });
         })
         .catch(() => {});
 
@@ -932,54 +1124,48 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
     return (modes && modes[mode]) || null;
   }
 
-  function setDraftCrop(ref, mode, rectOrNull) {
+  // `changes` is { thumb?: rectOrNull, full?: rectOrNull } straight
+  // from the crop dialog -- only the modes the user actually changed,
+  // so an untouched mode keeps whatever the draft already had.
+  function setDraftCrops(ref, changes) {
     const key = refIdentity(ref);
-    draft.imageCrops[key] = { ...(draft.imageCrops[key] || {}), [mode]: rectOrNull };
+    draft.imageCrops[key] = { ...(draft.imageCrops[key] || {}), ...changes };
     refreshEditFilesArea();
   }
 
-  // Opens the crop tool for one assigned image chip. `frameEl`/`imgEl`
-  // are re-cropped in place immediately on save, ahead of the full
-  // refreshEditFilesArea() rebuild triggered by setDraftCrop, so the
-  // chip doesn't visibly flash back to uncropped before catching up.
-  function openCropperForRef(ref, mode, imgEl, frameEl) {
+  // Opens the crop dialog (thumbnail + full-view tabs) for one pool
+  // image. `frameEl`/`imgEl` are re-cropped in place immediately on
+  // save, ahead of the full refreshEditFilesArea() rebuild triggered
+  // by setDraftCrops, so the chip doesn't visibly flash back to
+  // uncropped before catching up. Only the thumb crop is ever visible
+  // on the chip itself -- a full-view crop only shows up in the
+  // lightbox, so applying its rect to this square frame would misdraw
+  // the chip.
+  function openCropperForRef(ref, imgEl, frameEl) {
     openImageCropper({
       imageSrc: imageRefSrc(ref, folderPath),
-      mode,
-      existingRect: getDraftCrop(ref, mode),
-      onSave(rect) {
-        // Only a thumb crop is visible on the pool chip itself (it
-        // always renders that image's 'thumb' crop) -- a 'full' crop
-        // only shows up in the lightbox, so applying its rect to this
-        // square frame would misdraw the chip until the rebuild below
-        // catches up.
-        if (mode === 'thumb') applyImageCrop(imgEl, frameEl, rect, { useDefault: true });
-        setDraftCrop(ref, mode, rect);
+      crops: { thumb: getDraftCrop(ref, 'thumb'), full: getDraftCrop(ref, 'full') },
+      onSave(changes) {
+        if ('thumb' in changes) applyImageCrop(imgEl, frameEl, changes.thumb, { useDefault: true });
+        setDraftCrops(ref, changes);
       },
     });
   }
 
   // Small corner badge, added to a chip's frame in edit mode only,
-  // that opens the crop tool for that specific image/mode. Mirrors
+  // that opens the crop dialog for that specific image. Mirrors
   // the existing removeBtn corner-badge pattern used elsewhere in
   // this file (e.g. buildItemThumbChip's remove button).
-  function makeCropAdjustButton(ref, mode, imgEl, frameEl) {
+  function makeCropAdjustButton(ref, imgEl, frameEl) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    // 'thumb' -> crop glyph, bottom-left; 'full' -> zoom glyph (the
-    // same one as the view-mode button that opens the lightbox this
-    // crop controls), bottom-center. See cropper.css.
-    const label = mode === 'thumb' ? 'Adjust thumbnail crop' : 'Adjust zoomed-in framing';
-    btn.className =
-      mode === 'thumb'
-        ? 'image-crop-adjust-btn icon icon-crop'
-        : 'image-crop-adjust-btn image-crop-adjust-btn-full icon icon-zoom-in';
-    btn.title = label;
-    btn.setAttribute('aria-label', label);
+    btn.className = 'image-crop-adjust-btn icon icon-crop';
+    btn.title = 'Adjust crops (thumbnail and full view)';
+    btn.setAttribute('aria-label', 'Adjust crops');
     btn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      openCropperForRef(ref, mode, imgEl, frameEl);
+      openCropperForRef(ref, imgEl, frameEl);
     };
     return btn;
   }
@@ -1072,11 +1258,17 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   function buildItemThumbChip() {
     const chip = document.createElement('div');
     chip.className = 'item-modal-thumb-chip' + (selectedTargets.has('item') ? ' selected' : '');
+    // A chip-reorder drag passing over this chip isn't an image to
+    // assign -- assignDroppedImages would fall back to reading a pool
+    // index out of an empty 'text/plain' payload (Number('') is 0) and
+    // assign the first pool image.
     chip.ondragover = (e) => {
+      if (dragIsChipReorder(e)) return;
       e.preventDefault();
       e.stopPropagation();
     };
     chip.ondrop = (e) => {
+      if (dragIsChipReorder(e)) return;
       e.preventDefault();
       e.stopPropagation();
       assignDroppedImages('item', e);
@@ -1138,7 +1330,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
         chip.appendChild(countBtn);
       }
     } else {
-      showBorrowedItemThumbnail(img);
+      showBorrowedItemThumbnail(img, frame);
     }
 
     return chip;
@@ -1166,14 +1358,26 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
   // that path mirrors createDraftFromPicked's client-side-only
   // resolution (explicitThumb + per-file filename match) and just
   // shows the placeholder.
-  function showBorrowedItemThumbnail(img) {
+  //
+  // `frame` is the .crop-frame the <img> sits in. The borrowed image
+  // is often a real photo that has its own thumb crop (the grid card
+  // shows it cropped), so the crop is looked up by filename against
+  // the draft's crops -- same source every other edit-mode thumbnail
+  // reads, so a crop edited in this session shows up here too.
+  function showBorrowedItemThumbnail(img, frame) {
     img.src = 'nothumb.svg';
     if (mode !== 'edit' || !item) return;
     window.catalogAPI
       .getItemThumbnail(item)
       .then((thumb) => {
         img.src = thumb ? fileUrl(thumb) : 'nothumb.svg';
-        if (thumb) img.title = "Preview borrowed from a print file -- not an assigned item photo";
+        if (thumb) {
+          img.title = "Preview borrowed from a print file -- not an assigned item photo";
+          const filename = thumb.split(/[\\/]/).pop();
+          applyImageCrop(img, frame, getDraftCrop({ kind: 'existing', name: filename }, 'thumb'), {
+            useDefault: true,
+          });
+        }
       })
       .catch(() => {
         img.src = 'nothumb.svg';
@@ -1201,7 +1405,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       img.src = imageRefSrc(refs[0], folderPath);
       applyImageCrop(img, thumbWrap, getDraftCrop(refs[0], 'thumb'), { useDefault: true });
     } else {
-      showBorrowedItemThumbnail(img);
+      showBorrowedItemThumbnail(img, thumbWrap);
     }
 
     const nameEl = document.createElement('h3');
@@ -1227,6 +1431,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       metaLines: [],
       chips: refs.map((ref, idx) => ({
         src: imageRefSrc(ref, folderPath),
+        thumbCrop: getDraftCrop(ref, 'thumb'),
         primary: idx === 0,
         title: idx === 0 ? 'Main image' : 'Make this the main image',
         onClick:
@@ -1242,6 +1447,12 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
           refreshEditFilesArea();
         },
       })),
+      // The first chip is the item's main image, so dragging one to the
+      // front promotes it -- same result as clicking it.
+      onReorderChips: (from, insertAt) => {
+        moveListItem(refs, from, insertAt);
+        refreshEditFilesArea();
+      },
     });
     card.classList.add('item-photos-card');
     // Same name the hidden view-mode twin gets (renderHiddenItemPhotosCard)
@@ -1345,11 +1556,20 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       metaLines: buildFileMetaLines(pf),
       chips: pf.images.map((ref, idx) => ({
         src: imageRefSrc(ref, folderPath),
+        thumbCrop: getDraftCrop(ref, 'thumb'),
         onRemove: () => {
           pf.images.splice(idx, 1);
           refreshEditFilesArea();
         },
       })),
+      // pf.images[0] is the print file's thumbnail, so order matters
+      // here too. Not offered on a card that's queued for deletion.
+      onReorderChips: isTrashed
+        ? null
+        : (from, insertAt) => {
+            moveListItem(pf.images, from, insertAt);
+            refreshEditFilesArea();
+          },
     });
     // Same view-transition-name a matching file's card gets in view
     // mode (printFileTransitionName) -- lets the browser morph this
@@ -1594,8 +1814,9 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       frame.appendChild(thumb);
       applyImageCrop(thumb, frame, getDraftCrop(ref, 'thumb'), { useDefault: true });
 
-      // The one crop-adjust control for this image -- sets its default
-      // thumbnail crop, used everywhere this image is later assigned
+      // The one crop-adjust control for this image -- opens the
+      // dialog for both its thumbnail crop and its full-view crop
+      // (tabs), used everywhere this image is later assigned
       // (item image, any print file), rather than a separate control
       // per place it happens to be assigned. Appended to the cell
       // (not the frame) so it sits outside the image wrapper, next to
@@ -1605,12 +1826,7 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       // instead of showing it as a clean corner badge. Bottom-left
       // corner mirrors the existing assign button (bottom-right, see
       // .item-modal-assign-btn below), so the two sit side by side.
-      cell.appendChild(makeCropAdjustButton(ref, 'thumb', thumb, frame));
-      // Second crop for the same image: the free-form framing used in
-      // the zoomed-in lightbox view (see lightbox.js's cropRectFor(...,
-      // 'full')). Same rationale as above for living on the pool cell
-      // rather than per assignment.
-      cell.appendChild(makeCropAdjustButton(ref, 'full', thumb, frame));
+      cell.appendChild(makeCropAdjustButton(ref, thumb, frame));
 
       const assignBtn = document.createElement('button');
       assignBtn.type = 'button';
@@ -1767,19 +1983,22 @@ function openItemModal(item, initialMode, prefilledSourceDir) {
       // buildAddPrintFileTile's own drop handling below, just scoped
       // to "anywhere in this column" instead of "exactly on this
       // button".
+      // A chip being dragged to reorder isn't a print file either --
+      // without the dragIsChipReorder checks the whole list would light
+      // up as a print-file drop zone every time a chip is picked up.
       filesCol.ondragover = (e) => {
-        if (dragIsImage(e)) return; // no whole-list image target -- let it fall through unhandled
+        if (dragIsImage(e) || dragIsChipReorder(e)) return; // no whole-list image target -- let it fall through unhandled
         e.preventDefault();
       };
       filesCol.ondragenter = (e) => {
-        if (dragIsImage(e)) return;
+        if (dragIsImage(e) || dragIsChipReorder(e)) return;
         filesCol.classList.add('item-detail-files-drop-active');
       };
       filesCol.ondragleave = (e) => {
         if (!filesCol.contains(e.relatedTarget)) filesCol.classList.remove('item-detail-files-drop-active');
       };
       filesCol.ondrop = async (e) => {
-        if (dragIsImage(e)) return;
+        if (dragIsImage(e) || dragIsChipReorder(e)) return;
         e.preventDefault();
         filesCol.classList.remove('item-detail-files-drop-active');
         const files = e.dataTransfer.files;
