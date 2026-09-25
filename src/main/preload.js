@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld('catalogAPI', {
   onEditSessionEntered: (callback) => {
     ipcRenderer.on('editSession:entered', () => callback());
   },
+  // "Discard Edits" app-menu item -- see main.js's buildMenu()/
+  // discardEditsFromMenu() and renderer.js's init().
+  onDiscardEdits: (callback) => {
+    ipcRenderer.on('menu:discardEdits', () => callback());
+  },
   // Pushed by main.js after a main-process-triggered session mutation
   // (currently just the native "Backfill Added Dates" Tools-menu item)
   // that has no renderer-initiated invoke() call to carry a response

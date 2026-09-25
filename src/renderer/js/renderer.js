@@ -29,6 +29,10 @@ async function init() {
     // grid and then clicking that item to edit it.
     if (openModalHandle) openModalHandle.switchToEdit();
   });
+  // "Discard Edits" app-menu item (main.js's buildMenu(), only shown
+  // while a session is open) -- routes through the same confirm/
+  // cleanup path as the bottom bar's "Discard All Changes" button.
+  window.catalogAPI.onDiscardEdits(() => discardAllChanges());
 
   settings = await window.catalogAPI.getSettings();
 

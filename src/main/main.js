@@ -136,8 +136,9 @@ async function getOrProvisionToken() {
   return entered;
 }
 
-// "Edit Print Catalog..." -- lets a co-admin enter a single editing
-// session covering any number of adds/edits/deletes (see
+// "Enter Admin Mode..." (app menu, below Settings) -- lets a co-admin
+// enter a single editing session covering any number of adds/edits/
+// deletes (see
 // editSession.js), reviewed together and pushed as one commit, rather
 // than the old flow's one-folder-in-one-push-out. Flips the renderer
 // into its editing-mode view (see renderer.js) -- everything else
@@ -157,15 +158,15 @@ async function enterEditSession() {
   if (!settings.gitRepoUrl) {
     dialog.showMessageBox(mainWindow, {
       type: 'error',
-      title: 'Edit Print Catalog',
+      title: 'Enter Admin Mode',
       message: 'No Git repository is configured yet.',
       detail: 'Set one up in Settings before editing the catalog.',
     });
     return;
   }
 
-  // A session already in progress (e.g. the co-admin re-opens "Edit
-  // Print Catalog..." from the menu while mid-session) already holds a
+  // A session already in progress (e.g. a stray click on "Enter Admin
+  // Mode..." races the label swap to "Discard Edits") already holds a
   // token from when it started -- don't prompt again just to re-show
   // the same session.
   if (!editSession) {
@@ -185,6 +186,19 @@ async function enterEditSession() {
   mainWindow.webContents.send('editSession:entered');
   broadcastSyncStatus(); // reflects pausedForEdit right away, not just on the next sync tick
   buildMenu(); // adds the edit-mode-only Tools items (see buildMenu())
+}
+
+// "Discard Edits" app-menu item's click handler -- the menu item lives
+// in the main process but the discard flow itself (confirm prompt,
+// clearing renderer-side edit state, view-mode modal handling) is all
+// renderer-side, shared with the bottom bar's "Discard All Changes"
+// button (see editSession-ui.js's discardAllChanges()). This just
+// forwards the click there rather than duplicating that logic --
+// editSession:cancelSession's own handler already calls buildMenu()
+// once the session actually ends, which is what flips this menu item's
+// label back to "Enter Admin Mode...".
+function discardEditsFromMenu() {
+  if (mainWindow) mainWindow.webContents.send('menu:discardEdits');
 }
 
 // One-time catch-up for every item's importedAt (see itemMetadata.js/
@@ -232,15 +246,23 @@ function backfillAddedDatesTask() {
 // Rebuilt (not just built once) at every edit-session transition --
 // enterEditSession()/cancelSession/confirmSession all call this again
 // after changing `editSession`, so the Tools submenu's edit-mode-only
-// items ("Backfill Added Dates...") appear/disappear alongside actual
-// session state rather than needing their own always-visible entry
-// that just errors out on a stray click outside a session.
+// items ("Backfill Added Dates...") appear/disappear, and the app
+// menu's admin-mode item swaps label/handler, alongside actual session
+// state rather than needing separate always-visible entries that just
+// error out on a stray click outside a session.
 function buildMenu() {
   const isMac = process.platform === 'darwin';
 
   const openSettings = () => {
     if (mainWindow) mainWindow.webContents.send('menu:openSettings');
   };
+
+  // Lives right below Settings rather than in the Tools menu -- see
+  // discardEditsFromMenu() for why the edit-mode click just forwards
+  // to the renderer instead of handling the discard here.
+  const adminModeItem = editSession
+    ? { label: 'Discard Edits', click: () => discardEditsFromMenu() }
+    : { label: 'Enter Admin Mode\u2026', click: () => enterEditSession() };
 
   const template = [
     ...(isMac
@@ -251,6 +273,7 @@ function buildMenu() {
               { role: 'about' },
               { type: 'separator' },
               { label: 'Settings\u2026', accelerator: 'Cmd+,', click: openSettings },
+              adminModeItem,
               { type: 'separator' },
               { role: 'services' },
               { type: 'separator' },
@@ -265,7 +288,11 @@ function buildMenu() {
       : [
           {
             label: 'File',
-            submenu: [{ label: 'Settings\u2026', accelerator: 'Ctrl+,', click: openSettings }, { role: 'quit' }],
+            submenu: [
+              { label: 'Settings\u2026', accelerator: 'Ctrl+,', click: openSettings },
+              adminModeItem,
+              { role: 'quit' },
+            ],
           },
         ]),
     { role: 'editMenu' },
@@ -283,7 +310,6 @@ function buildMenu() {
         ...(editSession
           ? [{ label: 'Backfill Added Dates\u2026', click: () => runTool(backfillAddedDatesTask()) }]
           : []),
-        { label: 'Edit Print Catalog\u2026', click: () => enterEditSession() },
       ],
     },
   ];

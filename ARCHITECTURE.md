@@ -111,8 +111,12 @@ confirm-dialog → `run()` → result-dialog shape because it opens a
 persistent window with its own session state rather than running once and
 reporting a result — see `usbWiperWindow.js` below.
 
-**Edit Print Catalog…**, also wired directly in `buildMenu()`, to
-`enterEditSession()` (also in `main.js`). This supersedes the earlier
+The app menu (the one with the app's name on macOS; `File` on other
+platforms) carries an admin-mode item directly below **Settings…**,
+also wired directly in `buildMenu()`. Its label and handler swap with
+session state: **Enter Admin Mode…** → `enterEditSession()` (also in
+`main.js`) when no session is active, **Discard Edits** →
+`discardEditsFromMenu()` once one is. This supersedes the earlier
 bones-only "Add items to Print Catalog…" — rather than one folder in,
 one push out, the *main catalog screen itself* doubles as an editing
 UI (see `renderer.js`'s `editModeActive` below): a co-admin can add,
@@ -130,8 +134,13 @@ there for the session's lifetime, then the renderer is told to flip
 into edit mode (`'editSession:entered'`) — the actual folder-picking,
 staging, and confirm/cancel push all happen through the
 `editSession:*` IPC handlers below, driven from that UI. Re-opening
-"Edit Print Catalog…" while a session is already active reuses that
-session (and its already-obtained token) rather than prompting again.
+"Enter Admin Mode…" while a session is already active (a stray click
+racing the label swap) reuses that session (and its already-obtained
+token) rather than prompting again. Clicking **Discard Edits** just
+forwards to the renderer (`'menu:discardEdits'`), which runs the exact
+same confirm/cleanup path as the bottom edit-session bar's "Discard
+All Changes" button — see `discardAllChanges()` in `editSession-ui.js`
+below.
 
 **`editSession.js`** — `EditSession` tracks one co-admin's in-progress
 changes, keyed by item folder path: `{ type: 'add'|'edit'|'delete', name }`,
@@ -1016,7 +1025,7 @@ Needs `#category-filter` renamed to `#tag-filter` in `styles.css`.
   (`/Users/user`) and refuses to run if `os.homedir()` doesn't match,
   since these laptops have no other signal distinguishing a guest
   session from a real one.
-- "Edit Print Catalog…" needs `scripts/provision-sync-token.sh`
+- "Enter Admin Mode…" needs `scripts/provision-sync-token.sh`
   run once per laptop (by an actual admin, via `sudo`) before it can
   push anything — without that root-owned token file in place,
   `tokenStore.js`'s `readSyncToken()` will always fail (surfaced as an
@@ -1699,7 +1708,7 @@ documented on `autoUpdate.js`'s entry above.
   real test: a trivial version bump (no catalog changes) released
   through the normal flow, tried on one loaner laptop before trusting
   it across all of them.
-- GUI for adding/editing/deleting catalog items: "Edit Print Catalog…"
+- GUI for adding/editing/deleting catalog items: "Enter Admin Mode…"
   and `editSession.js` (see above) now cover add, edit, delete, image
   reconciliation (assigning images to print files, including the
   many-to-many sharing case and the batch-variant suggestion), and drag-

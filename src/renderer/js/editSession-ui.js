@@ -9,6 +9,27 @@
 // was already cleared at the top of render()) -- cheap enough given
 // how small this is, and keeps it in sync with pendingChanges without
 // a separate update path to maintain.
+// Shared by the bottom bar's "Discard All Changes" button and the
+// "Discard Edits" app-menu item (main.js's buildMenu(), forwarded here
+// via the 'menu:discardEdits' IPC event -- see renderer.js's init())
+// so both entry points go through the exact same confirm/cleanup path.
+async function discardAllChanges() {
+  const total = Object.keys(pendingChanges).length;
+  if (total > 0 && !confirm('Discard all pending changes?')) return;
+  allItems = await window.catalogAPI.editSessionCancel();
+  editModeActive = false;
+  pendingChanges = {};
+  selectedSmartTags = new Set();
+  // If an item's modal is open in edit mode, switch it back to
+  // view mode in place rather than leaving it stranded in edit mode
+  // showing a now-discarded draft -- the symmetric counterpart to
+  // onEditSessionEntered's switchToEdit() call in renderer.js.
+  if (openModalHandle) openModalHandle.switchToView();
+  renderPrinterFilter();
+  renderTagFilter();
+  render();
+}
+
 function renderEditBar() {
   const listing = document.getElementById('listing');
   if (!editModeActive) return;
@@ -67,21 +88,7 @@ function renderEditBar() {
 
   const cancelBtn = document.createElement('button');
   cancelBtn.textContent = 'Discard All Changes';
-  cancelBtn.onclick = async () => {
-    if (total > 0 && !confirm('Discard all pending changes?')) return;
-    allItems = await window.catalogAPI.editSessionCancel();
-    editModeActive = false;
-    pendingChanges = {};
-    selectedSmartTags = new Set();
-    // If an item's modal is open in edit mode, switch it back to
-    // view mode in place rather than leaving it stranded in edit mode
-    // showing a now-discarded draft -- the symmetric counterpart to
-    // onEditSessionEntered's switchToEdit() call in renderer.js.
-    if (openModalHandle) openModalHandle.switchToView();
-    renderPrinterFilter();
-    renderTagFilter();
-    render();
-  };
+  cancelBtn.onclick = () => discardAllChanges();
   buttons.appendChild(cancelBtn);
 
   const confirmBtn = document.createElement('button');
